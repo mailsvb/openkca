@@ -1,0 +1,42 @@
+{{template "head" .}}
+{{$f := .Data.F}}{{$db := .DB.Name}}
+<p class="crumbs"><a href="/db/{{$db}}/item/{{$f.Key.ID}}">{{$f.Key.Name}}</a></p>
+<h1>{{T "sshkey.heading"}}</h1>
+<section class="card">
+  <h2>{{T "sshkey.public"}}</h2>
+  <dl class="props">
+    <dt>{{T "key.algorithm"}}</dt><dd>{{$f.Algorithm}}</dd>
+    <dt>{{T "key.fingerprint"}}</dt><dd class="mono small">{{$f.Fingerprint}}</dd>
+    <dt>{{T "newsshkey.comment"}}</dt><dd>{{if $f.Comment}}{{$f.Comment}}{{else}}<span class="muted">{{T "sshkey.nocomment"}}</span>{{end}}</dd>
+  </dl>
+  <textarea id="ssh-line" class="mono small" rows="4" readonly>{{$f.Line}}</textarea>
+  <div class="actionbar"><button type="button" data-copy="ssh-line" data-copied="{{T "export.copied"}}">{{T "export.copy"}}</button></div>
+  <span class="muted small">{{T "sshkey.public.help"}}</span>
+</section>
+{{if $f.Private}}
+<section class="card">
+  <h2>{{T "sshkey.download"}}</h2>
+  <form method="post" action="/db/{{$db}}/item/{{$f.Key.ID}}/ssh" class="stack wide">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <fieldset class="formats">
+      <legend>{{T "export.format"}}</legend>
+      {{range $f.Flavors}}
+      <label class="format"><input type="radio" name="format" value="{{.}}"{{if eq . $f.Flavor}} checked{{end}} required>
+        <span><strong>{{T (print "sshkey.flavor." .)}}</strong><br>
+        <span class="muted small">{{T (print "sshkey.flavor." . ".help")}}</span></span></label>
+      {{end}}
+    </fieldset>
+    <label for="ssh-pw">{{T "sshkey.passphrase"}}</label>
+    <input type="password" id="ssh-pw" name="password" autocomplete="new-password">
+    <label for="ssh-pw2">{{T "sshkey.passphrase2"}}</label>
+    <input type="password" id="ssh-pw2" name="password2" autocomplete="new-password">
+    <span class="muted small">{{T "sshkey.passphrase.help"}}</span>
+    {{if $f.OwnPass}}<label for="ssh-kp">{{T "editor.keypass"}}</label><input type="password" id="ssh-kp" name="keypass" autocomplete="off">{{end}}
+    <div class="actionbar">
+      <button type="submit">{{T "sshkey.submit"}}</button>
+      <a class="button secondary" href="/db/{{$db}}/export?id={{$f.Key.ID}}">{{T "sshkey.otherformats"}}</a>
+    </div>
+  </form>
+</section>
+{{end}}
+{{template "foot" .}}

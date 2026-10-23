@@ -64,7 +64,7 @@ func buildSet(t *testing.T, s *Store, name string, pw []byte) pkiSet {
 	snap, _ := h.Snapshot(ctx)
 	p.crl = must(h.GenerateCRL(ctx, p.sub, DefaultCRLOptions(snap, findCert(snap, p.sub)), pw, nil))
 	p.tmpl = must(h.TemplateFromItem(ctx, p.leaf))
-	p.pubK = must(h.GenerateKey(ctx, "spare", pki.KeySpec{Type: "EC", Curve: "P-384"}, pw))
+	p.pubK = must(h.GenerateKey(ctx, "spare", "", pki.KeySpec{Type: "EC", Curve: "P-384"}, pw))
 	snap, _ = h.Snapshot(ctx)
 	p.leafKey = findCert(snap, p.leaf).KeyID
 	p.edKey = findCert(snap, p.edLeaf).KeyID
@@ -223,11 +223,8 @@ func TestSSHExportImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, "sshc")
-	id, err := h.GenerateKey(ctx, "laptop", pki.KeySpec{Type: "Ed25519"}, pw)
+	id, err := h.GenerateKey(ctx, "laptop", "user@laptop  key\nsecond line", pki.KeySpec{Type: "Ed25519"}, pw)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.Rename(ctx, id, "laptop", "user@laptop  key\nsecond line"); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []int{23, 100, 102, 106} {

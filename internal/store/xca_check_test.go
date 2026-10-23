@@ -61,7 +61,7 @@ func TestWriteForXCA(t *testing.T) {
 	if _, err := h.Issue(ctx, ed, pw); err != nil {
 		t.Fatal(err)
 	}
-	k, err := h.GenerateKey(ctx, "spare key", pki.KeySpec{Type: "EC", Curve: "P-521"}, pw)
+	k, err := h.GenerateKey(ctx, "spare key", "", pki.KeySpec{Type: "EC", Curve: "P-521"}, pw)
 	if err != nil {
 		t.Fatal(err)
 	}

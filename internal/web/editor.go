@@ -634,7 +634,7 @@ func (s *Server) newKey(w http.ResponseWriter, r *http.Request) {
 	}
 	pw := ds.Password()
 	defer clear(pw)
-	id, err := ds.Handle.GenerateKey(r.Context(), name, *spec, pw)
+	id, err := ds.Handle.GenerateKey(r.Context(), name, "", *spec, pw)
 	if err != nil {
 		s.fail(w, r, err)
 		return

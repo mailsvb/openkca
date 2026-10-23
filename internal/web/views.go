@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/xdb"
@@ -374,6 +375,7 @@ type detail struct {
 	CRLs     []link
 	Entries  []crlEntry
 	// action availability
+	SSH        bool // a key SSH can use
 	HasKey     bool
 	KeyPrivate bool
 	KeyOwnPass bool
@@ -416,6 +418,9 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 		if k.ID == id {
 			d.Item, d.Kind, d.Key, tab = k.Item, "key", k, "keys"
 			d.KeyInfo = pki.DescribePublicKey(k.Public)
+			if pub, err := codec.ParsePublic(k.Public); err == nil {
+				d.SSH = codec.SSHCompatible(pub)
+			}
 			for _, c := range snap.Certs {
 				if c.KeyID == id {
 					d.UsedBy = append(d.UsedBy, lk(c.ID))
