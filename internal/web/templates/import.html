@@ -32,8 +32,8 @@
         <td><input type="checkbox" name="sel" value="{{$i}}" aria-label="{{T "importitems.import"}}"{{if ne $p.Action "exists"}} checked{{else}} disabled{{end}}></td>
         <td>{{T (print "importitems.type." $p.Type)}}</td>
         <td><input type="text" name="name.{{$i}}" value="{{$p.Name}}" aria-label="{{T "col.name"}}"{{if eq $p.Action "exists"}} disabled{{end}}></td>
-        <td class="small">{{if eq $p.Action "exists"}}{{with $p.Existing}}{{T "importitems.exists" .Name}}{{else}}{{T "importitems.duplicate"}}{{end}}{{else if eq $p.Action "complete"}}{{T "importitems.complete" $p.Existing.Name}}{{else}}{{T "importitems.new"}}{{end}}
-          {{if eq $p.Type 1}} · {{T "unit.bits" $p.KeyBits}} {{$p.KeyType}}{{if $p.Private}} · {{T "importitems.private"}}{{end}}{{end}}</td>
+        <td class="small">{{if eq $p.Action "exists"}}{{with $p.Existing}}{{T "importitems.exists" .Name}}{{else}}{{T "importitems.duplicate"}}{{end}}{{else if eq $p.Action "complete"}}{{T "importitems.complete" $p.Existing.Name}}{{else if eq $p.Action "pgp"}}{{T "importitems.pgp" $p.Existing.Name}}{{else}}{{T "importitems.new"}}{{end}}
+          {{if eq $p.Type 1}} · {{T "unit.bits" $p.KeyBits}} {{$p.KeyType}}{{if $p.Private}} · {{T "importitems.private"}}{{end}}{{if $p.PGPFingerprint}} · {{T "importitems.pgpkey" $p.PGPFingerprint}}{{end}}{{end}}</td>
         <td class="mono small">{{$p.File}}</td>
       </tr>
       {{end}}

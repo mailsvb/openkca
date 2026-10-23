@@ -101,6 +101,9 @@ type PGPKeyInfo struct {
 	Public      crypto.PublicKey // nil for algorithms go-ca cannot store
 }
 
+// Usages lists the key's usages, one letter each.
+func (k PGPKeyInfo) Usages() []string { return strings.Split(k.Usage, "") }
+
 // PGPInfo describes an OpenPGP certificate.
 type PGPInfo struct {
 	Version int

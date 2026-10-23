@@ -1,0 +1,26 @@
+{{template "head" .}}
+<h1>{{T "newpgpkey.heading"}}</h1>
+<section class="card">
+  <form method="post" action="/db/{{.DB.Name}}/new/pgpkey" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="uids">{{T "pgpkey.uids"}}</label>
+    <textarea id="uids" name="uids" rows="3" required autofocus placeholder="{{T "pgpkey.uids.placeholder"}}">{{.Data.UIDs}}</textarea>
+    <span class="muted small">{{T "pgpkey.uids.help"}}</span>
+    <label for="name">{{T "col.name"}}</label>
+    <input type="text" id="name" name="name" value="{{.Data.Name}}" placeholder="{{T "newpgpkey.name.placeholder"}}">
+    <label for="type">{{T "col.keytype"}}</label>
+    <select id="type" name="type">{{$t := .Data.Type}}{{range .Data.KeyChoices}}<option value="{{.Value}}"{{if eq .Value $t}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+    <label><input type="checkbox" name="subkey" value="1"{{if .Data.Subkey}} checked{{end}}> {{T "newpgpkey.subkey"}}</label>
+    {{template "pgpparams" .Data}}
+    <span class="muted small">{{T "newpgpkey.help"}}</span>
+    <button type="submit">{{T "newkey.submit"}}</button>
+  </form>
+</section>
+{{template "foot" .}}
+
+{{define "pgpparams"}}
+    <label for="version">{{T "pgpkey.version"}}</label>
+    <select id="version" name="version">{{$v := .Version}}{{range .Versions}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{T (print "pgpkey.version." .)}}</option>{{end}}</select>
+    <label for="expiry">{{T "pgpkey.expiry"}}</label>
+    <select id="expiry" name="expiry">{{$e := .Expiry}}{{range .Expiries}}<option value="{{.}}"{{if eq . $e}} selected{{end}}>{{T (print "pgpkey.expiry." .)}}</option>{{end}}</select>
+{{end}}

@@ -20,6 +20,7 @@ for f in *; do
   case "$f" in
     *.ics|*.jwk|*.conf|*.txt|*.ovpn) continue ;; # not importable by XCA
     *-10[0-9].*) continue ;; # go-ca's SSH formats, which XCA does not offer
+    *-11[0-9].*) continue ;; # go-ca's OpenPGP formats, which XCA does not offer
     *-23.pub) case "$f" in spare-*) continue ;; esac ;; # XCA reads only nistp256 SSH keys
   esac
   out=$(answers |

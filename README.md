@@ -49,6 +49,22 @@ XCA.
   version 2), optionally protected by a passphrase.
 - SSH keys are ordinary keys of the database.
 
+**OpenPGP keys**
+
+- Generate OpenPGP keys (Ed25519 with an X25519 encryption subkey, ECDSA
+  with ECDH on P-256/384/521, RSA 3072/4096) with any number of user IDs
+  and an expiry, as OpenPGP v4 keys for GnuPG and every other program or
+  as v6 keys (RFC 9580) for Sequoia, OpenPGP.js and gopenpgp.
+- Any stored RSA, ECDSA or Ed25519 key, for example an SSH key, can become
+  the primary key of an OpenPGP key; further subkeys can be bound to it,
+  such as an SSH key as authentication subkey for gpg-agent.
+- Every OpenPGP key has a page with its fingerprint, user IDs, subkeys and
+  armored public key, and a download of the key pair as a ZIP archive
+  (public key, secret key, revocation certificate, as GnuPG keeps them),
+  optionally protected by a passphrase.
+- Primary keys and subkeys are ordinary keys of the database; the OpenPGP
+  certificate (user IDs and signatures) is stored with the primary key.
+
 **Certificate authorities**
 
 - Revoke and unrevoke certificates, manage a CA's revocations (also of
@@ -77,19 +93,27 @@ XCA.
 - Beyond XCA, keys also export as OpenSSH private keys with their comment
   (plain or passphrase protected, as ssh-keygen writes them), as PuTTY
   private keys (`.ppk` version 3 or 2, plain or encrypted) and as RFC 4716
-  public keys. The first line of a key's comment is its SSH comment. Select several items in a list to
-  export them together; text formats can be shown and copied.
+  public keys. The first line of a key's comment is its SSH comment.
+  OpenPGP keys export as armored or binary public keys, as secret keys
+  (plain or passphrase protected: iterated SHA-256 and AES-256 for v4,
+  Argon2 and AES-256-OCB for v6) and as revocation certificates. Select
+  several items in a list to export them together; text formats can be
+  shown and copied.
 - Import PEM (any number of blocks), DER, PKCS#7, PKCS#8, PKCS#12, SSH
   keys (`authorized_keys` lines, RFC 4716 public keys, OpenSSH private
   keys in any cipher ssh-keygen offers except 3DES and ChaCha20, PuTTY
-  `.ppk` files of version 2 and 3), PVK, CRLs and XCA templates, from
-  files or pasted text. An SSH key's comment becomes the item's comment
-  and suggested name. Everything
+  `.ppk` files of version 2 and 3), OpenPGP keys (armored or binary, any
+  number of keys, public, secret or secret subkeys only, v4 and v6), PVK,
+  CRLs and XCA templates, from files or pasted text. An SSH key's comment
+  becomes the item's comment and suggested name, an OpenPGP key's first
+  user ID its name; only signatures that verify are kept. Everything
   found is listed for review, with names that can be changed, before
   anything is stored. As in XCA, existing items are skipped, a private key
   completes a stored public key and an imported CRL adds its revocations to
-  the CA.
-- Download a whole database as a ZIP of PEM files (XCA's "Dump database").
+  the CA. An OpenPGP certificate is stored with its primary key, also when
+  the keys are already in the database.
+- Download a whole database as a ZIP of PEM files (XCA's "Dump database"),
+  with the OpenPGP public keys next to their keys.
 
 **Tools**
 
@@ -212,9 +236,11 @@ the build on untranslated text in a template or a missing message key.
 go test -race ./...
 ```
 
-Some tests compare against the `openssl`, `ssh-keygen` and `puttygen`
-command lines (`putty-tools` on Debian and Ubuntu) and are skipped where
-those are missing.
+Some tests compare against the `openssl`, `ssh-keygen`, `puttygen`
+(`putty-tools` on Debian and Ubuntu) and `gpg` command lines and are
+skipped where those are missing. The OpenPGP tests have gpg import
+go-ca's keys, encrypt to them, verify their signatures and import their
+revocation certificates, and read keys gpg generated in each export form.
 
 `testdata/xdb/` holds databases generated with the real XCA command line and
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
@@ -223,7 +249,10 @@ go-ca's format. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
 `xca`, `openssl`, `sqlite3`, `perl`).
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
 and lets the XCA command line import each file, except go-ca's own SSH
-formats.
+and OpenPGP formats.
 
 Third-party code: [htmx](https://htmx.org) 2.0.11 (BSD Zero Clause License,
-`internal/web/static/htmx.LICENSE`).
+`internal/web/static/htmx.LICENSE`);
+[ProtonMail/go-crypto](https://github.com/ProtonMail/go-crypto) for
+OpenPGP and [cloudflare/circl](https://github.com/cloudflare/circl), which
+it uses (both BSD 3-Clause License).

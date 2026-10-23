@@ -1,0 +1,106 @@
+{{template "head" .}}
+{{$f := .Data.F}}{{$db := .DB.Name}}{{$csrf := .CSRF}}{{$id := $f.Key.ID}}
+<p class="crumbs"><a href="/db/{{$db}}/item/{{$id}}">{{$f.Key.Name}}</a></p>
+<h1>{{T "pgpkey.heading"}}</h1>
+{{if $f.Primary}}
+<section class="card">
+  <p>{{T "pgpkey.subkeyof"}} <a href="/db/{{$db}}/item/{{$f.Primary.ID}}/pgp">{{$f.Primary.Name}}</a></p>
+  <p class="mono small">{{$f.Fingerprint}}</p>
+</section>
+{{else if $f.View}}{{$i := $f.View.Info}}{{$k := index $i.Keys 0}}
+<section class="card">
+  <h2>{{T "pgpkey.public"}}</h2>
+  <dl class="props">
+    <dt>{{T "pgpkey.fingerprint"}}</dt><dd class="mono small">{{$f.Fingerprint}}</dd>
+    <dt>{{T "pgpkey.keyid"}}</dt><dd class="mono small">{{$k.KeyID}}</dd>
+    <dt>{{T "key.algorithm"}}</dt><dd>{{$k.Algorithm}} · {{T (print "pgpkey.version." $i.Version)}}</dd>
+    <dt>{{T "pgpkey.created"}}</dt><dd>{{time $k.Created}}</dd>
+    <dt>{{T "pgpkey.expires"}}</dt><dd>{{if $k.Expires.IsZero}}{{T "pgpkey.expiry.never"}}{{else}}{{time $k.Expires}}{{end}}{{if $f.Expired}} · <strong>{{T "status.expired"}}</strong>{{end}}{{if $i.Revoked}} · <strong>{{T "status.revoked"}}</strong>{{end}}</dd>
+    <dt>{{T "pgpkey.usage"}}</dt><dd>{{range $j, $u := $k.Usages}}{{if $j}}, {{end}}{{T (print "pgpkey.usage." $u)}}{{end}}</dd>
+    <dt>{{T "pgpkey.uids"}}</dt><dd>{{range $i.UIDs}}<div>{{.}}</div>{{else}}<span class="muted">{{T "pgpkey.nouids"}}</span>{{end}}</dd>
+  </dl>
+  {{if $f.Subkeys}}
+  <h3>{{T "pgpkey.subkeys"}}</h3>
+  <div class="tablewrap"><table class="list">
+    <thead><tr><th>{{T "pgpkey.keyid"}}</th><th>{{T "key.algorithm"}}</th><th>{{T "pgpkey.usage"}}</th><th>{{T "pgpkey.expires"}}</th><th>{{T "pgpkey.stored"}}</th></tr></thead>
+    <tbody>{{range $f.Subkeys}}
+    <tr><td class="mono small">{{.KeyID}}</td><td>{{.Algorithm}}</td>
+      <td>{{range $j, $u := .Usages}}{{if $j}}, {{end}}{{T (print "pgpkey.usage." $u)}}{{end}}{{if .Revoked}} · <strong>{{T "status.revoked"}}</strong>{{end}}</td>
+      <td>{{if .Expires.IsZero}}{{T "pgpkey.expiry.never"}}{{else}}{{time .Expires}}{{end}}</td>
+      <td>{{with .Key}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a>{{if not .HasPrivate}} · {{T "pgpkey.publiconly"}}{{end}}{{else}}<span class="muted">{{T "pgpkey.notstored"}}</span>{{end}}</td></tr>
+    {{end}}</tbody>
+  </table></div>
+  {{end}}
+  <textarea id="pgp-public" class="mono small" rows="8" readonly>{{$f.Public}}</textarea>
+  <div class="actionbar"><button type="button" data-copy="pgp-public" data-copied="{{T "export.copied"}}">{{T "export.copy"}}</button></div>
+  <span class="muted small">{{T "pgpkey.public.help"}}</span>
+</section>
+<section class="card">
+  <h2>{{T "pgpkey.download"}}</h2>
+  <form method="post" action="/db/{{$db}}/item/{{$id}}/pgp" class="stack wide">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <fieldset class="formats">
+      <legend>{{T "export.format"}}</legend>
+      {{range $f.Flavors}}{{if or $f.Private (or (eq . "public") (eq . "binary"))}}
+      <label class="format"><input type="radio" name="format" value="{{.}}"{{if eq . $f.Flavor}} checked{{end}} required>
+        <span><strong>{{T (print "pgpkey.flavor." .)}}</strong><br>
+        <span class="muted small">{{T (print "pgpkey.flavor." . ".help")}}</span></span></label>
+      {{end}}{{end}}
+    </fieldset>
+    {{if $f.Private}}
+    <label for="pgp-pw">{{T "sshkey.passphrase"}}</label>
+    <input type="password" id="pgp-pw" name="password" autocomplete="new-password">
+    <label for="pgp-pw2">{{T "sshkey.passphrase2"}}</label>
+    <input type="password" id="pgp-pw2" name="password2" autocomplete="new-password">
+    <span class="muted small">{{T "pgpkey.passphrase.help"}}</span>
+    {{if $f.OwnPass}}<label for="pgp-kp">{{T "editor.keypass"}}</label><input type="password" id="pgp-kp" name="keypass" autocomplete="off">{{end}}
+    {{end}}
+    <div class="actionbar">
+      <button type="submit">{{T "pgpkey.submit"}}</button>
+      <a class="button secondary" href="/db/{{$db}}/export?id={{$id}}">{{T "sshkey.otherformats"}}</a>
+    </div>
+  </form>
+</section>
+{{if $f.Private}}
+<section class="card">
+  <h2>{{T "pgpkey.addsubkey"}}</h2>
+  <form method="post" action="/db/{{$db}}/item/{{$id}}/pgp/subkey" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="sub-key">{{T "pgpkey.addsubkey.key"}}</label>
+    <select id="sub-key" name="key"><option value="new">{{T "pgpkey.addsubkey.new"}}</option>{{range $f.Eligible}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
+    <label for="sub-usage">{{T "pgpkey.usage"}}</label>
+    <select id="sub-usage" name="usage">{{range $f.Usages}}<option value="{{.}}">{{T (print "pgpkey.usage." .)}}</option>{{end}}</select>
+    {{if $f.OwnPass}}<label for="sub-kp">{{T "editor.keypass"}}</label><input type="password" id="sub-kp" name="keypass" autocomplete="off">{{end}}
+    <span class="muted small">{{T "pgpkey.addsubkey.help"}}</span>
+    <button type="submit" class="secondary">{{T "pgpkey.addsubkey.submit"}}</button>
+  </form>
+</section>
+{{end}}
+<section class="card">
+  <details>
+    <summary>{{T "pgpkey.remove"}}</summary>
+    <form method="post" action="/db/{{$db}}/item/{{$id}}/pgp/remove" class="stack">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <p class="muted">{{T "pgpkey.remove.warn"}}</p>
+      <label><input type="checkbox" name="confirm" value="1" required> {{T "actions.delete.confirm"}}</label>
+      <button type="submit" class="danger">{{T "pgpkey.remove"}}</button>
+    </form>
+  </details>
+</section>
+{{else if $f.CanCreate}}
+<section class="card">
+  <h2>{{T "pgpkey.create"}}</h2>
+  <p class="muted">{{T "pgpkey.create.intro"}}</p>
+  <form method="post" action="/db/{{$db}}/item/{{$id}}/pgp/create" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="uids">{{T "pgpkey.uids"}}</label>
+    <textarea id="uids" name="uids" rows="3" required placeholder="{{T "pgpkey.uids.placeholder"}}"></textarea>
+    <span class="muted small">{{T "pgpkey.uids.help"}}</span>
+    {{if $f.SubkeySpec}}<label><input type="checkbox" name="subkey" value="1" checked> {{T "pgpkey.create.subkey" $f.SubkeySpec}}</label>{{end}}
+    {{template "pgpparams" (dict "Versions" $f.Versions "Version" (index $f.Versions 0) "Expiries" $f.Expiries "Expiry" (index $f.Expiries 0))}}
+    {{if $f.OwnPass}}<label for="create-kp">{{T "editor.keypass"}}</label><input type="password" id="create-kp" name="keypass" autocomplete="off">{{end}}
+    <button type="submit">{{T "pgpkey.create.submit"}}</button>
+  </form>
+</section>
+{{end}}
+{{template "foot" .}}
