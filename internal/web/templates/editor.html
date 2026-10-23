@@ -76,14 +76,14 @@
       <label><input type="radio" name="keymode" value="existing"{{if eq $f.KeyMode "existing"}} checked{{end}}> {{T "editor.existingkey"}}</label>
     </div>
     <label for="newkey">{{T "editor.newkeytype"}}</label>
-    <select id="newkey" name="newkey">{{range .Data.KeyChoices}}<option value="{{.}}"{{if eq . $f.NewKey}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <select id="newkey" name="newkey">{{range .Data.KeyGroups}}<optgroup label="{{T .Label}}">{{range .Choices}}<option value="{{.Value}}"{{if eq .Value $f.NewKey}} selected{{end}}>{{.Label}}</option>{{end}}</optgroup>{{end}}</select>
     <label for="keyid">{{T "editor.existingkey"}}</label>
     <select id="keyid" name="keyid">
       <option value="0"></option>
       {{range $c.Keys}}<option value="{{.ID}}"{{if eq $f.KeyID .ID}} selected{{end}}>{{.Label}} · {{.Note}}</option>{{end}}
     </select>
     <label for="hash">{{T "editor.hash"}}</label>
-    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $f.Hash}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $f.Hash}} selected{{end}}>{{T (print "hash." .)}}</option>{{end}}</select>
     <label for="keypass">{{T "editor.keypass"}}</label>
     <input type="password" id="keypass" name="keypass" autocomplete="off">
   </div>

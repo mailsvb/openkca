@@ -319,16 +319,6 @@ func unusable(snap *xdb.Snapshot, c *xdb.Cert, now time.Time) bool {
 	return (!info.NoExpiry && info.NotAfter.Before(now)) || revocationOf(snap, c) != nil
 }
 
-func keyTypeText(k *xdb.Key) string {
-	switch k.KeyType {
-	case "ED25":
-		return "ED25519"
-	case "X255":
-		return "X25519"
-	}
-	return k.KeyType
-}
-
 func (e *exporter) certPEM(c *xdb.Cert) []byte {
 	var b []byte
 	if e.req.PEMComment {
@@ -342,7 +332,7 @@ func (e *exporter) keyComment(k *xdb.Key) []byte {
 	if !e.req.PEMComment {
 		return nil
 	}
-	return codec.Comment(k.Name, k.Comment, fmt.Sprintf("%d bit %s", k.Len, keyTypeText(k)))
+	return codec.Comment(k.Name, k.Comment, fmt.Sprintf("%d bit %s", k.Len, pki.KeyTypeText(k.KeyType)))
 }
 
 type exporter struct {

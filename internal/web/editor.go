@@ -14,26 +14,6 @@ import (
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
-// keyChoices are the key types offered when generating a key.
-var keyChoices = []string{"RSA:2048", "RSA:3072", "RSA:4096", "RSA:8192", "EC:P-256", "EC:P-384", "EC:P-521", "Ed25519"}
-
-func parseKeyChoice(s string) (*pki.KeySpec, error) {
-	typ, arg, _ := strings.Cut(s, ":")
-	switch typ {
-	case "RSA":
-		bits, err := strconv.Atoi(arg)
-		if err != nil {
-			return nil, err
-		}
-		return &pki.KeySpec{Type: "RSA", Bits: bits}, nil
-	case "EC":
-		return &pki.KeySpec{Type: "EC", Curve: arg}, nil
-	case "Ed25519":
-		return &pki.KeySpec{Type: "Ed25519"}, nil
-	}
-	return nil, fmt.Errorf("unknown key type %q", s)
-}
-
 // Additional subject attributes offered besides the explicit ones.
 var extraAttrs = []string{"C", "ST", "L", "O", "OU", "CN", "emailAddress", "serialNumber", "title", "GN", "SN",
 	"initials", "pseudonym", "street", "postalCode", "DC", "UID", "description", "businessCategory", "dnQualifier"}
@@ -245,8 +225,8 @@ func (f *editorForm) params() (store.IssueParams, error) {
 		p.KeyID = f.KeyID
 	} else if p.FromReqID == 0 {
 		spec, err := parseKeyChoice(f.NewKey)
-		if err != nil {
-			return p, err
+		if err != nil || !offeredKey(f.NewKey) {
+			return p, fmt.Errorf("unknown key type %q", f.NewKey)
 		}
 		p.NewKey = spec
 	}
@@ -498,7 +478,7 @@ func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int
 		templates = append(templates, choice{ID: t.ID, Label: t.Name})
 	}
 	p := &page{Title: title, Tab: tab, Error: errKey, Data: map[string]any{
-		"F": f, "C": choices(snap), "KeyChoices": keyChoices, "Hashes": pki.Hashes, "ExtraAttrs": extraAttrs,
+		"F": f, "C": choices(snap), "KeyGroups": keyGroups, "Hashes": pki.Hashes, "ExtraAttrs": extraAttrs,
 		"KU": pki.KeyUsageNames, "EKU": pki.EKUNames, "NS": pki.NSCertTypeNames,
 		"NoNetscape": snap.Settings["disable_netscape"] == "yes", "ErrArgs": errArgs, "Templates": templates,
 	}}
@@ -620,16 +600,16 @@ func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) newKeyPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "newkey", &page{Title: "newkey.title", Tab: "keys",
-		Data: map[string]any{"KeyChoices": keyChoices, "Type": "EC:P-256"}})
+		Data: map[string]any{"KeyGroups": keyGroups, "Type": "EC:P-256"}})
 }
 
 func (s *Server) newKey(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	typ := r.PostFormValue("type")
-	data := map[string]any{"KeyChoices": keyChoices, "Type": typ, "Name": name}
+	data := map[string]any{"KeyGroups": keyGroups, "Type": typ, "Name": name}
 	spec, err := parseKeyChoice(typ)
-	if err != nil || name == "" {
+	if err != nil || !offeredKey(typ) || name == "" {
 		s.render(w, r, http.StatusUnprocessableEntity, "newkey", &page{Title: "newkey.title", Tab: "keys",
 			Error: "newkey.error.input", Data: data})
 		return

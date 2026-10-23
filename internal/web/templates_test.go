@@ -10,6 +10,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/i18n"
+	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
 )
 
@@ -101,6 +102,9 @@ func TestMessageKeys(t *testing.T) {
 		keys = append(keys, "reason."+r)
 	}
 	keys = append(keys, "val.yes", "val.no")
+	for _, h := range pki.Hashes {
+		keys = append(keys, "hash."+h)
+	}
 	for _, k := range []string{"attribute", "extension", "eku", "signature", "curve", "policy", "other"} {
 		keys = append(keys, "oid.kind."+k)
 	}

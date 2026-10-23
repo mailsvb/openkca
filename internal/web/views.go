@@ -635,10 +635,20 @@ type optionRow struct {
 	Key, Label, Value, Kind string
 	Default                 bool
 	Choices                 []string
+	Labels                  map[string]string // message keys of choices shown translated
 	Units                   []string
 	Num                     string // expiry: number part
 	Unit                    string // expiry: unit part
 }
+
+// hashLabels are the message keys of the hash choices.
+var hashLabels = func() map[string]string {
+	m := map[string]string{}
+	for _, h := range pki.Hashes {
+		m[h] = "hash." + h
+	}
+	return m
+}()
 
 var serialLens = []string{"64", "72", "80", "88", "96", "104", "112", "120", "128", "136", "144", "152", "160"}
 
@@ -647,7 +657,7 @@ var optionKeys = []struct {
 	choices               []string
 	units                 string
 }{
-	{"default_hash", "opt.default_hash", "sha256", "select", []string{"sha256", "sha384", "sha512"}, ""},
+	{"default_hash", "opt.default_hash", "sha256", "select", pki.Hashes, ""},
 	{"mandatory_dn", "opt.mandatory_dn", "", "text", nil, ""},
 	{"explicit_dn", "opt.explicit_dn", "C,ST,L,O,OU,CN,emailAddress", "text", nil, ""},
 	{"adapt_explicit_subj", "opt.adapt_explicit_subj", "no", "bool", nil, ""},
@@ -677,6 +687,9 @@ func (s *Server) options(w http.ResponseWriter, r *http.Request) {
 			v = o.def
 		}
 		row := optionRow{Key: o.key, Label: o.label, Value: v, Default: !ok, Kind: o.kind, Choices: o.choices}
+		if o.key == "default_hash" {
+			row.Labels = hashLabels
+		}
 		if o.kind == "select" && !contains(row.Choices, v) {
 			row.Choices = append([]string{v}, row.Choices...)
 		}

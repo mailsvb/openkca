@@ -9,7 +9,7 @@
   {{range .Data.Options}}{{$o := .}}
     <tr><th><label for="opt-{{.Key}}">{{T .Label}}</label></th><td>
     {{if eq .Kind "bool"}}<input type="checkbox" id="opt-{{.Key}}" name="{{.Key}}" value="yes"{{if eq .Value "yes"}} checked{{end}}>
-    {{else if eq .Kind "select"}}<select id="opt-{{.Key}}" name="{{.Key}}">{{range .Choices}}<option value="{{.}}"{{if eq . $o.Value}} selected{{end}}>{{.}}</option>{{end}}</select>
+    {{else if eq .Kind "select"}}<select id="opt-{{.Key}}" name="{{.Key}}">{{range .Choices}}<option value="{{.}}"{{if eq . $o.Value}} selected{{end}}>{{with index $o.Labels .}}{{T .}}{{else}}{{.}}{{end}}</option>{{end}}</select>
     {{else if eq .Kind "expiry"}}<span class="inline-fields"><input type="number" id="opt-{{.Key}}" name="{{.Key}}.n" value="{{.Num}}" min="0" max="10000">
       <select name="{{.Key}}.u" aria-label="{{T "editor.unit"}}">{{range .Units}}<option value="{{.}}"{{if eq . $o.Unit}} selected{{end}}>{{T (print "unit.sym." .)}}</option>{{end}}</select></span>
     {{else}}<input type="text" id="opt-{{.Key}}" name="{{.Key}}" value="{{.Value}}">{{end}}
