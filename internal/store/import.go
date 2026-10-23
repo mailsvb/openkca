@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sort"
@@ -17,6 +18,7 @@ const (
 	ImportNew      = "new"      // stored as a new item
 	ImportExists   = "exists"   // already in the database, skipped
 	ImportComplete = "complete" // adds the private part to a stored public key
+	ImportPGP      = "pgp"      // adds or replaces the OpenPGP certificate of a stored key
 )
 
 // ImportPlan is the review entry of one found object.
@@ -29,7 +31,7 @@ type ImportPlan struct {
 // PlanImport checks found objects against the database and each other,
 // with XCA's rules: certificates, requests and CRLs that exist are
 // skipped, keys are skipped unless they add a private part to a stored
-// public key.
+// public key or a new OpenPGP certificate.
 func (h *Handle) PlanImport(ctx context.Context, objs []codec.Object) ([]ImportPlan, error) {
 	plans := make([]ImportPlan, len(objs))
 	seen := map[string]int{}
@@ -46,6 +48,14 @@ func (h *Handle) PlanImport(ctx context.Context, objs []codec.Object) ([]ImportP
 					p.Action = ImportExists
 					if o.Type == xdb.TypeKey && !d.HasPrivate && o.Private != nil {
 						p.Action = ImportComplete
+					} else if o.PGP != nil {
+						cur, err := tx.PGPCert(ctx, d.ID)
+						if err != nil {
+							return err
+						}
+						if !bytes.Equal(cur, o.PGP) {
+							p.Action = ImportPGP
+						}
 					}
 				}
 				// the same object twice in this import: keep the better one
@@ -102,11 +112,16 @@ func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int,
 			var err error
 			switch p.Action {
 			case ImportExists:
+			case ImportPGP:
+				r.ID = p.Existing.ID
 			case ImportComplete:
 				r.ID = p.Existing.ID
 				err = h.completeKey(ctx, tx, p, dbPass, t)
 			default:
 				r.ID, err = insertObject(ctx, tx, p.Object, dbPass)
+			}
+			if err == nil && p.PGP != nil && r.ID != 0 {
+				err = setPGPCert(ctx, tx, r.ID, p.PGP)
 			}
 			if err != nil {
 				return err

@@ -14,7 +14,7 @@ func TestCatalog(t *testing.T) {
 	if got := p.T("app.name"); got != "go-ca" {
 		t.Fatalf("app.name = %q", got)
 	}
-	if got := p.T("databases.schema", 7); got != "schema 7" {
+	if got := p.T("databases.schema", 7); got != "XCA schema 7" {
 		t.Fatalf("format = %q", got)
 	}
 	for n, want := range map[int]string{0: "No revoked certificates", 1: "1 revoked certificate", 3: "3 revoked certificates"} {

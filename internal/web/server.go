@@ -94,8 +94,6 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) Run(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
-	poll := time.NewTicker(30 * time.Second)
-	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -104,9 +102,6 @@ func (s *Server) Run(ctx context.Context) {
 		case <-t.C:
 			s.auth.Sweep()
 			s.dbs.Sweep()
-		case <-poll.C:
-			// Changes desktop XCA makes reach the index files.
-			s.store.PollOpen(ctx)
 		}
 	}
 }
@@ -150,6 +145,13 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /db/{name}/new/sshkey", s.requireServer(s.requireDB(s.newSSHKey)))
 	m.HandleFunc("GET /db/{name}/item/{id}/ssh", s.requireServer(s.requireDB(s.sshKeyPage)))
 	m.HandleFunc("POST /db/{name}/item/{id}/ssh", s.requireServer(s.requireDB(s.sshKeyDownload)))
+	m.HandleFunc("GET /db/{name}/new/pgpkey", s.requireServer(s.requireDB(s.newPGPKeyPage)))
+	m.HandleFunc("POST /db/{name}/new/pgpkey", s.requireServer(s.requireDB(s.newPGPKey)))
+	m.HandleFunc("GET /db/{name}/item/{id}/pgp", s.requireServer(s.requireDB(s.pgpKeyPage)))
+	m.HandleFunc("POST /db/{name}/item/{id}/pgp", s.requireServer(s.requireDB(s.pgpKeyDownload)))
+	m.HandleFunc("POST /db/{name}/item/{id}/pgp/create", s.requireServer(s.requireDB(s.pgpCreate)))
+	m.HandleFunc("POST /db/{name}/item/{id}/pgp/subkey", s.requireServer(s.requireDB(s.pgpAddSubkey)))
+	m.HandleFunc("POST /db/{name}/item/{id}/pgp/remove", s.requireServer(s.requireDB(s.pgpRemove)))
 	m.HandleFunc("GET /db/{name}/new/{kind}", s.requireServer(s.requireDB(s.editorPage)))
 	m.HandleFunc("POST /db/{name}/new/{kind}", s.requireServer(s.requireDB(s.editorSubmit)))
 	m.HandleFunc("POST /db/{name}/item/{id}/rename", s.requireServer(s.requireDB(s.renameItem)))

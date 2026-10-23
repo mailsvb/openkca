@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/md5"
@@ -59,6 +60,11 @@ func DescribePublicKey(der []byte) PublicKeyInfo {
 		case ed25519.PublicKey:
 			info.Algorithm, info.Bits = "Ed25519", 256
 			return info
+		case *ecdh.PublicKey:
+			if k.Curve() == ecdh.X25519() {
+				info.Algorithm, info.Bits = "X25519", 256
+				return info
+			}
 		}
 	}
 	var s spki

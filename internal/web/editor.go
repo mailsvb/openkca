@@ -318,6 +318,9 @@ func choices(snap *xdb.Snapshot) editorChoices {
 			continue
 		}
 		pk := pki.DescribePublicKey(k.Public)
+		if pk.Algorithm == "X25519" {
+			continue // cannot sign a certificate or request
+		}
 		c := choice{ID: k.ID, Label: k.Name, Note: fmt.Sprintf("%s %d", pk.Algorithm, pk.Bits)}
 		if used[k.ID] {
 			usedKeys = append(usedKeys, c)

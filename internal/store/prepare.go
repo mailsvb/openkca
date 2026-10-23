@@ -11,16 +11,17 @@ import (
 // PrepareReport says what PrepareAfterLogin changed.
 type PrepareReport struct {
 	Backup        string // path of the backup taken, "" if none was needed
-	UpgradedFrom  int    // schema before the upgrade, 0 if none
+	UpgradedFrom  int    // schema setting before the upgrade, 0 if none
 	ConvertedKeys int    // legacy 3DES keys re-encrypted as PKCS#8
 	OwnPassLegacy int    // legacy keys with their own password, left as they are
 }
 
-// PrepareAfterLogin runs after a successful database login. It upgrades a
-// schema 5 to 7 file to schema 8 and re-encrypts private keys still in XCA's
-// legacy 3DES form as PKCS#8, as XCA does on open. Both rewrite the file, so
-// a backup is taken first (once for both). Keys with their own password
-// cannot be converted without it and are left alone, as in XCA.
+// PrepareAfterLogin runs after a successful database login. It converts an
+// XCA database (schema 5 to 8) or an older go-ca database to the current
+// go-ca schema and re-encrypts private keys still in XCA's legacy 3DES form
+// as PKCS#8. Both rewrite the file, so a backup is taken first (once for
+// both). Keys with their own password cannot be converted without it and
+// are left alone, as in XCA.
 func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (PrepareReport, error) {
 	h.prepMu.Lock()
 	defer h.prepMu.Unlock()
@@ -40,13 +41,13 @@ func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (Prepar
 		}
 		legacy = append(legacy, r)
 	}
-	if h.DB.Schema >= xdb.CurrentSchema && len(legacy) == 0 {
+	if h.DB.Current() && len(legacy) == 0 {
 		return rep, nil
 	}
 	if rep.Backup, err = h.Backup(ctx); err != nil {
 		return rep, err
 	}
-	if h.DB.Schema < xdb.CurrentSchema {
+	if !h.DB.Current() {
 		from, err := h.DB.Upgrade(ctx)
 		if err != nil {
 			return rep, fmt.Errorf("schema upgrade from %d: %w (backup: %s)", from, err, rep.Backup)

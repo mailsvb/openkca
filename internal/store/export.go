@@ -151,7 +151,8 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 			default:
 				d |= codec.FPVK
 			}
-			if codec.KeyTypeName(r.pub) == "Ed25519" {
+			switch codec.KeyTypeName(r.pub) {
+			case "Ed25519", "X25519":
 				d |= codec.FTradition
 			}
 			if !codec.SSHCompatible(r.pub) {
@@ -163,6 +164,9 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 		}
 		if !k.HasPrivate || k.Token {
 			d |= codec.FPrivate
+		}
+		if PGPOf(snap, k.ID) == nil {
+			d |= codec.FPGP
 		}
 	}
 	return d
@@ -224,8 +228,10 @@ func contentType(f codec.Format) string {
 		return "application/pkcs7-mime"
 	case "pfx":
 		return "application/x-pkcs12"
-	case "pvk", "der", "cer":
+	case "pvk", "der", "cer", "gpg":
 		return "application/octet-stream"
+	case "asc", "rev":
+		return "application/pgp-keys"
 	}
 	return "text/plain; charset=utf-8"
 }
@@ -314,8 +320,11 @@ func unusable(snap *xdb.Snapshot, c *xdb.Cert, now time.Time) bool {
 }
 
 func keyTypeText(k *xdb.Key) string {
-	if k.KeyType == "ED25" {
+	switch k.KeyType {
+	case "ED25":
 		return "ED25519"
+	case "X255":
+		return "X25519"
 	}
 	return k.KeyType
 }
@@ -641,6 +650,9 @@ func (e *exporter) certs() error {
 
 func (e *exporter) keys() error {
 	f := e.f.Flags
+	if f&codec.FPGP != 0 {
+		return e.pgp()
+	}
 	for _, r := range e.refs {
 		k := r.key
 		var s crypto.Signer

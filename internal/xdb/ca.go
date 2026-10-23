@@ -24,7 +24,7 @@ func plainTime(t time.Time) string {
 }
 
 // touchCertsWithSerial marks the CA's certificates with a serial as
-// changed, so that other XCA instances reload their revocation state.
+// changed, so that the snapshot reloads their revocation state.
 func (t *Tx) touchCertsWithSerial(ctx context.Context, caID int64, serial string) error {
 	rows, err := t.QueryContext(ctx, "SELECT item FROM certs WHERE issuer=? AND serial=?", caID, serial)
 	if err != nil {

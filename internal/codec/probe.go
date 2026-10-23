@@ -35,6 +35,10 @@ type Object struct {
 	KeyBits  int
 	Template *tmpl.Template
 	File     string
+	// OpenPGP keys: the fingerprint, and on the primary key the public
+	// certificate to store with it
+	PGPFingerprint string
+	PGP            []byte
 }
 
 // ProbeOptions supply the names XCA gives objects without one.
@@ -58,7 +62,8 @@ type ProbeResult struct {
 // Probe reads all objects of a file in any format XCA imports (PEM with
 // any number of blocks, DER certificates, requests, CRLs and keys, PKCS#7,
 // PKCS#8, PKCS#12, OpenSSH public and private keys, RFC 4716 public keys,
-// PuTTY private keys, PVK and XCA templates).
+// PuTTY private keys, PVK and XCA templates) and OpenPGP keys, armored or
+// binary.
 func Probe(filename string, data []byte, o ProbeOptions) ProbeResult {
 	p := &prober{file: path.Base(strings.ReplaceAll(filename, `\`, "/")), opts: o}
 	if filename == "" {
@@ -72,6 +77,8 @@ func Probe(filename string, data []byte, o ProbeOptions) ProbeResult {
 	switch {
 	case isPPK(text):
 		p.putty(text)
+	case isPGPArmor(text) || isPGPBinary(data):
+		p.pgp(data)
 	case bytes.Contains(text, []byte("-----BEGIN ")):
 		p.pemFile(data)
 	case bytes.Contains(text, []byte(rfc4716Begin)):
@@ -459,6 +466,54 @@ func (p *prober) sshPrivate(what string, key crypto.Signer, comment string, err 
 	p.privateKey(der, SSHComment(comment), comment)
 }
 
+// pgp adds the keys of an OpenPGP file: each primary key and subkey Go can
+// hold becomes a key named after the first user ID; the primary key
+// carries the certificate.
+func (p *prober) pgp(data []byte) {
+	ents, skipped, _, wrong := ReadPGP(data, p.password)
+	if wrong {
+		p.wrongPassword()
+	}
+	for _, s := range skipped {
+		p.skip("%s", s)
+	}
+	for _, e := range ents {
+		uid := ""
+		if len(e.Info.UIDs) > 0 {
+			uid = e.Info.UIDs[0]
+		}
+		for i, k := range e.Info.Keys {
+			if k.Public == nil {
+				p.skip("OpenPGP subkey %s: %s keys cannot be stored", k.Fingerprint, k.Algorithm)
+				continue
+			}
+			spki, err := marshalSPKI(k.Public)
+			if err != nil {
+				p.skip("OpenPGP key %s: %v", k.Fingerprint, err)
+				continue
+			}
+			name, typ, bits := p.keyName(spki, e.Private[i] == nil)
+			if uid != "" {
+				name = uid
+			}
+			if i > 0 {
+				name += " [" + k.Usage + "]"
+			}
+			o := Object{Type: xdb.TypeKey, Name: name, DER: spki, KeyType: typ, KeyBits: bits, PGPFingerprint: k.Fingerprint}
+			if i == 0 {
+				o.PGP = e.Cert
+			}
+			if e.Private[i] != nil {
+				if o.Private, err = pki.MarshalPKCS8(e.Private[i]); err != nil {
+					p.skip("OpenPGP key %s: %v", k.Fingerprint, err)
+					continue
+				}
+			}
+			p.add(o)
+		}
+	}
+}
+
 // sshPublic adds a public key read from an SSH format, named like
 // sshPrivate does.
 func (p *prober) sshPublic(pub crypto.PublicKey, comment string) {
@@ -550,6 +605,10 @@ func (p *prober) pvk(data []byte) {
 }
 
 // marshalSPKI encodes a public key, DSA included.
+// MarshalSPKI encodes a public key as SubjectPublicKeyInfo, including DSA
+// keys, which crypto/x509 no longer writes.
+func MarshalSPKI(pub crypto.PublicKey) ([]byte, error) { return marshalSPKI(pub) }
+
 func marshalSPKI(pub crypto.PublicKey) ([]byte, error) {
 	if k, ok := pub.(*dsa.PublicKey); ok {
 		params, err := asn1.Marshal(struct{ P, Q, G any }{k.P, k.Q, k.G})

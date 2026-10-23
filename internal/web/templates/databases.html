@@ -9,7 +9,7 @@
       <strong>{{.Name}}</strong>
       <span class="muted">{{size .Size}} · {{time .ModTime}}</span>
       <span class="badge badge-{{.Status}}">{{T (print "dbstatus." .Status)}}</span>
-      {{if .Schema}}<span class="muted">{{T "databases.schema" .Schema}}</span>{{end}}
+      {{if .GoCA}}<span class="muted">{{T "databases.goca" .GoCA}}</span>{{else if .Schema}}<span class="muted">{{T "databases.schema" .Schema}}</span>{{end}}
     </div>
     {{if index $open .Name}}
       <a class="button" href="/db/{{.Name}}/">{{T "databases.continue"}}</a>

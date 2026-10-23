@@ -56,7 +56,7 @@ func TestScan(t *testing.T) {
 	}
 	want := map[string]Status{
 		"garbage": Invalid, "legacy": Legacy, "md5": Upgradable, "newer": Newer,
-		"sample": Upgradable, "schema8": Supported, "variants": Upgradable,
+		"sample": Upgradable, "schema8": Upgradable, "variants": Upgradable,
 	}
 	if len(infos) != len(want) {
 		t.Fatalf("got %d databases, want %d: %+v", len(infos), len(want), infos)

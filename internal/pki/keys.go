@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/dsa" //nolint:staticcheck // DSA keys exist in old databases; display only
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -35,7 +36,7 @@ type dsaLegacy struct {
 
 // DecryptPrivateKey decrypts a private_keys.private blob with password,
 // handling both the current PKCS#8 form and XCA's legacy 3DES form. keyType
-// is public_keys.type (RSA, DSA, EC, ED25), needed for the legacy form.
+// is public_keys.type (RSA, DSA, EC, ED25, X255), needed for the legacy form.
 // legacy reports which form the blob had.
 func DecryptPrivateKey(blob []byte, keyType string, password []byte) (key crypto.Signer, legacy bool, err error) {
 	if IsEncryptedPKCS8(blob) {
@@ -91,6 +92,9 @@ func ParsePKCS8(der []byte) (crypto.Signer, error) {
 	if err != nil {
 		return nil, err
 	}
+	if x, ok := k.(*ecdh.PrivateKey); ok && x.Curve() == ecdh.X25519() {
+		return X25519Key{x}, nil
+	}
 	s, ok := k.(crypto.Signer)
 	if !ok {
 		return nil, fmt.Errorf("unsupported private key %T", k)
@@ -106,6 +110,25 @@ func (k DSAKey) Public() crypto.PublicKey { return &k.PublicKey }
 
 func (k DSAKey) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
 	return nil, errors.New("DSA keys cannot sign in go-ca")
+}
+
+// X25519Key wraps an X25519 key (an OpenPGP encryption subkey) so it
+// satisfies crypto.Signer for type handling. It cannot sign.
+type X25519Key struct{ *ecdh.PrivateKey }
+
+func (k X25519Key) Public() crypto.PublicKey { return k.PrivateKey.PublicKey() }
+
+func (k X25519Key) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return nil, errors.New("X25519 keys cannot sign")
+}
+
+// CanSign reports whether a key can make signatures in go-ca.
+func CanSign(k crypto.Signer) bool {
+	switch k.(type) {
+	case DSAKey, X25519Key:
+		return false
+	}
+	return true
 }
 
 func dsaKey(p, q, g, y, x *big.Int) DSAKey {
@@ -160,6 +183,8 @@ func KeyAlgorithm(k crypto.Signer) string {
 		return "Ed25519"
 	case DSAKey:
 		return "DSA"
+	case X25519Key:
+		return "X25519"
 	}
 	return fmt.Sprintf("%T", k)
 }

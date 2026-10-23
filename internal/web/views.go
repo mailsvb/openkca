@@ -10,6 +10,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/store"
 	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
@@ -376,6 +377,7 @@ type detail struct {
 	Entries  []crlEntry
 	// action availability
 	SSH        bool // a key SSH can use
+	PGP        bool // a key with an OpenPGP certificate, or one that can get one
 	HasKey     bool
 	KeyPrivate bool
 	KeyOwnPass bool
@@ -420,7 +422,9 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 			d.KeyInfo = pki.DescribePublicKey(k.Public)
 			if pub, err := codec.ParsePublic(k.Public); err == nil {
 				d.SSH = codec.SSHCompatible(pub)
+				d.PGP = k.HasPrivate && !k.Token && codec.PGPCompatible(pub, 4, false)
 			}
+			d.PGP = d.PGP || store.PGPOf(snap, id) != nil || store.PGPSubkeyOf(snap, id) != nil
 			for _, c := range snap.Certs {
 				if c.KeyID == id {
 					d.UsedBy = append(d.UsedBy, lk(c.ID))

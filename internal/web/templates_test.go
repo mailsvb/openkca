@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/i18n"
 	"github.com/mailsvb/go-ca/internal/store"
 )
@@ -61,7 +62,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -120,6 +121,21 @@ func TestMessageKeys(t *testing.T) {
 	}
 	for _, f := range sshFlavors {
 		keys = append(keys, "sshkey.flavor."+f, "sshkey.flavor."+f+".help")
+	}
+	for _, f := range pgpFlavors {
+		keys = append(keys, "pgpkey.flavor."+f, "pgpkey.flavor."+f+".help")
+	}
+	for _, v := range pgpVersions {
+		keys = append(keys, "pgpkey.version."+v)
+	}
+	for _, e := range pgpExpiries {
+		keys = append(keys, "pgpkey.expiry."+e)
+	}
+	for _, u := range append(pgpUsages, codec.PGPCertify) {
+		keys = append(keys, "pgpkey.usage."+u)
+	}
+	for _, n := range []string{"created", "subkey", "removed"} {
+		keys = append(keys, "pgpkey.notice."+n)
 	}
 	keys = append(keys, "keypw.error.mismatch", "keypw.error.current", "list.deleted.notice")
 	for _, k := range keys {
