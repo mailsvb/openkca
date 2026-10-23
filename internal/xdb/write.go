@@ -199,3 +199,14 @@ func (d *DB) PrivateKeyRows(ctx context.Context) ([]PrivateKeyRow, error) {
 	}
 	return out, rows.Err()
 }
+
+// Read runs fn in a transaction that is rolled back: a consistent view
+// for lookups through Tx methods.
+func (d *DB) Read(ctx context.Context, fn func(*Tx) error) error {
+	sqlTx, err := d.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer sqlTx.Rollback()
+	return fn(&Tx{Tx: sqlTx})
+}

@@ -26,6 +26,7 @@
   {{end}}
   {{if .CSRF}}
   <a href="/oid" class="right">{{T "oid.title"}}</a>
+  <a href="/dh">{{T "dh.title"}}</a>
   <form method="post" action="/logout" class="inline">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button type="submit" class="link">{{T "nav.logout"}}</button>

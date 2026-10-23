@@ -334,7 +334,7 @@ func TestEditorFlow(t *testing.T) {
 	// Mandatory subject entry from the options.
 	opts := url.Values{"default_hash": {"sha384"}, "mandatory_dn": {"O"}, "explicit_dn": {"C,O,CN"}, "string_opt": {"MASK:0x2002"},
 		"serial_len": {"128"}, "cert_expiry.n": {"30"}, "cert_expiry.u": {"D"}, "ical_expiry.n": {"1"}, "ical_expiry.u": {"W"},
-		"pkcs12_enc_algo": {"aes256"}}
+		"pkcs12_enc_algo": {"AES-256-CBC"}}
 	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "notice=saved") {
 		t.Fatalf("options: %s", loc)
 	}

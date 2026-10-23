@@ -1,0 +1,41 @@
+{{template "head" .}}
+{{$f := .Data.F}}{{$db := .DB.Name}}
+<p class="crumbs">{{if eq (len $f.Items) 1}}{{with index $f.Items 0}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a>{{end}}{{else}}<a href="/db/{{$db}}/{{.Tab}}">{{T (print "tab." .Tab)}}</a>{{end}}</p>
+<h1>{{T "export.heading"}}</h1>
+{{if $f.Text}}
+<section class="card">
+  <h2>{{$f.Filename}}</h2>
+  <textarea id="export-text" class="mono small" rows="18" readonly>{{$f.Text}}</textarea>
+  <div class="actionbar"><button type="button" data-copy="export-text" data-copied="{{T "export.copied"}}">{{T "export.copy"}}</button></div>
+</section>
+{{end}}
+<section class="card">
+  <p class="muted">{{T "export.items" (len $f.Items)}}: {{range $i, $it := $f.Items}}{{if $i}}, {{end}}{{$it.Name}}{{end}}</p>
+  <form method="post" action="/db/{{$db}}/export" class="stack wide">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    {{range $f.IDs}}<input type="hidden" name="id" value="{{.}}">{{end}}
+    <fieldset class="formats">
+      <legend>{{T "export.format"}}</legend>
+      {{range $f.Formats}}
+      <label class="format"><input type="radio" name="format" value="{{.ID}}"{{if eq .ID $f.Format}} checked{{end}} required>
+        <span><strong>{{T .Label}}</strong> <span class="mono small">.{{.Ext}}</span>{{if flag .Flags "private"}} <span class="badge">{{T "export.withkey"}}</span>{{end}}{{if flag .Flags "crypt"}} <span class="badge">{{T "export.encrypted"}}</span>{{end}}<br>
+        <span class="muted small">{{T .Help}}</span></span></label>
+      {{end}}
+    </fieldset>
+    <label><input type="checkbox" name="comment" value="1"{{if $f.Comment}} checked{{end}}> {{T "export.comment"}}</label>
+    {{if $f.Crypt}}
+    <label for="ex-pw">{{T "export.password"}}</label>
+    <input type="password" id="ex-pw" name="password" autocomplete="new-password">
+    <label for="ex-pw2">{{T "export.password2"}}</label>
+    <input type="password" id="ex-pw2" name="password2" autocomplete="new-password">
+    <span class="muted small">{{T "export.password.help"}}</span>
+    {{end}}
+    {{if $f.OwnPass}}<label for="ex-kp">{{T "editor.keypass"}}</label><input type="password" id="ex-kp" name="keypass" autocomplete="off">{{end}}
+    <div class="actionbar">
+      <button type="submit" name="action" value="download">{{T "export.download"}}</button>
+      <button type="submit" name="action" value="show" class="secondary">{{T "export.show"}}</button>
+    </div>
+    <span class="muted small">{{T "export.show.help"}}</span>
+  </form>
+</section>
+{{template "foot" .}}

@@ -11,6 +11,9 @@
     {{end}}
   </form>
   <div class="newbuttons">
+    <form id="selform" method="get" action="/db/{{.DB.Name}}/export" class="inline"></form>
+    <button type="submit" form="selform" class="secondary">{{T "list.exportselected"}}</button>
+    <a class="button secondary" href="/db/{{.DB.Name}}/import?tab={{.Tab}}">{{T "list.import"}}</a>
     {{if eq .Tab "keys"}}<a class="button" href="/db/{{.DB.Name}}/new/key">{{T "newkey.button"}}</a>{{end}}
     {{if eq .Tab "requests"}}<a class="button" href="/db/{{.DB.Name}}/new/request">{{T "editor.button.request"}}</a>{{end}}
     {{if eq .Tab "certs"}}<a class="button" href="/db/{{.DB.Name}}/new/cert">{{T "editor.button.cert"}}</a>{{end}}
@@ -25,7 +28,7 @@
 </div>
 <div class="tablewrap">
 <table class="list" id="tbl-{{.Tab}}">
-  <thead><tr>{{range .Data.Columns}}<th class="col-{{.Key}}">{{T .Label}}</th>{{end}}</tr></thead>
+  <thead><tr><th class="col-sel"><span class="sr-only">{{T "list.select"}}</span></th>{{range .Data.Columns}}<th class="col-{{.Key}}">{{T .Label}}</th>{{end}}</tr></thead>
   <tbody id="rows">{{template "rows" .}}</tbody>
 </table>
 </div>
@@ -35,6 +38,7 @@
 {{define "rows"}}{{$cols := .Data.Columns}}{{$db := .DB.Name}}
 {{range .Data.Rows}}{{$row := .}}
 <tr class="{{if .Unusable}}unusable{{end}}">
+<td class="col-sel"><input type="checkbox" name="id" value="{{$row.ID}}" form="selform" aria-label="{{T "list.select"}}"></td>
 {{range $cols}}{{$v := index $row.Cells .Key}}
   <td class="col-{{.Key}} {{index $row.Classes .Key}}">
   {{- if eq .Key "name"}}<a href="/db/{{$db}}/item/{{$row.ID}}" class="tree {{depth $row.Depth}}">{{$v}}</a>
@@ -45,6 +49,6 @@
 {{end}}
 </tr>
 {{else}}
-<tr><td colspan="{{len $cols}}" class="muted">{{T "list.none"}}</td></tr>
+<tr><td></td><td colspan="{{len $cols}}" class="muted">{{T "list.none"}}</td></tr>
 {{end}}
 {{end}}

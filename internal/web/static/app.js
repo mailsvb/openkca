@@ -30,3 +30,25 @@
     document.querySelectorAll(".colmenu[data-table]").forEach(apply);
   });
 })();
+
+// Copy buttons: data-copy names the element whose text is copied.
+(function () {
+  "use strict";
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest ? ev.target.closest("button[data-copy]") : null;
+    if (!btn) { return; }
+    var src = document.getElementById(btn.getAttribute("data-copy"));
+    if (!src) { return; }
+    var text = src.value !== undefined ? src.value : src.textContent;
+    var done = function () {
+      var label = btn.textContent;
+      btn.textContent = btn.getAttribute("data-copied") || label;
+      setTimeout(function () { btn.textContent = label; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { src.select(); });
+    } else if (src.select) {
+      src.select();
+    }
+  });
+})();

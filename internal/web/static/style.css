@@ -124,3 +124,10 @@ details.card > summary, .card details > summary { cursor: pointer; color: var(--
 .newbuttons { margin-left: auto; }
 @media (max-width: 640px) { .grid-form { grid-template-columns: 1fr; } }
 .tablewrap + .card, .tablewrap + section { margin-top: 16px; }
+.stack.wide { max-width: 760px; }
+fieldset.formats { gap: 2px; }
+label.format { display: flex; gap: 8px; align-items: flex-start; color: var(--fg); padding: 4px 0; border-bottom: 1px solid var(--line); }
+label.format:last-child { border-bottom: none; }
+label.format input { margin-top: 4px; }
+.files { margin: 0 0 12px; padding-left: 20px; }
+table.list td.col-sel, table.list th.col-sel { width: 1%; padding-right: 0; }

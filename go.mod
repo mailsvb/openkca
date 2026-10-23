@@ -8,6 +8,7 @@ require (
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.61.0
+	software.sslmate.com/src/go-pkcs12 v0.7.4
 )
 
 require (

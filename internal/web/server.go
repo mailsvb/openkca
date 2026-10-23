@@ -50,9 +50,10 @@ type Server struct {
 	store     *store.Store
 	auth      *auth.Sessions
 	dbs       *session.Manager
-	srvLimit  *auth.Limiter                 // server password, per client IP
-	dbLimit   *auth.Limiter                 // database passwords, per database
-	keyLimit  *auth.Limiter                 // own key passwords, per database session
+	srvLimit  *auth.Limiter // server password, per client IP
+	dbLimit   *auth.Limiter // database passwords, per database
+	keyLimit  *auth.Limiter // own key passwords, per database session
+	dh        dhJobs
 	templates map[string]*template.Template // by language tag
 	log       *slog.Logger
 	mux       *http.ServeMux
@@ -79,6 +80,7 @@ func New(cfg Config) (*Server, error) {
 		keyLimit: auth.NewLimiter(5, time.Minute),
 		log:      cfg.Logger,
 	}
+	s.dh.m = map[string]*dhJob{}
 	s.auth.OnEnd = s.dbs.EndServer
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
@@ -120,6 +122,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /oid", s.requireServer(s.oidPage))
 	m.HandleFunc("POST /{$}", s.requireServer(s.createDB))
 	m.HandleFunc("POST /import", s.requireServer(s.importDB))
+	m.HandleFunc("GET /dh", s.requireServer(s.dhPage))
+	m.HandleFunc("POST /dh", s.requireServer(s.dhStart))
+	m.HandleFunc("POST /dh/cancel", s.requireServer(s.dhCancel))
+	m.HandleFunc("GET /dh/download", s.requireServer(s.dhDownload))
 	m.HandleFunc("POST /db/{name}/login", s.requireServer(s.dbLogin))
 	m.HandleFunc("POST /db/{name}/logout", s.requireServer(s.requireDB(s.dbLogout)))
 	m.HandleFunc("GET /db/{name}/{$}", s.requireServer(s.requireDB(s.dbHome)))
@@ -127,6 +133,14 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /db/{name}/item/{id}", s.requireServer(s.requireDB(s.item)))
 	m.HandleFunc("POST /db/{name}/item/{id}/check-key", s.requireServer(s.requireDB(s.checkKey)))
 	m.HandleFunc("GET /db/{name}/{tab}", s.requireServer(s.requireDB(s.list)))
+	m.HandleFunc("GET /db/{name}/export", s.requireServer(s.requireDB(s.exportPage)))
+	m.HandleFunc("POST /db/{name}/export", s.requireServer(s.requireDB(s.exportSubmit)))
+	m.HandleFunc("GET /db/{name}/import", s.requireServer(s.requireDB(s.importPage)))
+	m.HandleFunc("POST /db/{name}/import", s.requireServer(s.requireDB(s.importUpload)))
+	m.HandleFunc("POST /db/{name}/import/password", s.requireServer(s.requireDB(s.importPassword)))
+	m.HandleFunc("POST /db/{name}/import/commit", s.requireServer(s.requireDB(s.importCommit)))
+	m.HandleFunc("POST /db/{name}/import/cancel", s.requireServer(s.requireDB(s.importCancel)))
+	m.HandleFunc("POST /db/{name}/dump", s.requireServer(s.requireDB(s.dump)))
 	m.HandleFunc("POST /db/{name}/options", s.requireServer(s.requireDB(s.saveOptions)))
 	m.HandleFunc("GET /db/{name}/password", s.requireServer(s.requireDB(s.dbPasswordPage)))
 	m.HandleFunc("POST /db/{name}/password", s.requireServer(s.requireDB(s.dbPassword)))

@@ -1,0 +1,25 @@
+{{template "head" .}}
+<h1>{{T "dh.heading"}}</h1>
+<section class="card">
+  <p class="muted">{{T "dh.intro"}}</p>
+  <div id="dhstatus">{{template "dhstatus" .}}</div>
+  <form method="post" action="/dh" class="inline-fields">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="dh-bits">{{T "dh.bits"}}</label>
+    <input type="number" id="dh-bits" name="bits" value="2048" min="{{.Data.Min}}" max="{{.Data.Max}}" step="1" required>
+    <button type="submit">{{T "dh.start"}}</button>
+  </form>
+  <p class="muted small">{{T "dh.timing"}}</p>
+</section>
+{{template "foot" .}}
+
+{{define "dhstatus"}}{{with .Data.Job}}
+<div{{if not .Done}} hx-get="/dh?part=status" hx-trigger="every 2s" hx-target="#dhstatus" hx-swap="innerHTML"{{end}}>
+  {{if .Failed}}<p class="error">{{T "dh.failed" .Failed}}</p>
+  {{else if .Done}}<p class="ok">{{T "dh.done" .Bits .Elapsed}}</p>
+  <div class="actionbar"><a class="button" href="/dh/download">{{T "dh.download"}}</a></div>
+  {{else}}<p>{{T "dh.running" .Bits .Elapsed .Tried}}</p>
+  <form method="post" action="/dh/cancel" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit" class="secondary">{{T "dh.cancel"}}</button></form>
+  {{end}}
+</div>
+{{end}}{{end}}

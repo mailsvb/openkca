@@ -144,6 +144,7 @@
 <section class="card">
   <h2>{{T "actions.heading"}}</h2>
   <div class="actionbar">
+    <a class="button" href="/db/{{$db}}/export?id={{$id}}">{{T "actions.export"}}</a>
     {{if eq $d.Kind "cert"}}
       <a class="button secondary" href="/db/{{$db}}/new/cert?similar={{$id}}">{{T "actions.similar.cert"}}</a>
       {{if and $d.Cert.CA $d.KeyPrivate}}<a class="button secondary" href="/db/{{$db}}/new/cert?signer={{$id}}">{{T "actions.issue"}}</a>{{end}}

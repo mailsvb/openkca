@@ -339,7 +339,10 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Target") != "rows" {
 		delete(p.Data, "fragment")
 	}
-	if r.URL.Query().Get("notice") == "deleted" {
+	switch r.URL.Query().Get("notice") {
+	case "imported":
+		p.Notice, p.NoticeArg = "importitems.done", r.URL.Query().Get("n")
+	case "deleted":
 		p.Notice = "list.deleted.notice"
 	}
 	s.render(w, r, http.StatusOK, "list", p)
@@ -643,7 +646,7 @@ var optionKeys = []struct {
 	{"serial_len", "opt.serial_len", "64", "select", serialLens, ""},
 	{"cert_expiry", "opt.cert_expiry", "80%", "expiry", nil, "%DW"},
 	{"ical_expiry", "opt.ical_expiry", "1W", "expiry", nil, "DW"},
-	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", "aes256", "text", nil, ""},
+	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", "PBE-SHA1-3DES", "select", []string{"PBE-SHA1-3DES", "AES-256-CBC", "PBE-SHA1-RC2-40"}, ""},
 	{"disable_netscape", "opt.disable_netscape", "no", "bool", nil, ""},
 	{"no_expire_colors", "opt.no_expire_colors", "no", "bool", nil, ""},
 	{"hide_unusable", "opt.hide_unusable", "no", "bool", nil, ""},

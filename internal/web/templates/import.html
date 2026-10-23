@@ -1,0 +1,64 @@
+{{template "head" .}}
+{{$db := .DB.Name}}
+<h1>{{T "importitems.heading"}}</h1>
+{{if .Data.Files}}
+<section class="card">
+  <h2>{{T "importitems.review"}}</h2>
+  <ul class="files">
+  {{range .Data.Files}}
+    <li><span class="mono">{{if .Name}}{{.Name}}{{else}}{{T "importitems.pasted"}}{{end}}</span>:
+      {{T "importitems.found" (len .Result.Objects)}}
+      {{if .Result.PasswordWrong}}<span class="badge st-revoked">{{T "importitems.wrongpassword"}}</span>{{else if .Result.NeedPassword}}<span class="badge">{{T "importitems.needpassword"}}</span>{{end}}
+      {{range .Result.Unrecognized}}<div class="muted small">{{T "importitems.skipped" .}}</div>{{end}}
+    </li>
+  {{end}}
+  </ul>
+  {{if .Data.NeedPassword}}
+  <form method="post" action="/db/{{$db}}/import/password" class="inline-fields">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="im-pw2">{{T "importitems.password"}}</label>
+    <input type="password" id="im-pw2" name="password" autocomplete="off" required>
+    <button type="submit">{{T "importitems.password.apply"}}</button>
+  </form>
+  {{end}}
+  {{if .Data.Plans}}
+  <form method="post" action="/db/{{$db}}/import/commit">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="tablewrap"><table class="list">
+      <thead><tr><th>{{T "importitems.import"}}</th><th>{{T "item.type"}}</th><th>{{T "col.name"}}</th><th>{{T "importitems.details"}}</th><th>{{T "importitems.file"}}</th></tr></thead>
+      <tbody>
+      {{range $i, $p := .Data.Plans}}
+      <tr>
+        <td><input type="checkbox" name="sel" value="{{$i}}" aria-label="{{T "importitems.import"}}"{{if ne $p.Action "exists"}} checked{{else}} disabled{{end}}></td>
+        <td>{{T (print "importitems.type." $p.Type)}}</td>
+        <td><input type="text" name="name.{{$i}}" value="{{$p.Name}}" aria-label="{{T "col.name"}}"{{if eq $p.Action "exists"}} disabled{{end}}></td>
+        <td class="small">{{if eq $p.Action "exists"}}{{with $p.Existing}}{{T "importitems.exists" .Name}}{{else}}{{T "importitems.duplicate"}}{{end}}{{else if eq $p.Action "complete"}}{{T "importitems.complete" $p.Existing.Name}}{{else}}{{T "importitems.new"}}{{end}}
+          {{if eq $p.Type 1}} · {{T "unit.bits" $p.KeyBits}} {{$p.KeyType}}{{if $p.Private}} · {{T "importitems.private"}}{{end}}{{end}}</td>
+        <td class="mono small">{{$p.File}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table></div>
+    <div class="actionbar"><button type="submit">{{T "importitems.submit"}}</button></div>
+  </form>
+  {{end}}
+  <form method="post" action="/db/{{$db}}/import/cancel" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="secondary">{{T "importitems.cancel"}}</button>
+  </form>
+</section>
+{{end}}
+<section class="card">
+  <h2>{{T "importitems.upload"}}</h2>
+  <form class="stack wide" hx-post="/db/{{$db}}/import" hx-encoding="multipart/form-data">
+    <label for="im-files">{{T "importitems.files"}}</label>
+    <input type="file" id="im-files" name="file" multiple>
+    <label for="im-pem">{{T "importitems.paste"}}</label>
+    <textarea id="im-pem" name="pem" rows="8" class="mono small" placeholder="{{T "importitems.paste.placeholder"}}"></textarea>
+    <label for="im-pw">{{T "importitems.password"}}</label>
+    <input type="password" id="im-pw" name="password" autocomplete="off">
+    <span class="muted small">{{T "importitems.help" .Data.MaxUploadMB}}</span>
+    <button type="submit">{{T "importitems.read"}}</button>
+  </form>
+</section>
+{{template "foot" .}}

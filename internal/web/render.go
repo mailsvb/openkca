@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/i18n"
 	"github.com/mailsvb/go-ca/internal/session"
 )
@@ -107,6 +108,9 @@ func funcs(pr *i18n.Printer) template.FuncMap {
 				}
 			}
 			return strings.Join(out, ", ")
+		},
+		"flag": func(f codec.Flags, name string) bool {
+			return f&map[string]codec.Flags{"private": codec.FPrivate, "crypt": codec.FCrypt}[name] != 0
 		},
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}

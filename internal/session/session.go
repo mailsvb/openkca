@@ -21,6 +21,28 @@ type Session struct {
 	mu       sync.Mutex
 	password []byte
 	lastSeen time.Time
+	pending  Wipeable
+}
+
+// Wipeable is per-session state that holds secrets (an import in review
+// with decrypted keys) and must be cleared when the session ends.
+type Wipeable interface{ Wipe() }
+
+// Pending returns the session's pending state, if any.
+func (s *Session) Pending() Wipeable {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pending
+}
+
+// SetPending replaces the pending state, wiping the previous one.
+func (s *Session) SetPending(v Wipeable) {
+	s.mu.Lock()
+	if s.pending != nil && s.pending != v {
+		s.pending.Wipe()
+	}
+	s.pending = v
+	s.mu.Unlock()
 }
 
 // Password returns a copy of the database password; the caller should clear it.
@@ -42,6 +64,10 @@ func (s *Session) wipe() {
 	s.mu.Lock()
 	clear(s.password)
 	s.password = nil
+	if s.pending != nil {
+		s.pending.Wipe()
+		s.pending = nil
+	}
 	s.mu.Unlock()
 }
 

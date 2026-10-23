@@ -1,0 +1,164 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"sort"
+	"time"
+
+	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/go-ca/internal/xdb"
+)
+
+// Import actions.
+const (
+	ImportNew      = "new"      // stored as a new item
+	ImportExists   = "exists"   // already in the database, skipped
+	ImportComplete = "complete" // adds the private part to a stored public key
+)
+
+// ImportPlan is the review entry of one found object.
+type ImportPlan struct {
+	codec.Object
+	Action   string
+	Existing *xdb.Duplicate
+}
+
+// PlanImport checks found objects against the database and each other,
+// with XCA's rules: certificates, requests and CRLs that exist are
+// skipped, keys are skipped unless they add a private part to a stored
+// public key.
+func (h *Handle) PlanImport(ctx context.Context, objs []codec.Object) ([]ImportPlan, error) {
+	plans := make([]ImportPlan, len(objs))
+	seen := map[string]int{}
+	err := h.DB.Read(ctx, func(tx *xdb.Tx) error {
+		for i, o := range objs {
+			p := ImportPlan{Object: o, Action: ImportNew}
+			if o.Type != xdb.TypeTemplate {
+				d, err := tx.FindDuplicate(ctx, o.Type, o.DER)
+				if err != nil {
+					return err
+				}
+				if d != nil {
+					p.Existing = d
+					p.Action = ImportExists
+					if o.Type == xdb.TypeKey && !d.HasPrivate && o.Private != nil {
+						p.Action = ImportComplete
+					}
+				}
+				// the same object twice in this import: keep the better one
+				k := string(rune(o.Type)) + string(o.DER)
+				if j, ok := seen[k]; ok {
+					if o.Type == xdb.TypeKey && o.Private != nil && plans[j].Private == nil {
+						plans[j].Action = ImportExists
+					} else {
+						p.Action = ImportExists
+					}
+				}
+				if p.Action != ImportExists {
+					seen[k] = i
+				}
+			}
+			plans[i] = p
+		}
+		return nil
+	})
+	return plans, err
+}
+
+// ImportResult reports one stored object.
+type ImportResult struct {
+	Index  int
+	ID     int64
+	Action string
+	Err    error
+}
+
+var importOrder = map[int]int{xdb.TypeKey: 0, xdb.TypeCert: 1, xdb.TypeRequest: 2, xdb.TypeCRL: 3, xdb.TypeTemplate: 4}
+
+// Import stores the selected plans (indexes into plans) in one
+// transaction: keys first so that certificates and requests link to them,
+// CRLs after the certificates so that revocations reach their CA. Names
+// are taken from the plans, which the caller may have edited.
+func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int, dbPass []byte, t Translator) ([]ImportResult, error) {
+	if t == nil {
+		t = func(k string, a ...any) string { return k }
+	}
+	order := append([]int(nil), selected...)
+	sort.SliceStable(order, func(a, b int) bool {
+		return importOrder[plans[order[a]].Type] < importOrder[plans[order[b]].Type]
+	})
+	var results []ImportResult
+	err := h.DB.Write(ctx, func(tx *xdb.Tx) error {
+		results = results[:0]
+		for _, i := range order {
+			if i < 0 || i >= len(plans) {
+				return errors.New("invalid selection")
+			}
+			p := plans[i]
+			r := ImportResult{Index: i, Action: p.Action}
+			var err error
+			switch p.Action {
+			case ImportExists:
+			case ImportComplete:
+				r.ID = p.Existing.ID
+				err = h.completeKey(ctx, tx, p, dbPass, t)
+			default:
+				r.ID, err = insertObject(ctx, tx, p.Object, dbPass)
+			}
+			if err != nil {
+				return err
+			}
+			results = append(results, r)
+		}
+		return nil
+	})
+	h.changed(ctx)
+	return results, err
+}
+
+func (h *Handle) completeKey(ctx context.Context, tx *xdb.Tx, p ImportPlan, dbPass []byte, t Translator) error {
+	blob, err := pki.EncryptPKCS8(p.Private, dbPass)
+	if err != nil {
+		return err
+	}
+	comment, err := tx.Comment(ctx, p.Existing.ID)
+	if err != nil {
+		return err
+	}
+	date := p.Existing.Date
+	if tm, err := xdb.ParseTime(date); err == nil {
+		date = tm.UTC().Format(time.DateTime)
+	}
+	comment = xdb.AppendComment(comment, t("import.key_extended", date, p.Name))
+	return tx.CompleteKey(ctx, p.Existing.ID, blob, xdb.PassCommon, comment)
+}
+
+const sourceImported = 1
+
+func insertObject(ctx context.Context, tx *xdb.Tx, o codec.Object, dbPass []byte) (int64, error) {
+	switch o.Type {
+	case xdb.TypeKey:
+		k := xdb.NewKey{Name: o.Name, Comment: o.Comment, Source: sourceImported, KeyType: o.KeyType, Len: o.KeyBits, SPKI: o.DER}
+		if o.Private != nil {
+			blob, err := pki.EncryptPKCS8(o.Private, dbPass)
+			if err != nil {
+				return 0, err
+			}
+			k.Private, k.OwnPass = blob, xdb.PassCommon
+		}
+		return tx.InsertKey(ctx, k)
+	case xdb.TypeCert:
+		return tx.InsertCert(ctx, xdb.NewCert{Name: o.Name, Comment: o.Comment, Source: sourceImported, DER: o.DER})
+	case xdb.TypeRequest:
+		return tx.InsertRequest(ctx, xdb.NewRequest{Name: o.Name, Comment: o.Comment, Source: sourceImported, DER: o.DER})
+	case xdb.TypeCRL:
+		id, _, err := tx.InsertImportedCRL(ctx, o.Name, o.Comment, o.DER)
+		return id, err
+	case xdb.TypeTemplate:
+		return tx.InsertTemplate(ctx, o.Name, o.Comment, sourceImported, tmpl.Encode(o.Template))
+	}
+	return 0, errors.New("unsupported item type")
+}
