@@ -96,7 +96,7 @@ prints the version of a binary.
 
 ## Build
 
-Requires Go 1.26 or later (the toolchain is downloaded automatically by older
+Requires Go 1.27 or later (the toolchain is downloaded automatically by older
 `go` commands). No C compiler is needed:
 
 ```sh
@@ -200,5 +200,5 @@ revocations go-ca recorded, and add a key.
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
 and lets the XCA command line import each file.
 
-Third-party code: [htmx](https://htmx.org) 2.0.4 (BSD Zero Clause License,
+Third-party code: [htmx](https://htmx.org) 2.0.11 (BSD Zero Clause License,
 `internal/web/static/htmx.LICENSE`).
