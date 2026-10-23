@@ -117,6 +117,22 @@ func parseECPoint(c elliptic.Curve, b []byte) (*ecdsa.PublicKey, error) {
 	return &ecdsa.PublicKey{Curve: c, X: x, Y: y}, nil
 }
 
+// CurveByName returns the curve of ECCurves with that name, nil if go-ca
+// does not know it.
+func CurveByName(name string) *ECCurve { return curveByName(name) }
+
+// ParseECPoint decodes an uncompressed point on any curve of ECCurves.
+func ParseECPoint(c elliptic.Curve, b []byte) (*ecdsa.PublicKey, error) { return parseECPoint(c, b) }
+
+// ECPrivateKeyFromScalar builds an ECDSA key from its big-endian scalar on
+// any curve of ECCurves.
+func ECPrivateKeyFromScalar(c elliptic.Curve, d []byte) (*ecdsa.PrivateKey, error) {
+	if len(d) > ecSize(c) {
+		return nil, errors.New("ec: bad private key length")
+	}
+	return ecPrivateFromScalar(c, d)
+}
+
 // ecPrivateFromScalar builds an ECDSA key from its scalar on any curve.
 func ecPrivateFromScalar(c elliptic.Curve, d []byte) (*ecdsa.PrivateKey, error) {
 	if CurveOf(c) != nil && CurveOf(c).NIST {
@@ -259,6 +275,14 @@ func newMLKEMPublicKey(p *MLKEMParams, b []byte) (*MLKEMPublicKey, error) {
 	}
 	return &MLKEMPublicKey{p, append([]byte(nil), b...)}, nil
 }
+
+// NewMLKEMPublicKey decodes an ML-KEM encapsulation key.
+func NewMLKEMPublicKey(p *MLKEMParams, b []byte) (*MLKEMPublicKey, error) {
+	return newMLKEMPublicKey(p, b)
+}
+
+// MLKEMParamsByName returns an ML-KEM parameter set ("ML-KEM-768").
+func MLKEMParamsByName(name string) *MLKEMParams { return mlkemByName(name) }
 
 // Bytes returns the encoded encapsulation key.
 func (k *MLKEMPublicKey) Bytes() []byte { return append([]byte(nil), k.key...) }

@@ -376,6 +376,7 @@
   "pgpkey.error.notpgp": "This item is not a key that OpenPGP can use.",
   "pgpkey.error.failed": "The action failed: %s",
   "pgpkey.error.subkey": "This key cannot be a subkey with this usage.",
+  "pgpkey.error.version": "This key type exists only as a version 6 OpenPGP key.",
   "pgpkey.error.confirm": "Confirm the removal.",
   "pgpkey.error.noprivate": "There is no private key for this OpenPGP key.",
   "editor.title.cert": "New certificate",

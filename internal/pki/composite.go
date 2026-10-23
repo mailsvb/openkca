@@ -91,6 +91,14 @@ func compositeByOID(oid asn1.ObjectIdentifier) *CompositeAlg {
 	return nil
 }
 
+// CompositeAlgByName returns the Composite ML-DSA algorithm with that name
+// ("MLDSA65-Ed25519-SHA512"), nil if there is none.
+func CompositeAlgByName(name string) *CompositeAlg { return compositeByName(name) }
+
+// CompositeKEMAlgByName returns the Composite ML-KEM algorithm with that
+// name ("MLKEM768-X25519-SHA3-256"), nil if there is none.
+func CompositeKEMAlgByName(name string) *CompositeKEMAlg { return compositeKEMByName(name) }
+
 func compositeByName(name string) *CompositeAlg {
 	for _, a := range CompositeAlgs {
 		if a.Name == name {

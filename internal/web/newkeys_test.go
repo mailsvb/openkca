@@ -119,3 +119,53 @@ func TestNewKeyTypesUI(t *testing.T) {
 		}
 	}
 }
+
+// TestNewPGPKeyTypes creates OpenPGP keys of the new types through the
+// form: Ed448, Brainpool and the v6-only ML-DSA composite.
+func TestNewPGPKeyTypes(t *testing.T) {
+	ts, _ := newTestServer(t)
+	c := client(t, ts)
+	csrf := login(t, ts, c)
+	post := func(path string, v url.Values) *http.Response {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := c.PostForm(ts.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	post("/", url.Values{"name": {"pg"}, "password": {"pw"}, "password2": {"pw"}})
+	post("/db/pg/login", url.Values{"password": {"pw"}})
+	for _, tc := range []struct {
+		typ, version string
+		want         []string
+	}{
+		{"Ed448", "4", []string{"Ed448", "X448"}},
+		{"EC:brainpoolP384r1", "4", []string{"ECDSA BrainpoolP384", "ECDH BrainpoolP384"}},
+		{"Composite:MLDSA65-Ed25519-SHA512", "6", []string{"ML-DSA-65+Ed25519", "ML-KEM-768+X25519"}},
+		{"Composite:MLDSA87-Ed448-SHAKE256", "6", []string{"ML-DSA-87+Ed448", "ML-KEM-1024+X448"}},
+	} {
+		form := url.Values{"name": {tc.typ}, "type": {tc.typ}, "version": {tc.version}, "expiry": {"2y"}, "subkey": {"1"},
+			"uids": {"New <new@example.org>"}}
+		r := post("/db/pg/new/pgpkey", form)
+		loc := r.Header.Get("Location")
+		if !strings.HasSuffix(loc, "/pgp?notice=created") {
+			t.Fatalf("%s: %d %s %s", tc.typ, r.StatusCode, loc, body(t, r))
+		}
+		r, _ = c.Get(ts.URL + loc)
+		b := html.UnescapeString(body(t, r))
+		for _, w := range tc.want {
+			if !strings.Contains(b, w) {
+				t.Errorf("%s: PGP page lacks %q", tc.typ, w)
+			}
+		}
+	}
+	// the composites exist as v6 keys only
+	form := url.Values{"name": {"v4"}, "type": {"Composite:MLDSA65-Ed25519-SHA512"}, "version": {"4"}, "expiry": {"2y"},
+		"uids": {"New <new@example.org>"}}
+	r := post("/db/pg/new/pgpkey", form)
+	if b := body(t, r); r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(b, "version 6") {
+		t.Errorf("v4 composite: %d", r.StatusCode)
+	}
+}

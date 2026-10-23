@@ -422,7 +422,7 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 			d.KeyInfo = pki.DescribePublicKey(k.Public)
 			if pub, err := codec.ParsePublic(k.Public); err == nil {
 				d.SSH = codec.SSHCompatible(pub)
-				d.PGP = k.HasPrivate && !k.Token && codec.PGPCompatible(pub, 4, false)
+				d.PGP = k.HasPrivate && !k.Token && (codec.PGPCompatible(pub, 4, false) || codec.PGPCompatible(pub, 6, false))
 			}
 			d.PGP = d.PGP || store.PGPOf(snap, id) != nil || store.PGPSubkeyOf(snap, id) != nil
 			for _, c := range snap.Certs {
