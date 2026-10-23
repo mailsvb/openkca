@@ -148,6 +148,19 @@ func SerialHex(n *big.Int) string {
 	return h
 }
 
+// RawSubject returns the DER subject of a certificate, also for
+// certificates crypto/x509 rejects.
+func RawSubject(der []byte) ([]byte, error) {
+	if c, err := x509.ParseCertificate(der); err == nil {
+		return c.RawSubject, nil
+	}
+	var cert struct{ TBS tbsFallback }
+	if _, err := asn1.Unmarshal(der, &cert); err != nil {
+		return nil, err
+	}
+	return cert.TBS.Subject.FullBytes, nil
+}
+
 // DescribeCert decodes a DER certificate.
 func DescribeCert(der []byte) *CertInfo {
 	info := &CertInfo{Fingerprints: fingerprints(der)}

@@ -1,0 +1,45 @@
+{{template "head" .}}
+{{$ca := .Data.CA}}{{$db := .DB.Name}}{{$csrf := .CSRF}}{{$reasons := .Data.Reasons}}
+<p class="crumbs"><a href="/db/{{$db}}/item/{{$ca.ID}}">{{$ca.Name}}</a></p>
+<h1>{{T "rev.heading" $ca.Name}}</h1>
+<div class="tablewrap">
+<table class="list">
+  <thead><tr><th>{{T "cert.serial"}}</th><th>{{T "crl.certificate"}}</th><th>{{T "crl.date"}}</th><th>{{T "rev.invaldate"}}</th><th>{{T "crl.reason"}}</th><th>{{T "rev.crlno"}}</th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}{{$row := .}}
+  <tr>
+    <td class="mono">{{.Serial}}</td>
+    <td>{{if .Cert.ID}}<a href="/db/{{$db}}/item/{{.Cert.ID}}">{{.Cert.Name}}</a>{{end}}</td>
+    <td>{{time .Date}}</td>
+    <td colspan="2">
+      <form method="post" class="inline-fields">
+        <input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="serial" value="{{.Serial}}">
+        <input type="datetime-local" name="invaldate" value="{{.InvalLocal}}" aria-label="{{T "rev.invaldate"}}">
+        <select name="reason" aria-label="{{T "crl.reason"}}">{{range $reasons}}<option value="{{.Code}}"{{if eq .Code $row.ReasonBit}} selected{{end}}>{{T (print "reason." .Name)}}</option>{{end}}</select>
+        <button type="submit" name="action" value="edit" class="secondary">{{T "actions.save"}}</button>
+        <button type="submit" name="action" value="delete" class="secondary">{{T "actions.delete"}}</button>
+      </form>
+    </td>
+    <td>{{if .CRLNo}}{{.CRLNo}}{{end}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6" class="muted">{{T "rev.none"}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<section class="card">
+  <h2>{{T "rev.add"}}</h2>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="serial">{{T "cert.serial"}}</label>
+    <input type="text" id="serial" name="serial" required placeholder="{{T "rev.serialhelp"}}">
+    <label for="reason">{{T "crl.reason"}}</label>
+    <select id="reason" name="reason">{{range $reasons}}<option value="{{.Code}}">{{T (print "reason." .Name)}}</option>{{end}}</select>
+    <label for="invaldate">{{T "rev.invaldate"}}</label>
+    <input type="datetime-local" id="invaldate" name="invaldate" value="{{.Data.Now}}">
+    <button type="submit" name="action" value="add">{{T "rev.addbutton"}}</button>
+  </form>
+  <p class="muted small">{{T "rev.help"}}</p>
+</section>
+{{template "foot" .}}

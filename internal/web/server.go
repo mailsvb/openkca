@@ -92,6 +92,8 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) Run(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
+	poll := time.NewTicker(30 * time.Second)
+	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -100,6 +102,9 @@ func (s *Server) Run(ctx context.Context) {
 		case <-t.C:
 			s.auth.Sweep()
 			s.dbs.Sweep()
+		case <-poll.C:
+			// Changes desktop XCA makes reach the index files.
+			s.store.PollOpen(ctx)
 		}
 	}
 }
@@ -134,6 +139,15 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /db/{name}/item/{id}/extract-key", s.requireServer(s.requireDB(s.extractKey)))
 	m.HandleFunc("POST /db/{name}/item/{id}/to-request", s.requireServer(s.requireDB(s.toRequest)))
 	m.HandleFunc("POST /db/{name}/item/{id}/key-password", s.requireServer(s.requireDB(s.keyPassword)))
+	m.HandleFunc("POST /db/{name}/item/{id}/revoke", s.requireServer(s.requireDB(s.revokeCert)))
+	m.HandleFunc("POST /db/{name}/item/{id}/unrevoke", s.requireServer(s.requireDB(s.unrevokeCert)))
+	m.HandleFunc("POST /db/{name}/item/{id}/ca-properties", s.requireServer(s.requireDB(s.caProperties)))
+	m.HandleFunc("GET /db/{name}/item/{id}/revocations", s.requireServer(s.requireDB(s.revocationsPage)))
+	m.HandleFunc("POST /db/{name}/item/{id}/revocations", s.requireServer(s.requireDB(s.revocationsSubmit)))
+	m.HandleFunc("GET /db/{name}/item/{id}/crl", s.requireServer(s.requireDB(s.crlPage)))
+	m.HandleFunc("POST /db/{name}/item/{id}/crl", s.requireServer(s.requireDB(s.crlSubmit)))
+	m.HandleFunc("GET /db/{name}/item/{id}/renew", s.requireServer(s.requireDB(s.renewPage)))
+	m.HandleFunc("POST /db/{name}/item/{id}/renew", s.requireServer(s.requireDB(s.renewSubmit)))
 	s.mux = m
 }
 

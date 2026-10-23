@@ -7,7 +7,7 @@ desktop XCA.
 
 ## Status
 
-**Phase 3 of 6: keys, requests and certificates.** go-ca opens, creates and
+**Phase 4 of 6: CA operations.** go-ca opens, creates and
 imports XCA databases and shows keys, certificate signing requests,
 certificates (as a tree under their issuers), templates, revocation lists and
 the shared options. You can:
@@ -21,7 +21,16 @@ the shared options. You can:
 - sign requests, create similar certificates and requests, transform a
   certificate into a request, extract public keys, mark requests signed,
 - rename, comment and delete items, give keys their own password or reset it,
-  change the database password (after a backup) and edit the shared options.
+  change the database password (after a backup) and edit the shared options,
+- revoke and unrevoke certificates, manage a CA's revocations (also of
+  serials not in the database), set CA properties (CRL interval, default
+  template), generate CRLs with XCA's options and renew certificates
+  (new or same serial, optionally revoking or deleting the old one).
+
+For every CA, go-ca keeps an OpenSSL `ca` style index current in
+`<data-dir>/index/<database>/<CA>/index.txt` (plus `index.txt.attr`),
+rewritten after every change and when desktop XCA changes the open
+database, usable directly with `openssl ocsp -index`.
 
 Everything is written the way XCA writes it (items, hashes, key and issuer
 links, `stamp`), so a desktop XCA with the same file open picks it up.
@@ -31,8 +40,7 @@ first saves a backup and then upgrades it to schema 8, as XCA 2.7 and later
 do; XCA 2.6 still opens the upgraded file. Private keys still in XCA's legacy
 3DES format are re-encrypted as PKCS#8 at the same time.
 
-Later phases add CA operations (revocation, CRLs, renewal), templates and
-every import and export format.
+Later phases add templates and every import and export format.
 
 | XCA database                        | go-ca                                          |
 | ----------------------------------- | ---------------------------------------------- |
@@ -84,6 +92,7 @@ will warn about the name until you pass a certificate for the real host name.
     ├── server-password   argon2id hash
     ├── tls.crt, tls.key  self-issued certificate
     └── backup/           <name>.<yyyyMMddHHmmss>.xdb, newest 10 per database
+/srv/xca/index/<database>/<CA>/index.txt   per-CA certificate index
 ```
 
 A backup is written before every change that rewrites a whole database
@@ -122,8 +131,9 @@ go test -race ./...
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
 password, schema 8 and 9, a pre-2.0 file). Regenerate them with
 `testdata/gen/gen-fixtures.sh` (needs `xca`, `openssl`, `sqlite3`, `perl`).
-`testdata/gen/check-with-xca.sh` writes a database with go-ca's code and has
-the XCA command line list it, sign a CRL with a go-ca CA and add a key.
+`testdata/gen/check-with-xca.sh` writes databases with go-ca's code and has
+the XCA command line list them, sign CRLs with go-ca CAs and over
+revocations go-ca recorded, and add a key.
 
 Third-party code: [htmx](https://htmx.org) 2.0.4 (BSD Zero Clause License,
 `internal/web/static/htmx.LICENSE`).

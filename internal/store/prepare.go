@@ -82,6 +82,6 @@ func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (Prepar
 		}
 		rep.ConvertedKeys = len(legacy)
 	}
-	h.Invalidate()
+	h.changed(ctx)
 	return rep, nil
 }

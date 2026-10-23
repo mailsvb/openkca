@@ -1,0 +1,29 @@
+{{template "head" .}}
+{{$c := .Data.C}}{{$db := .DB.Name}}
+<p class="crumbs"><a href="/db/{{$db}}/item/{{$c.ID}}">{{$c.Name}}</a></p>
+<h1>{{T "renew.heading" $c.Name}}</h1>
+<section class="card">
+  <form method="post" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="notbefore">{{T "cert.notbefore"}}</label><input type="datetime-local" id="notbefore" name="notbefore" value="{{.Data.NotBefore}}">
+    <label for="notafter">{{T "cert.notafter"}}</label><input type="datetime-local" id="notafter" name="notafter" value="{{.Data.NotAfter}}">
+    <span></span>
+    <div class="checks">
+      <label><input type="checkbox" name="noexpiry" value="1"{{if .Data.NoExpiry}} checked{{end}}> {{T "cert.noexpiry"}}</label>
+      <label><input type="checkbox" name="keepserial" value="1"> {{T "renew.keepserial"}}</label>
+      <label><input type="checkbox" name="replace" value="1"> {{T "renew.replace"}}</label>
+    </div>
+    {{if not .Data.Self}}
+    <span></span>
+    <label><input type="checkbox" name="revoke" value="1"> {{T "renew.revoke"}}</label>
+    <label for="reason">{{T "crl.reason"}}</label>
+    <select id="reason" name="reason">{{range .Data.Reasons}}<option value="{{.Code}}"{{if eq .Code 4}} selected{{end}}>{{T (print "reason." .Name)}}</option>{{end}}</select>
+    <label for="invaldate">{{T "rev.invaldate"}}</label>
+    <input type="datetime-local" id="invaldate" name="invaldate" value="{{.Data.Now}}">
+    {{end}}
+    <label for="keypass">{{T "editor.keypass"}}</label><input type="password" id="keypass" name="keypass" autocomplete="off">
+    <span></span><div><button type="submit">{{T "renew.submit"}}</button></div>
+  </form>
+  <p class="muted small">{{T "renew.help"}}</p>
+</section>
+{{template "foot" .}}

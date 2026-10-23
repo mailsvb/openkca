@@ -1,0 +1,28 @@
+{{template "head" .}}
+{{$ca := .Data.CA}}{{$o := .Data.O}}{{$db := .DB.Name}}
+<p class="crumbs"><a href="/db/{{$db}}/item/{{$ca.ID}}">{{$ca.Name}}</a></p>
+<h1>{{T "crlgen.heading" $ca.Name}}</h1>
+<section class="card">
+  <p class="muted">{{T "crlgen.count" .Data.Count}}</p>
+  <form method="post" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="name">{{T "col.name"}}</label><input type="text" id="name" name="name" value="{{$o.Name}}">
+    <label for="thisupdate">{{T "col.thisupdate"}}</label><input type="datetime-local" id="thisupdate" name="thisupdate" value="{{.Data.This}}">
+    <label for="nextupdate">{{T "col.nextupdate"}}</label><input type="datetime-local" id="nextupdate" name="nextupdate" value="{{.Data.Next}}">
+    <label for="hash">{{T "editor.hash"}}</label>
+    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $o.Hash}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <label for="number">{{T "col.crlnumber"}}</label>
+    <div class="inline-fields"><input type="number" id="number" name="number" value="{{$o.Number}}" min="1">
+      <label><input type="checkbox" name="setnumber" value="1"{{if $o.SetNumber}} checked{{end}}> {{T "crlgen.setnumber"}}</label></div>
+    <span>{{T "editor.extensions"}}</span>
+    <div class="checks">
+      <label><input type="checkbox" name="withreason" value="1"{{if $o.WithReason}} checked{{end}}> {{T "crlgen.reasons"}}</label>
+      <label><input type="checkbox" name="authkeyid" value="1"{{if $o.AuthKeyID}} checked{{end}}> {{T "editor.aki"}}</label>
+      {{if .Data.HasSAN}}<label><input type="checkbox" name="issueralt" value="1"{{if $o.IssuerAlt}} checked{{end}}> {{T "crlgen.issueralt"}}</label>{{end}}
+    </div>
+    {{if .Data.KeyOwn}}<label for="keypass">{{T "editor.keypass"}}</label><input type="password" id="keypass" name="keypass" autocomplete="off">{{end}}
+    <span></span><div><button type="submit">{{T "crlgen.submit"}}</button></div>
+  </form>
+  <p class="muted small">{{T "editor.utc"}}</p>
+</section>
+{{template "foot" .}}

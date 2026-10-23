@@ -306,7 +306,50 @@ func (t *Tx) InsertCert(ctx context.Context, n NewCert) (int64, error) {
 		id, tmpl, UndefinedTime, days); err != nil {
 		return 0, err
 	}
+	if err := t.takeOver(ctx, id, c); err != nil {
+		return 0, err
+	}
 	return id, t.adoptChildren(ctx, id, c)
+}
+
+// takeOver implements the first part of db_x509::inToCont: another CA
+// certificate with the same name and key that expires no later than the new
+// one hands over its issued certificates and its revocations (a renewed CA).
+func (t *Tx) takeOver(ctx context.Context, newID int64, c *x509.Certificate) error {
+	subj, err := NameHash(c.RawSubject)
+	if err != nil {
+		return err
+	}
+	others, err := t.certsWhere(ctx, `c.ca=1 AND c.item<>? AND c.item IN
+		(SELECT item FROM x509super WHERE subj_hash=? AND key_hash=?)`, newID, subj, Hash(c.RawSubjectPublicKeyInfo))
+	if err != nil {
+		return err
+	}
+	for _, o := range others {
+		if !bytes.Equal(o.cert.RawSubject, c.RawSubject) || !bytes.Equal(o.cert.RawSubjectPublicKeyInfo, c.RawSubjectPublicKeyInfo) ||
+			c.NotAfter.Before(o.cert.NotAfter) {
+			continue
+		}
+		children, err := t.certsWhere(ctx, "c.issuer=? AND c.item<>?", o.id, o.id)
+		if err != nil {
+			return err
+		}
+		for _, ch := range children {
+			if signedBy(ch.cert, c) {
+				if _, err := t.ExecContext(ctx, "UPDATE certs SET issuer=? WHERE item=?", newID, ch.id); err != nil {
+					return err
+				}
+				t.Touch(ch.id)
+			}
+		}
+		// merge revocations that the new CA does not have yet
+		if _, err := t.ExecContext(ctx, `INSERT INTO revocations (caId, serial, date, invaldate, crlNo, reasonBit)
+			SELECT ?, serial, date, invaldate, crlNo, reasonBit FROM revocations r WHERE caId=?
+			AND NOT EXISTS (SELECT 1 FROM revocations x WHERE x.caId=? AND x.serial=r.serial)`, newID, o.id, newID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func serialHex(c *x509.Certificate) string {

@@ -374,6 +374,12 @@ type detail struct {
 	HasKey     bool
 	KeyPrivate bool
 	KeyOwnPass bool
+	Self       bool
+	HasIssuer  bool
+	CanRenew   bool
+	Templates  []link
+	Reasons    []reasonChoice
+	Now        string
 }
 
 type link struct {
@@ -508,12 +514,30 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 	if d.Request != nil && d.Request.KeyID != 0 {
 		d.HasKey = true
 	}
+	if d.Cert != nil {
+		signer := d.Cert
+		if d.Cert.IssuerID != d.Cert.ID {
+			signer = ix.certs[d.Cert.IssuerID]
+		}
+		d.Self = d.Cert.IssuerID == d.Cert.ID
+		d.HasIssuer = d.Cert.IssuerID != 0 && !d.Self && signer != nil
+		if signer != nil {
+			if k := ix.keys[signer.KeyID]; k != nil && k.HasPrivate {
+				d.CanRenew = true
+			}
+		}
+		for _, t := range snap.Templates {
+			d.Templates = append(d.Templates, link{t.ID, t.Name})
+		}
+		d.Reasons = reasonChoices()
+		d.Now = nowLocal()
+	}
 	p := &page{Title: "tab." + tab, Tab: tab, Data: map[string]any{"D": d}}
 	q := r.URL.Query()
-	if n := q.Get("notice"); n == "created" || n == "saved" || n == "keypw" {
+	if n := q.Get("notice"); n == "created" || n == "saved" || n == "keypw" || n == "revoked" || n == "unrevoked" {
 		p.Notice = "item.notice." + n
 	}
-	if e := q.Get("error"); strings.HasPrefix(e, "item.error.") || strings.HasPrefix(e, "keypw.error.") {
+	if e := q.Get("error"); strings.HasPrefix(e, "item.error.") || strings.HasPrefix(e, "keypw.error.") || strings.HasPrefix(e, "ca.error.") {
 		p.Error = e
 	}
 	s.render(w, r, http.StatusOK, "item", p)

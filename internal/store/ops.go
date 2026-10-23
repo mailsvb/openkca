@@ -87,7 +87,7 @@ func (h *Handle) GenerateKey(ctx context.Context, name string, spec pki.KeySpec,
 		id, err = insertGenerated(ctx, tx, name, key, dbPass)
 		return err
 	})
-	h.Invalidate()
+	h.changed(ctx)
 	return id, err
 }
 
@@ -407,7 +407,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 		}
 		return nil
 	})
-	h.Invalidate()
+	h.changed(ctx)
 	return id, err
 }
 
@@ -485,7 +485,7 @@ func (h *Handle) ExtractPublicKey(ctx context.Context, id int64) (int64, error) 
 			Comment: xdb.AppendComment("", fmt.Sprintf("Extracted from %s '%s'", kind, name))})
 		return err
 	})
-	h.Invalidate()
+	h.changed(ctx)
 	return kid, err
 }
 
@@ -527,7 +527,7 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, dbPass []byte, kp 
 		rid, err = tx.InsertRequest(ctx, xdb.NewRequest{Name: c.Name, Source: 3, DER: der})
 		return err
 	})
-	h.Invalidate()
+	h.changed(ctx)
 	return rid, err
 }
 
@@ -575,7 +575,7 @@ func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []
 		}
 		return tx.SetSetting(ctx, "pwhash", xdbpass.NewHash(newPass))
 	})
-	h.Invalidate()
+	h.changed(ctx)
 	return err
 }
 
@@ -608,26 +608,26 @@ func (h *Handle) rekey(ctx context.Context, keyID int64, dbPass []byte, kp KeyPa
 		return err
 	}
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, own) })
-	h.Invalidate()
+	h.changed(ctx)
 	return err
 }
 
 // Rename, Delete and MarkSigned wrap the single-statement writes.
 func (h *Handle) Rename(ctx context.Context, id int64, name, comment string) error {
 	err := h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.Rename(ctx, id, name, comment) })
-	h.Invalidate()
+	h.changed(ctx)
 	return err
 }
 
 func (h *Handle) Delete(ctx context.Context, id int64) error {
 	err := h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.Delete(ctx, id) })
-	h.Invalidate()
+	h.changed(ctx)
 	return err
 }
 
 func (h *Handle) MarkSigned(ctx context.Context, id int64, signed bool) error {
 	err := h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.MarkSigned(ctx, id, signed) })
-	h.Invalidate()
+	h.changed(ctx)
 	return err
 }
 
@@ -641,7 +641,7 @@ func (h *Handle) SetSettings(ctx context.Context, values map[string]string) erro
 		}
 		return nil
 	})
-	h.Invalidate()
+	h.changed(ctx)
 	return err
 }
 

@@ -123,3 +123,4 @@ details.card > summary, .card details > summary { cursor: pointer; color: var(--
 .inline-h { display: inline; }
 .newbuttons { margin-left: auto; }
 @media (max-width: 640px) { .grid-form { grid-template-columns: 1fr; } }
+.tablewrap + .card, .tablewrap + section { margin-top: 16px; }

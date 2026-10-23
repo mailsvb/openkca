@@ -39,6 +39,21 @@
     <dt>{{T "ca.crlno"}}</dt><dd>{{$a.CRLNo}}</dd>
     <dt>{{T "ca.crlexpire"}}</dt><dd>{{if eq $a.CRLExpire.Year 9999}}{{T "ca.nocrl"}}{{else}}{{time $a.CRLExpire}}{{end}}</dd>
   </dl>
+  <div class="actionbar">
+    {{if $d.KeyPrivate}}<a class="button" href="/db/{{$db}}/item/{{$d.Item.ID}}/crl">{{T "ca.gencrl"}}</a>{{end}}
+    <a class="button secondary" href="/db/{{$db}}/item/{{$d.Item.ID}}/revocations">{{T "ca.managerev"}}</a>
+  </div>
+  <details>
+    <summary>{{T "ca.edit"}}</summary>
+    <form method="post" action="/db/{{$db}}/item/{{$d.Item.ID}}/ca-properties" class="stack">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <label for="crldays">{{T "ca.crldays"}}</label><input type="number" id="crldays" name="crldays" value="{{$a.CRLDays}}" min="1" max="36500">
+      <label for="template">{{T "ca.template"}}</label>
+      <select id="template" name="template"><option value="0">{{T "ca.notemplate"}}</option>
+        {{range $d.Templates}}<option value="{{.ID}}"{{if eq .ID $a.TemplateID}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <button type="submit">{{T "actions.save"}}</button>
+    </form>
+  </details>
   {{if $d.Issued}}<h3>{{T "ca.issued"}}</h3><ul class="links">{{range $d.Issued}}<li><a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a></li>{{end}}</ul>{{end}}
   {{if $d.CRLs}}<h3>{{T "ca.crls"}}</h3><ul class="links">{{range $d.CRLs}}<li><a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a></li>{{end}}</ul>{{end}}
 </section>
@@ -134,6 +149,8 @@
       {{if and $d.Cert.CA $d.KeyPrivate}}<a class="button secondary" href="/db/{{$db}}/new/cert?signer={{$id}}">{{T "actions.issue"}}</a>{{end}}
       {{if $d.KeyPrivate}}<form method="post" action="/db/{{$db}}/item/{{$id}}/to-request" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">{{if $d.KeyOwnPass}}<input type="password" name="keypass" placeholder="{{T "editor.keypass"}}" aria-label="{{T "editor.keypass"}}">{{end}}<button type="submit" class="secondary">{{T "actions.torequest"}}</button></form>{{end}}
       {{if not $d.HasKey}}<form method="post" action="/db/{{$db}}/item/{{$id}}/extract-key" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.extractkey"}}</button></form>{{end}}
+      {{if $d.CanRenew}}<a class="button secondary" href="/db/{{$db}}/item/{{$id}}/renew">{{T "actions.renew"}}</a>{{end}}
+      {{if and $d.HasIssuer $d.Status.Revoked}}<form method="post" action="/db/{{$db}}/item/{{$id}}/unrevoke" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.unrevoke"}}</button></form>{{end}}
     {{end}}
     {{if eq $d.Kind "request"}}
       <a class="button secondary" href="/db/{{$db}}/new/cert?req={{$id}}">{{T "actions.sign"}}</a>
@@ -144,6 +161,19 @@
       {{if not $d.HasKey}}<form method="post" action="/db/{{$db}}/item/{{$id}}/extract-key" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.extractkey"}}</button></form>{{end}}
     {{end}}
   </div>
+  {{if and (eq $d.Kind "cert") $d.HasIssuer (not $d.Status.Revoked)}}
+  <details>
+    <summary>{{T "actions.revoke"}}</summary>
+    <form method="post" action="/db/{{$db}}/item/{{$id}}/revoke" class="stack">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <label for="rv-reason">{{T "crl.reason"}}</label>
+      <select id="rv-reason" name="reason">{{range $d.Reasons}}<option value="{{.Code}}">{{T (print "reason." .Name)}}</option>{{end}}</select>
+      <label for="rv-inval">{{T "rev.invaldate"}}</label>
+      <input type="datetime-local" id="rv-inval" name="invaldate" value="{{$d.Now}}">
+      <button type="submit" class="danger">{{T "actions.revoke"}}</button>
+    </form>
+  </details>
+  {{end}}
   {{if and (eq $d.Kind "key") $d.Key.HasPrivate (ne $d.Key.OwnPass 3)}}
   <details>
     <summary>{{T "keypw.heading"}}</summary>

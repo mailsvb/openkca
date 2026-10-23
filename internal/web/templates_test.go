@@ -61,7 +61,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|dbpw|item|keypw|create|import)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -106,7 +106,7 @@ func TestMessageKeys(t *testing.T) {
 	for _, k := range []string{"key", "cert", "request", "crl", "template"} {
 		keys = append(keys, "actions.delete.warn."+k)
 	}
-	for _, k := range []string{"created", "saved", "keypw"} {
+	for _, k := range []string{"created", "saved", "keypw", "revoked", "unrevoked"} {
 		keys = append(keys, "item.notice."+k)
 	}
 	for _, k := range []string{"noname", "extract", "keypass", "torequest"} {

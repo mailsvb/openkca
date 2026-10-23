@@ -66,3 +66,44 @@ func TestWriteForXCA(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestWriteRevocationsForXCA revokes certificates in a database XCA wrote
+// and generates a CRL with go-ca, for check-with-xca.sh.
+func TestWriteRevocationsForXCA(t *testing.T) {
+	dir := os.Getenv("GOCA_XCA_DIR")
+	if dir == "" {
+		t.Skip("GOCA_XCA_DIR not set")
+	}
+	src, err := os.ReadFile("../../testdata/xdb/schema8.xdb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/revoked.xdb", src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	h, err := s.Acquire(ctx, "revoked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Release()
+	pw := []byte("secret")
+	// www.example.org (item 7) and mail.example.org (item 9) under Example Issuing CA (item 5)
+	if err := h.Revoke(ctx, 7, Revocation{Reason: 1, InvalDate: time.Now().Add(-24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Renew(ctx, 9, RenewOptions{NotBefore: time.Now(), NotAfter: time.Now().AddDate(1, 0, 0),
+		Revoke: &Revocation{Reason: 4}}, pw, nil); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := h.Snapshot(ctx)
+	opts := DefaultCRLOptions(snap, findCert(snap, 5))
+	opts.Name = "CRL by go-ca"
+	if _, err := h.GenerateCRL(ctx, 5, opts, pw, nil); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -356,3 +356,59 @@ func TestEditorFlow(t *testing.T) {
 		t.Fatalf("backup before password change: %v", b)
 	}
 }
+
+func TestCAPages(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := client(t, ts)
+	csrf := login(t, ts, c)
+	post := func(path string, v url.Values) *http.Response {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := c.PostForm(ts.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	post("/db/sample/login", url.Values{"password": {"secret"}})
+	// www.example.org is item 7, issued by Example Issuing CA (item 5)
+	if loc := post("/db/sample/item/7/revoke", url.Values{"reason": {"1"}, "invaldate": {"2026-10-01T00:00"}}).Header.Get("Location"); !strings.Contains(loc, "notice=revoked") {
+		t.Fatalf("revoke: %s", loc)
+	}
+	r, _ := c.Get(ts.URL + "/db/sample/item/5/revocations")
+	if b := body(t, r); !strings.Contains(b, "www.example.org") || !strings.Contains(b, "2001") {
+		t.Fatal("revocation list")
+	}
+	post("/db/sample/item/5/revocations", url.Values{"action": {"add"}, "serial": {"DEAD"}, "reason": {"5"}, "invaldate": {""}})
+	post("/db/sample/item/5/revocations", url.Values{"action": {"delete"}, "serial": {"DEAD"}})
+	r, _ = c.Get(ts.URL + "/db/sample/item/5/crl")
+	if b := body(t, r); !strings.Contains(b, `name="number" value="1"`) {
+		t.Fatal("CRL form defaults")
+	}
+	r = post("/db/sample/item/5/crl", url.Values{"name": {"web CRL"}, "thisupdate": {"2026-10-23T00:00"}, "nextupdate": {"2026-11-23T00:00"},
+		"hash": {"sha256"}, "number": {"1"}, "setnumber": {"1"}, "withreason": {"1"}, "authkeyid": {"1"}})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
+		t.Fatalf("CRL: %d %s", r.StatusCode, loc)
+	}
+	post("/db/sample/item/5/ca-properties", url.Values{"crldays": {"14"}, "template": {"21"}})
+	r, _ = c.Get(ts.URL + "/db/sample/item/5")
+	if b := body(t, r); !strings.Contains(b, `value="14"`) || !strings.Contains(b, ">TLS_server</a>") {
+		t.Fatal("CA properties not shown")
+	}
+	r = post("/db/sample/item/9/renew", url.Values{"notbefore": {"2026-10-23T00:00"}, "notafter": {"2027-10-23T00:00"},
+		"revoke": {"1"}, "reason": {"4"}, "invaldate": {"2026-10-23T00:00"}})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
+		t.Fatalf("renew: %s", loc)
+	}
+	idx, err := os.ReadFile(filepath.Join(srv.store.Dir, "index", "sample", "Example_Issuing_CA", "index.txt"))
+	if err != nil || strings.Count(string(idx), "\nR\t")+boolInt(strings.HasPrefix(string(idx), "R\t")) != 3 {
+		t.Fatalf("index file:\n%s %v", idx, err)
+	}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

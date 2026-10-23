@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/gofrs/flock"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
+	"github.com/mailsvb/go-ca/internal/index"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -291,7 +293,36 @@ func (h *Handle) Snapshot(ctx context.Context) (*xdb.Snapshot, error) {
 		return nil, err
 	}
 	h.snap = snap
+	// Every reload means something changed (here or in desktop XCA): keep
+	// the per-CA index files current.
+	if err := index.Write(h.store.Dir, h.Name, snap); err != nil {
+		slog.Error("writing index files failed", "db", h.Name, "err", err)
+	}
 	return snap, nil
+}
+
+// changed drops the cached snapshot and reloads it at once, which also
+// rewrites the index files.
+func (h *Handle) changed(ctx context.Context) {
+	h.Invalidate()
+	if _, err := h.Snapshot(ctx); err != nil {
+		slog.Error("reload after change failed", "db", h.Name, "err", err)
+	}
+}
+
+// PollOpen reloads every open database whose stamp changed, so that
+// changes made by desktop XCA reach the index files while the database is
+// open here. Call it periodically.
+func (s *Store) PollOpen(ctx context.Context) {
+	s.mu.Lock()
+	var hs []*Handle
+	for _, h := range s.open {
+		hs = append(hs, h)
+	}
+	s.mu.Unlock()
+	for _, h := range hs {
+		h.Snapshot(ctx)
+	}
 }
 
 // Invalidate drops the cached snapshot.
