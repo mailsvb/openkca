@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"fmt"
@@ -23,29 +22,6 @@ import (
 var PBKDF2Iterations = 600_000
 
 const pbkdf2SaltLen = 16
-
-// MarshalPKCS8 encodes a private key as an unencrypted PrivateKeyInfo,
-// including DSA and X25519 keys.
-func MarshalPKCS8(key crypto.Signer) ([]byte, error) {
-	if k, ok := key.(DSAKey); ok {
-		params, err := asn1.Marshal(dsaParams{P: k.P, Q: k.Q, G: k.G})
-		if err != nil {
-			return nil, err
-		}
-		x, err := asn1.Marshal(k.X)
-		if err != nil {
-			return nil, err
-		}
-		return asn1.Marshal(privateKeyInfo{
-			Algo:       pkix.AlgorithmIdentifier{Algorithm: oidDSA, Parameters: asn1.RawValue{FullBytes: params}},
-			PrivateKey: x,
-		})
-	}
-	if k, ok := key.(X25519Key); ok {
-		return x509.MarshalPKCS8PrivateKey(k.PrivateKey)
-	}
-	return x509.MarshalPKCS8PrivateKey(key)
-}
 
 // EncryptPKCS8 encrypts a DER PrivateKeyInfo as EncryptedPrivateKeyInfo
 // (PBES2, PBKDF2-HMAC-SHA256, AES-256-CBC), readable by OpenSSL and XCA.

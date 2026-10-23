@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/md5"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -16,6 +17,9 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/cloudflare/circl/sign/ed448"
+	"github.com/cloudflare/circl/sign/slhdsa"
 )
 
 // Fingerprints of a DER object.
@@ -28,10 +32,13 @@ func fingerprints(der []byte) Fingerprints {
 
 // PublicKeyInfo describes a SubjectPublicKeyInfo.
 type PublicKeyInfo struct {
-	Algorithm string // RSA, EC, DSA, Ed25519, or the OID
-	Bits      int
+	Algorithm string // RSA, RSA-PSS, EC, DSA, Ed25519, Ed448, X25519, X448, the parameter set of ML-DSA, SLH-DSA and ML-KEM, the composite algorithm, or the OID
+	Bits      int    // the key size; for post-quantum keys the size of the public key
 	Curve     string
 	Exponent  int
+	PSS       string // RSA-PSS: the parameters the key is restricted to
+	Composite string // "ML-DSA" or "ML-KEM" for composite keys
+	Parts     string // composite keys: the components
 	SHA256    string // fingerprint of the SPKI DER
 }
 
@@ -45,26 +52,75 @@ var curveOIDs = map[string]string{
 	"1.3.36.3.3.2.8.1.1.13": "brainpoolP512r1",
 }
 
+// pssText describes RSA-PSS parameters.
+func pssText(p PSSParams) string {
+	return fmt.Sprintf("%s, salt %d", p.Hash, p.SaltLength)
+}
+
+// compositeParts describes the components of a composite algorithm.
+func compositeParts(pq, trad string, bits int, curve string) string {
+	switch {
+	case bits > 0:
+		trad = fmt.Sprintf("%s %d", trad, bits)
+	case curve != "":
+		trad += " " + curve
+	}
+	return pq + " + " + trad
+}
+
 // DescribePublicKey decodes a DER SubjectPublicKeyInfo. Keys Go cannot parse
-// (non-NIST curves, DSA) are described from their ASN.1 structure.
+// (other curves, explicit parameters) are described from their ASN.1
+// structure.
 func DescribePublicKey(der []byte) PublicKeyInfo {
 	sum := sha256.Sum256(der)
 	info := PublicKeyInfo{SHA256: hexDump(sum[:])}
-	if pub, err := x509.ParsePKIXPublicKey(der); err == nil {
+	if pub, err := ParsePublicKey(der); err == nil {
 		switch k := pub.(type) {
 		case *rsa.PublicKey:
 			info.Algorithm, info.Bits, info.Exponent = "RSA", k.N.BitLen(), k.E
+			return info
+		case *RSAPSSPublicKey:
+			info.Algorithm, info.Bits, info.Exponent = "RSA-PSS", k.N.BitLen(), k.E
+			if k.Params != nil {
+				info.PSS = pssText(*k.Params)
+			}
 			return info
 		case *ecdsa.PublicKey:
 			info.Algorithm, info.Bits = "EC", k.Curve.Params().BitSize
 		case ed25519.PublicKey:
 			info.Algorithm, info.Bits = "Ed25519", 256
 			return info
+		case ed448.PublicKey:
+			info.Algorithm, info.Bits = "Ed448", 456
+			return info
 		case *ecdh.PublicKey:
 			if k.Curve() == ecdh.X25519() {
 				info.Algorithm, info.Bits = "X25519", 256
 				return info
 			}
+		case X448PublicKey:
+			info.Algorithm, info.Bits = "X448", 448
+			return info
+		case *mldsa.PublicKey:
+			info.Algorithm, info.Bits = mldsaOf(k.Parameters()).Name, 8*len(k.Bytes())
+			return info
+		case slhdsa.PublicKey:
+			b, _ := k.MarshalBinary()
+			info.Algorithm, info.Bits = slhdsaByID(k.ID).Name, 8*len(b)
+			return info
+		case *MLKEMPublicKey:
+			info.Algorithm, info.Bits = k.Params.Name, 8*len(k.key)
+			return info
+		case *CompositePublicKey:
+			a := k.Alg
+			info.Algorithm, info.Composite, info.Bits = a.Name, "ML-DSA", 8*mldsaPublicSize(a.MLDSA)
+			info.Parts = compositeParts(a.MLDSA.Name, a.Trad, a.RSABits, a.Curve)
+			return info
+		case *CompositeKEMPublicKey:
+			a := k.Alg
+			info.Algorithm, info.Composite, info.Bits = a.Name, "ML-KEM", 8*len(k.MLKEM.key)
+			info.Parts = compositeParts(a.MLKEM.Name, a.Trad, a.RSABits, a.Curve)
+			return info
 		}
 	}
 	var s spki
@@ -157,7 +213,7 @@ func SerialHex(n *big.Int) string {
 // RawSubject returns the DER subject of a certificate, also for
 // certificates crypto/x509 rejects.
 func RawSubject(der []byte) ([]byte, error) {
-	if c, err := x509.ParseCertificate(der); err == nil {
+	if c, err := ParseCertificate(der); err == nil {
 		return c.RawSubject, nil
 	}
 	var cert struct{ TBS tbsFallback }
@@ -170,7 +226,7 @@ func RawSubject(der []byte) ([]byte, error) {
 // DescribeCert decodes a DER certificate.
 func DescribeCert(der []byte) *CertInfo {
 	info := &CertInfo{Fingerprints: fingerprints(der)}
-	c, err := x509.ParseCertificate(der)
+	c, err := ParseCertificate(der)
 	if err == nil {
 		info.Version = c.Version
 		info.Serial = SerialHex(c.SerialNumber)
@@ -179,7 +235,7 @@ func DescribeCert(der []byte) *CertInfo {
 		info.IssuerText = FormatName(c.RawIssuer)
 		info.CommonName = CommonName(c.RawSubject)
 		info.NotBefore, info.NotAfter = c.NotBefore, c.NotAfter
-		info.SigAlg = c.SignatureAlgorithm.String()
+		info.SigAlg = sigAlgText(c.SignatureAlgorithm, der)
 		info.PublicKey = DescribePublicKey(c.RawSubjectPublicKeyInfo)
 		info.Extensions = DecodeExtensions(c.Extensions)
 		info.IsCA = c.BasicConstraintsValid && c.IsCA
@@ -205,7 +261,7 @@ func DescribeCert(der []byte) *CertInfo {
 		info.IssuerText = FormatName(t.Issuer.FullBytes)
 		info.CommonName = CommonName(t.Subject.FullBytes)
 		info.NotBefore, info.NotAfter = t.Validity.NotBefore, t.Validity.NotAfter
-		info.SigAlg = cert.SigAlg.Algorithm.String()
+		info.SigAlg = sigAlgName(cert.SigAlg)
 		info.PublicKey = DescribePublicKey(t.PublicKey.FullBytes)
 		info.Extensions = DecodeExtensions(t.Extensions)
 		for _, e := range info.Extensions {
@@ -243,7 +299,7 @@ func (r *RequestInfo) SubjectAttrs() []DNAttr {
 // DescribeRequest decodes a DER certificate request.
 func DescribeRequest(der []byte) *RequestInfo {
 	info := &RequestInfo{Fingerprints: fingerprints(der)}
-	r, err := x509.ParseCertificateRequest(der)
+	r, err := ParseCertificateRequest(der)
 	if err != nil {
 		info.ParseError = err.Error()
 		return info
@@ -251,8 +307,8 @@ func DescribeRequest(der []byte) *RequestInfo {
 	info.Subject, _ = ParseName(r.RawSubject)
 	info.SubjectText = FormatName(r.RawSubject)
 	info.CommonName = CommonName(r.RawSubject)
-	info.SigAlg = r.SignatureAlgorithm.String()
-	info.SignatureOK = r.CheckSignature() == nil
+	info.SigAlg = sigAlgText(r.SignatureAlgorithm, der)
+	info.SignatureOK = CheckRequestSignature(r) == nil
 	info.PublicKey = DescribePublicKey(r.RawSubjectPublicKeyInfo)
 	info.Extensions = DecodeExtensions(r.Extensions)
 	return info
@@ -291,7 +347,7 @@ func DescribeCRL(der []byte) *CRLInfo {
 		info.Number = l.Number.String()
 	}
 	info.ThisUpdate, info.NextUpdate = l.ThisUpdate, l.NextUpdate
-	info.SigAlg = l.SignatureAlgorithm.String()
+	info.SigAlg = sigAlgText(l.SignatureAlgorithm, der)
 	info.Extensions = DecodeExtensions(l.Extensions)
 	for _, e := range l.RevokedCertificateEntries {
 		re := RevokedEntry{Serial: SerialHex(e.SerialNumber), Date: e.RevocationTime}
@@ -301,6 +357,15 @@ func DescribeCRL(der []byte) *CRLInfo {
 		info.Entries = append(info.Entries, re)
 	}
 	return info
+}
+
+// sigAlgText names a signature algorithm as crypto/x509 does, or from the
+// DER structure for algorithms it does not know.
+func sigAlgText(alg x509.SignatureAlgorithm, der []byte) string {
+	if alg != x509.UnknownSignatureAlgorithm {
+		return alg.String()
+	}
+	return SignatureAlgorithmName(der)
 }
 
 // FormatBits renders a key size for lists, e.g. "2048 bit".
