@@ -1,0 +1,44 @@
+{{define "head"}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false}'>
+<title>{{T .Title}} · {{T "app.name"}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body{{if .CSRF}} hx-headers='{"X-CSRF-Token":"{{.CSRF}}"}'{{end}}>
+<header class="top">
+  <a class="brand" href="/">{{T "app.name"}}</a>
+  {{if .DB}}
+  <span class="dbname">{{.DB.Name}}</span>
+  <nav class="tabs">
+    {{$cur := .Tab}}{{$db := .DB.Name}}
+    {{range tabs}}<a href="/db/{{$db}}/{{.}}"{{if eq . $cur}} class="active" aria-current="page"{{end}}>{{T (print "tab." .)}}</a>{{end}}
+    <a href="/db/{{$db}}/options"{{if eq $cur "options"}} class="active" aria-current="page"{{end}}>{{T "tab.options"}}</a>
+  </nav>
+  <form method="post" action="/db/{{.DB.Name}}/logout" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="link">{{T "db.close"}}</button>
+  </form>
+  {{end}}
+  {{if .CSRF}}
+  <form method="post" action="/logout" class="inline right">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="link">{{T "nav.logout"}}</button>
+  </form>
+  {{end}}
+</header>
+{{if and .DB .DB.ReadOnly}}<p class="banner">{{T "db.readonly" .DB.Schema}}</p>{{end}}
+<main>
+{{if .Error}}<p class="error" role="alert">{{T .Error}}</p>{{end}}
+{{if .Notice}}<p class="notice">{{T .Notice}}</p>{{end}}
+{{end}}
+
+{{define "foot"}}
+</main>
+</body>
+</html>
+{{end}}

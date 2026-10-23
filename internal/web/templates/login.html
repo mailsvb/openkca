@@ -1,0 +1,11 @@
+{{template "head" .}}
+<section class="card narrow">
+  <h1>{{T "login.heading"}}</h1>
+  <p class="muted">{{T "login.intro"}}</p>
+  <form method="post" action="/login">
+    <label for="password">{{T "login.password"}}</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" autofocus required>
+    <button type="submit">{{T "login.submit"}}</button>
+  </form>
+</section>
+{{template "foot" .}}

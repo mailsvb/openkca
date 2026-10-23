@@ -1,0 +1,44 @@
+{{template "head" .}}
+{{$tab := .Tab}}
+<div class="toolbar">
+  <form class="filters" method="get" action="/db/{{.DB.Name}}/{{.Tab}}" hx-get="/db/{{.DB.Name}}/{{.Tab}}" hx-target="#rows" hx-push-url="true" hx-trigger="input changed delay:250ms from:input[type=search], change, submit">
+    <input type="hidden" name="f" value="1">
+    <label class="sr-only" for="q">{{T "list.search"}}</label>
+    <input type="search" id="q" name="q" value="{{.Data.Q}}" placeholder="{{T "list.search"}}">
+    {{if eq .Tab "certs"}}
+    <label><input type="checkbox" name="view" value="plain"{{if .Data.Plain}} checked{{end}}> {{T "list.plain"}}</label>
+    <label><input type="checkbox" name="unusable" value="hide"{{if .Data.HideUnusable}} checked{{end}}> {{T "list.hideunusable"}}</label>
+    {{end}}
+  </form>
+  <details class="columns">
+    <summary>{{T "list.columns"}}</summary>
+    <div class="colmenu" data-table="tbl-{{.Tab}}">
+    {{range .Data.Columns}}{{if ne .Key "name"}}<label><input type="checkbox" data-col="{{.Key}}" checked> {{T .Label}}</label>{{end}}{{end}}
+    </div>
+  </details>
+</div>
+<div class="tablewrap">
+<table class="list" id="tbl-{{.Tab}}">
+  <thead><tr>{{range .Data.Columns}}<th class="col-{{.Key}}">{{T .Label}}</th>{{end}}</tr></thead>
+  <tbody id="rows">{{template "rows" .}}</tbody>
+</table>
+</div>
+{{if .Data.Deleted}}<p class="muted small">{{T "list.deleted" .Data.Deleted}}</p>{{end}}
+{{template "foot" .}}
+
+{{define "rows"}}{{$cols := .Data.Columns}}{{$db := .DB.Name}}
+{{range .Data.Rows}}{{$row := .}}
+<tr class="{{if .Unusable}}unusable{{end}}">
+{{range $cols}}{{$v := index $row.Cells .Key}}
+  <td class="col-{{.Key}} {{index $row.Classes .Key}}">
+  {{- if eq .Key "name"}}<a href="/db/{{$db}}/item/{{$row.ID}}" class="tree {{depth $row.Depth}}">{{$v}}</a>
+  {{- else if or (eq .Key "status") (eq .Key "private")}}{{if $v}}{{T $v}}{{end}}
+  {{- else if or (eq .Key "ca") (eq .Key "signed")}}{{if $v}}{{T (print "val." $v)}}{{end}}
+  {{- else}}{{$v}}{{end -}}
+  </td>
+{{end}}
+</tr>
+{{else}}
+<tr><td colspan="{{len $cols}}" class="muted">{{T "list.none"}}</td></tr>
+{{end}}
+{{end}}

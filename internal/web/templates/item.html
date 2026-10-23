@@ -1,0 +1,165 @@
+{{template "head" .}}
+{{$d := .Data.D}}{{$db := .DB.Name}}
+<p class="crumbs"><a href="/db/{{$db}}/{{.Tab}}">{{T (print "tab." .Tab)}}</a></p>
+<h1>{{$d.Item.Name}}</h1>
+<dl class="props">
+  <dt>{{T "item.type"}}</dt><dd>{{T (print "kind." $d.Kind)}}</dd>
+  <dt>{{T "item.source"}}</dt><dd>{{T $d.Source}}</dd>
+  <dt>{{T "item.date"}}</dt><dd>{{time $d.Item.Date}}</dd>
+  {{if $d.Item.Comment}}<dt>{{T "item.comment"}}</dt><dd class="pre">{{$d.Item.Comment}}</dd>{{end}}
+</dl>
+
+{{if eq $d.Kind "cert"}}{{$c := $d.CertInfo}}
+<section class="card">
+  <h2>{{T "cert.heading"}}</h2>
+  {{if $c.ParseError}}<p class="warn">{{T "item.parsefallback" $c.ParseError}}</p>{{end}}
+  <dl class="props">
+    <dt>{{T "cert.status"}}</dt><dd><span class="badge st-{{$d.Status.Status}}">{{T $d.Status.Status}}</span></dd>
+    {{with $d.Status.Revoked}}
+    <dt>{{T "cert.revokedon"}}</dt><dd>{{time .Date}}{{if not .InvalDate.IsZero}} · {{T "cert.invalidsince" (time .InvalDate)}}{{end}}</dd>
+    {{end}}
+    <dt>{{T "cert.serial"}}</dt><dd class="mono">{{$c.Serial}}</dd>
+    <dt>{{T "cert.issuer"}}</dt><dd>{{with index $d.Links "issuer"}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a> · {{end}}{{$c.IssuerText}}</dd>
+    <dt>{{T "cert.notbefore"}}</dt><dd class="{{$d.Status.Before}}">{{time $c.NotBefore}}</dd>
+    <dt>{{T "cert.notafter"}}</dt><dd class="{{$d.Status.After}}">{{if $c.NoExpiry}}{{T "cert.noexpiry"}}{{else}}{{time $c.NotAfter}}{{end}}</dd>
+    <dt>{{T "cert.ca"}}</dt><dd>{{if $d.Cert.CA}}{{T "val.yes"}}{{else}}{{T "val.no"}}{{end}}</dd>
+    <dt>{{T "cert.sigalg"}}</dt><dd>{{$c.SigAlg}}</dd>
+    <dt>{{T "cert.key"}}</dt><dd>{{with index $d.Links "key"}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a> · {{end}}{{template "pubkey" $c.PublicKey}}</dd>
+    <dt>{{T "cert.version"}}</dt><dd>{{$c.Version}}</dd>
+  </dl>
+</section>
+{{template "subject" $d.Subject}}
+{{template "exts" $c.Extensions}}
+{{if and $d.Cert.Authority $d.Cert.CA}}{{$a := $d.Cert.Authority}}
+<section class="card">
+  <h2>{{T "ca.heading"}}</h2>
+  <dl class="props">
+    <dt>{{T "ca.template"}}</dt><dd>{{with index $d.Links "template"}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a>{{else}}{{T "ca.notemplate"}}{{end}}</dd>
+    <dt>{{T "ca.crldays"}}</dt><dd>{{$a.CRLDays}}</dd>
+    <dt>{{T "ca.crlno"}}</dt><dd>{{$a.CRLNo}}</dd>
+    <dt>{{T "ca.crlexpire"}}</dt><dd>{{if eq $a.CRLExpire.Year 9999}}{{T "ca.nocrl"}}{{else}}{{time $a.CRLExpire}}{{end}}</dd>
+  </dl>
+  {{if $d.Issued}}<h3>{{T "ca.issued"}}</h3><ul class="links">{{range $d.Issued}}<li><a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a></li>{{end}}</ul>{{end}}
+  {{if $d.CRLs}}<h3>{{T "ca.crls"}}</h3><ul class="links">{{range $d.CRLs}}<li><a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a></li>{{end}}</ul>{{end}}
+</section>
+{{end}}
+{{template "fingerprints" $c.Fingerprints}}
+{{end}}
+
+{{if eq $d.Kind "key"}}{{$k := $d.Key}}
+<section class="card">
+  <h2>{{T "key.heading"}}</h2>
+  <dl class="props">
+    <dt>{{T "key.algorithm"}}</dt><dd>{{template "pubkey" $d.KeyInfo}}</dd>
+    <dt>{{T "key.private"}}</dt><dd>{{if not $k.HasPrivate}}{{T "private.none"}}{{else if eq $k.OwnPass 1}}{{T "private.own"}}{{else if eq $k.OwnPass 2}}{{T "private.bogus"}}{{else if eq $k.OwnPass 3}}{{T "private.token"}}{{else}}{{T "private.db"}}{{end}}</dd>
+    <dt>{{T "key.fingerprint"}}</dt><dd class="mono small">{{$d.KeyInfo.SHA256}}</dd>
+  </dl>
+  {{if $k.HasPrivate}}
+  <form class="keycheck" hx-post="/db/{{$db}}/item/{{$k.ID}}/check-key" hx-target="#keycheck" hx-swap="innerHTML">
+    {{if eq $k.OwnPass 1}}
+    <label for="kpw">{{T "keycheck.ownpass"}}</label>
+    <input type="password" id="kpw" name="password" autocomplete="off" required>
+    {{end}}
+    <button type="submit">{{T "keycheck.button"}}</button>
+  </form>
+  <div id="keycheck" aria-live="polite"></div>
+  {{end}}
+</section>
+{{if $d.UsedBy}}<section class="card"><h2>{{T "key.usedby"}}</h2><ul class="links">{{range $d.UsedBy}}<li><a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a></li>{{end}}</ul></section>{{end}}
+{{end}}
+
+{{if eq $d.Kind "request"}}{{$r := $d.ReqInfo}}
+<section class="card">
+  <h2>{{T "req.heading"}}</h2>
+  {{if $r.ParseError}}<p class="warn">{{T "item.parseerror" $r.ParseError}}</p>{{end}}
+  <dl class="props">
+    <dt>{{T "req.signed"}}</dt><dd>{{if $d.Request.Signed}}{{T "val.yes"}}{{else}}{{T "val.no"}}{{end}}</dd>
+    <dt>{{T "req.signature"}}</dt><dd>{{if $r.SignatureOK}}{{T "req.sigok"}}{{else}}{{T "req.sigbad"}}{{end}}</dd>
+    <dt>{{T "cert.sigalg"}}</dt><dd>{{$r.SigAlg}}</dd>
+    <dt>{{T "cert.key"}}</dt><dd>{{with index $d.Links "key"}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a> · {{end}}{{template "pubkey" $r.PublicKey}}</dd>
+  </dl>
+</section>
+{{template "subject" $d.Subject}}
+{{template "exts" $r.Extensions}}
+{{template "fingerprints" $r.Fingerprints}}
+{{end}}
+
+{{if eq $d.Kind "crl"}}{{$l := $d.CRLInfo}}
+<section class="card">
+  <h2>{{T "crl.heading"}}</h2>
+  {{if $l.ParseError}}<p class="warn">{{T "item.parseerror" $l.ParseError}}</p>{{end}}
+  <dl class="props">
+    <dt>{{T "cert.issuer"}}</dt><dd>{{with index $d.Links "issuer"}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a> · {{end}}{{$l.IssuerText}}</dd>
+    <dt>{{T "col.crlnumber"}}</dt><dd>{{$l.Number}}</dd>
+    <dt>{{T "col.thisupdate"}}</dt><dd>{{time $l.ThisUpdate}}</dd>
+    <dt>{{T "col.nextupdate"}}</dt><dd>{{time $l.NextUpdate}}</dd>
+    <dt>{{T "cert.sigalg"}}</dt><dd>{{$l.SigAlg}}</dd>
+  </dl>
+  <h3>{{T "crl.entries" (len $d.Entries)}}</h3>
+  {{if $d.Entries}}
+  <div class="tablewrap"><table class="list">
+    <thead><tr><th>{{T "cert.serial"}}</th><th>{{T "crl.certificate"}}</th><th>{{T "crl.date"}}</th><th>{{T "crl.reason"}}</th></tr></thead>
+    <tbody>{{range $d.Entries}}<tr><td class="mono">{{.Serial}}</td><td>{{if .Cert.ID}}<a href="/db/{{$db}}/item/{{.Cert.ID}}">{{.Cert.Name}}</a>{{end}}</td><td>{{time .Date}}</td><td>{{if .Reason}}{{T (print "reason." .Reason)}}{{end}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{end}}
+</section>
+{{template "exts" $l.Extensions}}
+{{template "fingerprints" $l.Fingerprints}}
+{{end}}
+
+{{if eq $d.Kind "template"}}
+<section class="card">
+  <h2>{{T "tmpl.heading"}}</h2>
+  {{if $d.TmplErr}}<p class="warn">{{T "item.parseerror" $d.TmplErr}}</p>{{end}}
+  <dl class="props"><dt>{{T "col.version"}}</dt><dd>{{$d.TmplVer}}</dd></dl>
+  {{if $d.Template}}{{$set := $d.Template.Settings}}
+  <h3>{{T "tmpl.settings"}}</h3>
+  <table class="kv">
+    <tbody>{{range $d.TmplKeys}}<tr><th class="mono">{{.}}</th><td class="pre">{{index $set .}}</td></tr>{{end}}</tbody>
+  </table>
+  <p class="muted small">{{T "tmpl.phase5"}}</p>
+  {{end}}
+</section>
+{{template "subject" $d.Subject}}
+{{end}}
+{{template "foot" .}}
+
+{{define "pubkey"}}{{.Algorithm}}{{if .Curve}} {{.Curve}}{{end}} · {{T "unit.bits" .Bits}}{{if .Exponent}} · {{T "key.exponent" .Exponent}}{{end}}{{end}}
+
+{{define "subject"}}{{if .}}
+<section class="card">
+  <h2>{{T "subject.heading"}}</h2>
+  <table class="kv">
+    <tbody>{{range .}}<tr><th title="{{.Long}}">{{.Short}}</th><td>{{.Value}}</td><td class="muted small">{{.Type}}</td></tr>{{end}}</tbody>
+  </table>
+</section>
+{{end}}{{end}}
+
+{{define "exts"}}{{if .}}
+<section class="card">
+  <h2>{{T "ext.heading"}}</h2>
+  <dl class="exts">
+  {{range .}}
+    <dt>{{.Name}}{{if .Critical}} <span class="badge">{{T "ext.critical"}}</span>{{end}}</dt>
+    <dd>{{range .Lines}}<div class="mono small">{{.}}</div>{{end}}</dd>
+  {{end}}
+  </dl>
+</section>
+{{end}}{{end}}
+
+{{define "fingerprints"}}
+<section class="card">
+  <h2>{{T "fp.heading"}}</h2>
+  <dl class="props">
+    <dt>{{T "fp.sha256"}}</dt><dd class="mono small">{{.SHA256}}</dd>
+    <dt>{{T "fp.sha1"}}</dt><dd class="mono small">{{.SHA1}}</dd>
+    <dt>{{T "fp.md5"}}</dt><dd class="mono small">{{.MD5}}</dd>
+  </dl>
+</section>
+{{end}}
+
+{{define "keycheck"}}{{$r := .Data.Result}}
+<p class="{{if eq $r "keycheck.ok"}}ok{{else}}error{{end}}">{{T $r}}{{if .Data.Algorithm}} · {{.Data.Algorithm}}{{end}}</p>
+{{if .Data.Legacy}}<p class="muted small">{{T "keycheck.legacy"}}</p>{{end}}
+{{if .Data.Detail}}<p class="muted small">{{.Data.Detail}}</p>{{end}}
+{{end}}

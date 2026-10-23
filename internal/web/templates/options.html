@@ -1,0 +1,12 @@
+{{template "head" .}}
+<h1>{{T "options.heading"}}</h1>
+<p class="muted">{{T "options.intro"}}</p>
+<table class="kv">
+  <thead><tr><th>{{T "options.setting"}}</th><th>{{T "options.value"}}</th><th class="muted">{{T "options.key"}}</th></tr></thead>
+  <tbody>
+  {{range .Data.Options}}
+    <tr><th>{{T .Label}}</th><td>{{.Value}}{{if .Default}} <span class="muted small">{{T "options.default"}}</span>{{end}}</td><td class="mono small muted">{{.Key}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{template "foot" .}}

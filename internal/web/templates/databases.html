@@ -1,0 +1,30 @@
+{{template "head" .}}
+<h1>{{T "databases.heading"}}</h1>
+{{$open := .Data.Open}}{{$sel := .Data.Selected}}{{$csrf := .CSRF}}
+{{if not .Data.Databases}}<p class="muted">{{T "databases.empty"}}</p>{{end}}
+<ul class="dblist">
+{{range .Data.Databases}}
+  <li class="db status-{{.Status}}{{if eq .Name $sel}} selected{{end}}" id="db-{{.Name}}">
+    <div class="dbmeta">
+      <strong>{{.Name}}</strong>
+      <span class="muted">{{size .Size}} · {{time .ModTime}}</span>
+      <span class="badge badge-{{.Status}}">{{T (print "dbstatus." .Status)}}</span>
+      {{if .Schema}}<span class="muted">{{T "databases.schema" .Schema}}</span>{{end}}
+    </div>
+    {{if index $open .Name}}
+      <a class="button" href="/db/{{.Name}}/">{{T "databases.continue"}}</a>
+    {{else if .Status.Openable}}
+      <form method="post" action="/db/{{.Name}}/login" class="dblogin">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <label class="sr-only" for="pw-{{.Name}}">{{T "databases.password"}}</label>
+        <input type="password" id="pw-{{.Name}}" name="password" placeholder="{{T "databases.password"}}" autocomplete="off"{{if eq .Name $sel}} autofocus{{end}}>
+        <button type="submit">{{T "databases.open"}}</button>
+      </form>
+    {{else}}
+      <p class="muted">{{T (print "dbstatus.help." .Status)}}</p>
+    {{end}}
+  </li>
+{{end}}
+</ul>
+<p class="muted small">{{T "databases.phase2"}}</p>
+{{template "foot" .}}
