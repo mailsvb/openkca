@@ -94,7 +94,7 @@ func (h *Handle) dumpKey(ctx context.Context, k *xdb.Key, dbPass []byte) ([]byte
 		return codec.PEM(codec.PEMPublicKey, k.Public), nil
 	}
 	if s, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, nil); err == nil {
-		if codec.KeyTypeName(s.Public()) != "Ed25519" {
+		if t := codec.KeyTypeName(s.Public()); t != "Ed25519" && t != "X25519" {
 			return codec.PrivatePEM(s, dbPass)
 		}
 	} else if !errors.Is(err, ErrNeedKeyPassword) {

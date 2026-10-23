@@ -18,8 +18,9 @@ func TestEncryptRoundTripAndOpenSSL(t *testing.T) {
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	_, edKey, _ := ed25519.GenerateKey(rand.Reader)
+	xKey, _ := GenerateKey(KeySpec{Type: "X25519"})
 	pw := []byte("pässwörd")
-	for name, s := range map[string]crypto.Signer{"rsa": rsaKey, "ec": ecKey, "ed25519": edKey} {
+	for name, s := range map[string]crypto.Signer{"rsa": rsaKey, "ec": ecKey, "ed25519": edKey, "x25519": xKey} {
 		blob, err := EncryptPrivateKey(s, pw)
 		if err != nil {
 			t.Fatal(err)
@@ -64,4 +65,35 @@ func parseAnyDER(der []byte) (crypto.Signer, error) {
 		return k, nil
 	}
 	return x509.ParseECPrivateKey(der)
+}
+
+func TestX25519Key(t *testing.T) {
+	k, err := GenerateKey(KeySpec{Type: "X25519"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if CanSign(k) || KeyAlgorithm(k) != "X25519" {
+		t.Fatalf("CanSign %v, algorithm %s", CanSign(k), KeyAlgorithm(k))
+	}
+	if _, err := k.Sign(rand.Reader, make([]byte, 32), crypto.Hash(0)); err == nil {
+		t.Fatal("X25519 key signed")
+	}
+	spki, err := x509.MarshalPKIXPublicKey(k.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ, bits := StoredKeyType(spki); typ != "X255" || bits != 256 {
+		t.Fatalf("stored type %s %d", typ, bits)
+	}
+	der, err := MarshalPKCS8(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := ParsePKCS8(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := MatchesPublic(back, spki); !ok {
+		t.Fatal("PKCS#8 round trip changed the key")
+	}
 }

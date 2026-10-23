@@ -3,6 +3,7 @@ package codec
 import (
 	"crypto"
 	"crypto/dsa" //nolint:staticcheck // DSA keys exist in old databases
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -31,7 +32,7 @@ type dsaPrivate struct {
 }
 
 // ParsePublic parses a SubjectPublicKeyInfo; Go's parser handles RSA, NIST
-// EC, Ed25519 and DSA.
+// EC, Ed25519, X25519 and DSA.
 func ParsePublic(spki []byte) (crypto.PublicKey, error) {
 	return x509.ParsePKIXPublicKey(spki)
 }
@@ -241,7 +242,7 @@ func dsaFromParts(p, q, g, x *big.Int) pki.DSAKey {
 }
 
 func keyTypeName(pub crypto.PublicKey) string {
-	switch pub.(type) {
+	switch p := pub.(type) {
 	case *rsa.PublicKey:
 		return "RSA"
 	case *ecdsa.PublicKey:
@@ -250,6 +251,10 @@ func keyTypeName(pub crypto.PublicKey) string {
 		return "Ed25519"
 	case *dsa.PublicKey:
 		return "DSA"
+	case *ecdh.PublicKey:
+		if p.Curve() == ecdh.X25519() {
+			return "X25519"
+		}
 	}
 	return fmt.Sprintf("%T", pub)
 }

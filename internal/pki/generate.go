@@ -2,6 +2,7 @@ package pki
 
 import (
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -13,7 +14,7 @@ import (
 // KeySpec describes a key to generate. Only key types Go can sign with are
 // offered (Agreed decisions: DSA and non-NIST curves are display-only).
 type KeySpec struct {
-	Type  string // "RSA", "EC" or "Ed25519"
+	Type  string // "RSA", "EC", "Ed25519" or "X25519" (encryption only)
 	Bits  int    // RSA modulus size
 	Curve string // "P-256", "P-384" or "P-521"
 }
@@ -53,6 +54,12 @@ func GenerateKey(spec KeySpec) (crypto.Signer, error) {
 	case "Ed25519":
 		_, k, err := ed25519.GenerateKey(rand.Reader)
 		return k, err
+	case "X25519":
+		k, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		return X25519Key{k}, nil
 	}
 	return nil, fmt.Errorf("unsupported key type %q", spec.Type)
 }
@@ -66,6 +73,8 @@ func StoredKeyType(spki []byte) (string, int) {
 		return "ED25", info.Bits
 	case "Ed448":
 		return "ED44", info.Bits
+	case "X25519":
+		return "X255", info.Bits
 	}
 	t := info.Algorithm
 	if len(t) > 4 {

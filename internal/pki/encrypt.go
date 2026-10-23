@@ -23,7 +23,7 @@ const (
 )
 
 // MarshalPKCS8 encodes a private key as an unencrypted PrivateKeyInfo,
-// including DSA keys.
+// including DSA and X25519 keys.
 func MarshalPKCS8(key crypto.Signer) ([]byte, error) {
 	if k, ok := key.(DSAKey); ok {
 		params, err := asn1.Marshal(dsaParams{P: k.P, Q: k.Q, G: k.G})
@@ -38,6 +38,9 @@ func MarshalPKCS8(key crypto.Signer) ([]byte, error) {
 			Algo:       pkix.AlgorithmIdentifier{Algorithm: oidDSA, Parameters: asn1.RawValue{FullBytes: params}},
 			PrivateKey: x,
 		})
+	}
+	if k, ok := key.(X25519Key); ok {
+		return x509.MarshalPKCS8PrivateKey(k.PrivateKey)
 	}
 	return x509.MarshalPKCS8PrivateKey(key)
 }

@@ -151,7 +151,8 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 			default:
 				d |= codec.FPVK
 			}
-			if codec.KeyTypeName(r.pub) == "Ed25519" {
+			switch codec.KeyTypeName(r.pub) {
+			case "Ed25519", "X25519":
 				d |= codec.FTradition
 			}
 			if !codec.SSHCompatible(r.pub) {
@@ -314,8 +315,11 @@ func unusable(snap *xdb.Snapshot, c *xdb.Cert, now time.Time) bool {
 }
 
 func keyTypeText(k *xdb.Key) string {
-	if k.KeyType == "ED25" {
+	switch k.KeyType {
+	case "ED25":
 		return "ED25519"
+	case "X255":
+		return "X25519"
 	}
 	return k.KeyType
 }
