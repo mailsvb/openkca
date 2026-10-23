@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 )
 
@@ -69,4 +70,20 @@ func (t *Tx) DeletePGPCert(ctx context.Context, keyID int64) error {
 	}
 	t.Touch(keyID)
 	return nil
+}
+
+// PGPCert returns the stored certificate of a key, nil if it has none.
+func (t *Tx) PGPCert(ctx context.Context, keyID int64) ([]byte, error) {
+	if !t.hasTable(ctx, "gca_pgp") {
+		return nil, nil
+	}
+	var cert sql.NullString
+	err := t.QueryRowContext(ctx, "SELECT cert FROM gca_pgp WHERE item=?", keyID).Scan(&cert)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return b64(cert)
 }

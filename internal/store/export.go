@@ -165,6 +165,9 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 		if !k.HasPrivate || k.Token {
 			d |= codec.FPrivate
 		}
+		if PGPOf(snap, k.ID) == nil {
+			d |= codec.FPGP
+		}
 	}
 	return d
 }
@@ -225,8 +228,10 @@ func contentType(f codec.Format) string {
 		return "application/pkcs7-mime"
 	case "pfx":
 		return "application/x-pkcs12"
-	case "pvk", "der", "cer":
+	case "pvk", "der", "cer", "gpg":
 		return "application/octet-stream"
+	case "asc", "rev":
+		return "application/pgp-keys"
 	}
 	return "text/plain; charset=utf-8"
 }
@@ -645,6 +650,9 @@ func (e *exporter) certs() error {
 
 func (e *exporter) keys() error {
 	f := e.f.Flags
+	if f&codec.FPGP != 0 {
+		return e.pgp()
+	}
 	for _, r := range e.refs {
 		k := r.key
 		var s crypto.Signer

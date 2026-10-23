@@ -19,6 +19,8 @@ import (
 // templates with one PEM file per item, named after the item
 // (get_dump_filename). Private keys are written encrypted with the
 // database password, as XCA does; keys with their own password keep it.
+// OpenPGP certificates are written next to their primary keys as armored
+// public keys.
 func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
@@ -53,6 +55,19 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
 			return err
 		}
 		if err := file("keys", k.Name, ".pem", data); err != nil {
+			return err
+		}
+	}
+	for _, v := range pgpViews(snap) {
+		k := findKey(snap, v.Primary())
+		if k == nil {
+			continue
+		}
+		data, err := codec.PGPArmor(codec.PGPPublicBlock, v.Cert.Cert, v.Info.Version)
+		if err != nil {
+			return err
+		}
+		if err := file("keys", k.Name, ".asc", data); err != nil {
 			return err
 		}
 	}

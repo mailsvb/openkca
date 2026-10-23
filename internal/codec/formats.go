@@ -1,7 +1,7 @@
 // Package codec converts between the objects of an XCA database and the
 // file formats XCA exports and imports: PEM, DER, PKCS#7, PKCS#8, PKCS#12,
 // OpenSSH, PuTTY, PVK, JWK, vCalendar, OpenVPN, OpenSSL config and XCA
-// templates.
+// templates, plus OpenPGP keys.
 // It works on DER and Go keys only; it does not touch databases.
 package codec
 
@@ -11,37 +11,40 @@ import "github.com/mailsvb/go-ca/internal/xdb"
 type Flags uint32
 
 const (
-	FPEM       Flags = 1 << iota
-	FDER             // binary
-	FPKCS7           // degenerate PKCS#7 SignedData
-	FPKCS12          // PKCS#12 with the private key
-	FPKCS8           // PKCS#8 private key
-	FSSH2            // OpenSSH formats
-	FPVK             // Microsoft PVK
-	FJWK             // JSON Web Key
-	FX5C             // JWK with the certificate chain
-	FCal             // vCalendar
-	FConfig          // OpenSSL config
-	FOVPN            // OpenVPN inline tags
-	FIndex           // OpenSSL index file
-	FChain           // the item and its issuers
-	FPrivate         // includes the private key
-	FCrypt           // asks for an export password
-	FTradition       // OpenSSL "traditional" key format
-	FUnusable        // all expired or revoked certificates
-	FCA              // needs a CA certificate
-	FSingle          // exactly one item
-	FMulti           // several items
-	FClipboard       // text that fits the clipboard
-	FUsual           // listed first
-	FOpenSSH         // OpenSSH's own private key format
-	FPuTTY           // PuTTY formats: PPK private key, RFC 4716 public key
-	FPPK2            // PPK format version 2
+	FPEM        Flags = 1 << iota
+	FDER              // binary
+	FPKCS7            // degenerate PKCS#7 SignedData
+	FPKCS12           // PKCS#12 with the private key
+	FPKCS8            // PKCS#8 private key
+	FSSH2             // OpenSSH formats
+	FPVK              // Microsoft PVK
+	FJWK              // JSON Web Key
+	FX5C              // JWK with the certificate chain
+	FCal              // vCalendar
+	FConfig           // OpenSSL config
+	FOVPN             // OpenVPN inline tags
+	FIndex            // OpenSSL index file
+	FChain            // the item and its issuers
+	FPrivate          // includes the private key
+	FCrypt            // asks for an export password
+	FTradition        // OpenSSL "traditional" key format
+	FUnusable         // all expired or revoked certificates
+	FCA               // needs a CA certificate
+	FSingle           // exactly one item
+	FMulti            // several items
+	FClipboard        // text that fits the clipboard
+	FUsual            // listed first
+	FOpenSSH          // OpenSSH's own private key format
+	FPuTTY            // PuTTY formats: PPK private key, RFC 4716 public key
+	FPPK2             // PPK format version 2
+	FPGP              // OpenPGP: needs the key's OpenPGP certificate
+	FBinary           // binary output of a format that is otherwise text
+	FRevocation       // OpenPGP revocation certificate
 )
 
 // Format is one export format. IDs below 100 are XCA's, so its names and
 // the "CertFormat"/"KeyFormat" settings map onto them; formats XCA lacks
-// start at 100.
+// start at 100 (SSH) and 110 (OpenPGP).
 type Format struct {
 	ID    int
 	Type  int    // xdb.Type*
@@ -53,11 +56,11 @@ type Format struct {
 
 // Text reports whether the format's output is printable text.
 func (f Format) Text() bool {
-	return f.Flags&(FDER|FPKCS7|FPKCS12|FPVK) == 0
+	return f.Flags&(FDER|FPKCS7|FPKCS12|FPVK|FBinary) == 0
 }
 
 // Formats follows XCA's pki_export::init_elements without the OpenVPN
-// tls-auth key, with go-ca's SSH formats next to XCA's.
+// tls-auth key, with go-ca's SSH and OpenPGP formats next to XCA's.
 var Formats = []Format{
 	{1, xdb.TypeCert, "crt", "fmt.pem", "fmt.help.cert_pem", FPEM | FUsual | FSingle | FClipboard},
 	{3, xdb.TypeCert, "pem", "fmt.pem_selected", "fmt.help.cert_pem_selected", FPEM | FMulti},
@@ -92,6 +95,11 @@ var Formats = []Format{
 	{104, xdb.TypeKey, "ppk", "fmt.ppk2", "fmt.help.key_ppk2", FSSH2 | FPuTTY | FPPK2 | FPrivate | FSingle},
 	{105, xdb.TypeKey, "ppk", "fmt.ppk2_encrypted", "fmt.help.key_ppk2_encrypted", FSSH2 | FPuTTY | FPPK2 | FPrivate | FCrypt | FSingle},
 	{106, xdb.TypeKey, "pub", "fmt.rfc4716_public", "fmt.help.key_rfc4716_public", FSSH2 | FPuTTY | FClipboard},
+	{110, xdb.TypeKey, "asc", "fmt.pgp_public", "fmt.help.key_pgp_public", FPGP | FClipboard},
+	{111, xdb.TypeKey, "gpg", "fmt.pgp_public_binary", "fmt.help.key_pgp_public_binary", FPGP | FBinary},
+	{112, xdb.TypeKey, "asc", "fmt.pgp_secret", "fmt.help.key_pgp_secret", FPGP | FPrivate | FSingle | FClipboard},
+	{113, xdb.TypeKey, "asc", "fmt.pgp_secret_encrypted", "fmt.help.key_pgp_secret_encrypted", FPGP | FPrivate | FCrypt | FSingle},
+	{114, xdb.TypeKey, "rev", "fmt.pgp_revocation", "fmt.help.key_pgp_revocation", FPGP | FRevocation | FPrivate | FSingle | FClipboard},
 	{24, xdb.TypeKey, "der", "fmt.der_public", "fmt.help.key_der_public", FDER | FSingle},
 	{25, xdb.TypeKey, "der", "fmt.der_private", "fmt.help.key_der_private", FDER | FPrivate | FSingle},
 	{26, xdb.TypeKey, "pvk", "fmt.pvk_private", "fmt.help.key_pvk", FPVK | FPrivate | FSingle},
