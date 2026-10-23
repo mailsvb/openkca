@@ -144,6 +144,12 @@ func TestSSHCommentsAndNames(t *testing.T) {
 	if len(r.Objects) != 2 || r.Objects[0].Name != "a" || r.Objects[1].Name != "b" {
 		t.Fatalf("%+v", r)
 	}
+	// Argon2 parameters beyond the limit are refused before any work
+	enc, _ := PuTTYPrivate(k, "x", 3, []byte("pw"))
+	huge := bytes.Replace(enc, []byte("Argon2-Passes: 13\n"), []byte("Argon2-Passes: 100000\n"), 1)
+	if r := Probe("", huge, ProbeOptions{Password: []byte("pw")}); len(r.Objects) != 0 || len(r.Unrecognized) != 1 {
+		t.Fatalf("huge Argon2 work: %+v", r)
+	}
 	// a damaged PuTTY file is reported, not imported
 	ppk, _ := PuTTYPrivate(k, "x", 3, nil)
 	bad := bytes.Replace(ppk, []byte("Comment: x"), []byte("Comment: y"), 1)

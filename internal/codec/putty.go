@@ -35,9 +35,10 @@ const (
 	ppkArgon2Memory      = 8192 // KiB
 	ppkArgon2Passes      = 13
 	ppkArgon2Parallelism = 1
-	// limits for files being read
+	// limits for files being read: memory, and memory times passes, about
+	// 150 times PuTTYgen's default work
 	ppkMaxArgon2Memory = 1 << 18 // KiB (256 MiB)
-	ppkMaxArgon2Passes = 1 << 10
+	ppkMaxArgon2Work   = 1 << 24 // KiB times passes
 	ppkMaxLines        = 1 << 10
 )
 
@@ -264,7 +265,7 @@ func parsePPK(data []byte, password func() ([]byte, bool)) (crypto.Signer, strin
 	case encrypted && version == 3:
 		kdf := f.field("Key-Derivation")
 		memory := f.number("Argon2-Memory", ppkMaxArgon2Memory)
-		passes := f.number("Argon2-Passes", ppkMaxArgon2Passes)
+		passes := f.number("Argon2-Passes", ppkMaxArgon2Work)
 		par := f.number("Argon2-Parallelism", 255)
 		salt, err := hex.DecodeString(f.field("Argon2-Salt"))
 		if f.err != nil {
@@ -272,6 +273,9 @@ func parsePPK(data []byte, password func() ([]byte, bool)) (crypto.Signer, strin
 		}
 		if err != nil || passes == 0 || par == 0 || memory < 8*par {
 			return nil, "", errors.New("ppk: invalid Argon2 parameters")
+		}
+		if memory*passes > ppkMaxArgon2Work {
+			return nil, "", errors.New("ppk: the Argon2 parameters exceed go-ca's limit")
 		}
 		if kdf != "Argon2id" && kdf != "Argon2i" {
 			return nil, "", fmt.Errorf("ppk: key derivation %q is not supported", kdf)
