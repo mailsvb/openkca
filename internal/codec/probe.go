@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/dsa" //nolint:staticcheck // DSA keys exist in old databases
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -633,19 +631,11 @@ func marshalSPKI(pub crypto.PublicKey) ([]byte, error) {
 // structure).
 func pkcs8SPKI(der []byte) []byte {
 	if k, err := pki.ParsePKCS8(der); err == nil {
-		switch v := k.(type) {
-		case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
-			b, err := x509.MarshalPKIXPublicKey(v.Public())
-			if err == nil {
-				return b
-			}
-		case pki.DSAKey:
-			b, err := marshalSPKI(v.Public())
-			if err == nil {
-				return b
-			}
+		b, err := pki.MarshalPublicKey(k.Public())
+		if err != nil {
+			return nil
 		}
-		return nil
+		return b
 	}
 	var info struct {
 		Version    int
