@@ -215,7 +215,12 @@ func TestSSHKeygenFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "goca-default"), b, 0o600)
 	run(t, dir, "ssh-keygen", "-y", "-P", "secret", "-f", "goca-default")
 	fastBcrypt(t)
+	// OpenSSH 10 removed DSA; older builds may also leave it out
+	noDSA := exec.Command("ssh-keygen", "-q", "-t", "dsa", "-N", "", "-f", filepath.Join(dir, "dsa-probe")).Run() != nil
 	for name, k := range sshTestKeys(t) {
+		if name == "dsa" && noDSA {
+			continue
+		}
 		want, _ := SSHPublic(k.Public(), "")
 		for _, pw := range []string{"", "secret"} {
 			b, _ := OpenSSHPrivate(k, "c", []byte(pw))
