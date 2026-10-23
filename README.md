@@ -28,8 +28,20 @@ XCA.
 
 **Keys, requests and certificates**
 
-- Generate RSA, ECDSA (P-256/384/521) and Ed25519 keys; give keys their own
-  password or reset it; check that a private key matches its public key.
+- Generate RSA (also as RSA-PSS keys that sign with PSS only), ECDSA
+  (P-256/384/521, brainpoolP256r1/384r1/512r1, secp256k1), Ed25519, Ed448,
+  X25519 and X448 keys, and the post-quantum ML-DSA (FIPS 204), SLH-DSA
+  (FIPS 205, all twelve parameter sets), ML-KEM (FIPS 203), Composite
+  ML-DSA and Composite ML-KEM keys (draft-ietf-lamps-pq-composite-sigs and
+  -kem); give keys their own password or reset it; check that a private
+  key matches its public key. Brainpool and secp256k1 keys are computed
+  with Go's generic, not constant-time elliptic curve code.
+- Every key that can sign signs certificates, requests and CRLs; RSA keys
+  sign with PKCS#1 v1.5 or, with the `-pss` hash choices, with PSS. Keys
+  that cannot sign (X25519, X448, ML-KEM, Composite ML-KEM) get their
+  certificates from a CA. Certificates, requests and CRLs of all these
+  algorithms are read and their signatures verified, also those Go's
+  crypto/x509 refuses.
 - Create requests and certificates in an editor modelled on XCA's:
   self-signed or signed by a CA, from a request, with subject, validity,
   basic constraints, key identifiers, key usage, extended key usage,
@@ -56,13 +68,19 @@ XCA.
 
 **OpenPGP keys**
 
-- Generate OpenPGP keys (Ed25519 with an X25519 encryption subkey, ECDSA
-  with ECDH on P-256/384/521, RSA 3072/4096) with any number of user IDs
-  and an expiry, as OpenPGP v4 keys for GnuPG and every other program or
-  as v6 keys (RFC 9580) for Sequoia, OpenPGP.js and gopenpgp.
-- Any stored RSA, ECDSA or Ed25519 key, for example an SSH key, can become
-  the primary key of an OpenPGP key; further subkeys can be bound to it,
-  such as an SSH key as authentication subkey for gpg-agent.
+- Generate OpenPGP keys (Ed25519 with an X25519 encryption subkey, Ed448
+  with X448, ECDSA with ECDH on P-256/384/521 and brainpoolP256r1/384r1/
+  512r1, RSA 3072/4096) with any number of user IDs and an expiry, as
+  OpenPGP v4 keys for GnuPG and every other program or as v6 keys (RFC
+  9580) for Sequoia, OpenPGP.js and gopenpgp. Post-quantum v6 keys (RFC
+  9980) are ML-DSA-65+Ed25519 with an ML-KEM-768+X25519 subkey or
+  ML-DSA-87+Ed448 with ML-KEM-1024+X448; they are go-ca's Composite ML-DSA
+  and ML-KEM keys. GnuPG 2.4 knows neither Ed448/X448 as RFC 9580 keys nor
+  the post-quantum algorithms.
+- Any stored RSA, ECDSA (also on secp256k1), EdDSA or ML-DSA composite
+  key, for example an SSH key, can become the primary key of an OpenPGP
+  key; further subkeys can be bound to it, such as an SSH key as
+  authentication subkey for gpg-agent.
 - Every OpenPGP key has a page with its fingerprint, user IDs, subkeys and
   armored public key, and a download of the key pair as a ZIP archive
   (public key, secret key, revocation certificate, as GnuPG keeps them),
@@ -95,7 +113,10 @@ XCA.
   RC2-40 for old Windows and Java), OpenVPN inline tags, OpenSSL config,
   vCalendar reminders, JSON Web Key and the OpenSSL index; keys as PEM
   (public, private, encrypted), DER, PKCS#8, SSH, PVK and JWK; requests,
-  CRLs and templates in their formats.
+  CRLs and templates in their formats. Only the formats that can hold a
+  key are offered: PKCS#12 takes RSA, NIST ECDSA, Ed25519 and ML-DSA keys,
+  encrypted traditional PEM RSA, EC and DSA keys; keys without a
+  traditional form are written as PKCS#8, as OpenSSL 3 does.
 - Beyond XCA, keys also export as OpenSSH private keys with their comment
   (plain or passphrase protected, as ssh-keygen writes them), as PuTTY
   private keys (`.ppk` version 3 or 2, plain or encrypted) and as RFC 4716
