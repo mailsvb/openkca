@@ -94,8 +94,6 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) Run(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
-	poll := time.NewTicker(30 * time.Second)
-	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -104,9 +102,6 @@ func (s *Server) Run(ctx context.Context) {
 		case <-t.C:
 			s.auth.Sweep()
 			s.dbs.Sweep()
-		case <-poll.C:
-			// Changes desktop XCA makes reach the index files.
-			s.store.PollOpen(ctx)
 		}
 	}
 }

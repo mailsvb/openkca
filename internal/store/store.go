@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,16 +31,13 @@ import (
 type Status string
 
 const (
-	Supported  Status = "supported"  // schema 8
-	Upgradable Status = "upgradable" // schema 5 to 7: opened as is, upgraded in phase 2
-	Outdated   Status = "outdated"   // schema below 5: refused
-	Newer      Status = "newer"      // schema above 8: refused
-	Legacy     Status = "legacy"     // pre-2.0 binary format: refused
-	Invalid    Status = "invalid"    // not an XCA database
+	Supported  Status = "supported"  // a go-ca database of the current schema
+	Upgradable Status = "upgradable" // XCA schema 5 to 8 or an older go-ca schema: converted after login
+	Outdated   Status = "outdated"   // XCA schema below 5: refused
+	Newer      Status = "newer"      // a newer XCA or go-ca schema: refused
+	Legacy     Status = "legacy"     // pre-2.0 XCA binary format: refused
+	Invalid    Status = "invalid"    // not an XCA or go-ca database
 )
-
-// CurrentSchema is the schema version this tool reads and writes.
-const CurrentSchema = xdb.CurrentSchema
 
 // Openable reports whether a database with this status can be logged into.
 func (s Status) Openable() bool { return s == Supported || s == Upgradable }
@@ -58,12 +54,16 @@ type Info struct {
 	Size    int64
 	ModTime time.Time
 	Status  Status
-	Schema  int
+	Schema  int    // XCA schema, xdb.LockoutSchema for a go-ca database
+	GoCA    int    // go-ca schema, 0 for an XCA database
 	Detail  string // why a file is invalid
 }
 
-// dsn builds a modernc.org/sqlite connection string. Journal mode stays at
-// SQLite's default rollback journal, as desktop XCA expects.
+// Version is the pair of schema settings of a database file.
+type Version struct{ Schema, GoCA int }
+
+// dsn builds a modernc.org/sqlite connection string, with SQLite's default
+// rollback journal.
 func dsn(path string, readOnly bool) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
@@ -76,24 +76,30 @@ func dsn(path string, readOnly bool) string {
 
 // Classify inspects one file. deep selects PRAGMA integrity_check (uploads)
 // instead of quick_check (scans).
-func Classify(ctx context.Context, path string, deep bool) (Status, int, string) {
+func Classify(ctx context.Context, path string, deep bool) (Status, Version, string) {
+	var ver Version
+	st, detail := classify(ctx, path, deep, &ver)
+	return st, ver, detail
+}
+
+func classify(ctx context.Context, path string, deep bool, ver *Version) (Status, string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return Invalid, 0, err.Error()
+		return Invalid, err.Error()
 	}
 	head := make([]byte, 16)
 	n, _ := io.ReadFull(f, head)
 	f.Close()
 	head = head[:n]
 	if bytes.HasPrefix(head, legacyMagic) {
-		return Legacy, 0, ""
+		return Legacy, ""
 	}
 	if !bytes.Equal(head, sqliteMagic) {
-		return Invalid, 0, "not an SQLite database"
+		return Invalid, "not an SQLite database"
 	}
 	db, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
-		return Invalid, 0, err.Error()
+		return Invalid, err.Error()
 	}
 	defer db.Close()
 	check := "PRAGMA quick_check"
@@ -102,32 +108,34 @@ func Classify(ctx context.Context, path string, deep bool) (Status, int, string)
 	}
 	var res string
 	if err := db.QueryRowContext(ctx, check).Scan(&res); err != nil {
-		return Invalid, 0, err.Error()
+		return Invalid, err.Error()
 	}
 	if res != "ok" {
-		return Invalid, 0, "integrity check: " + res
+		return Invalid, "integrity check: " + res
 	}
-	var schema, pwhash sql.NullString
-	if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_='schema'").Scan(&schema); err != nil {
-		return Invalid, 0, "no schema setting"
+	var rows int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key_='schema'").Scan(&rows); err != nil || rows == 0 {
+		return Invalid, "no schema setting"
 	}
-	v, err := strconv.Atoi(strings.TrimSpace(schema.String))
+	v, g, err := xdb.ReadVersion(ctx, db)
 	if err != nil {
-		return Invalid, 0, "invalid schema setting"
+		return Invalid, "invalid schema setting"
 	}
+	*ver = Version{v, g}
 	switch {
-	case v > CurrentSchema:
-		return Newer, v, ""
+	case v == xdb.LockoutSchema && g > xdb.CurrentSchema, v != xdb.LockoutSchema && v > xdb.XCASchema:
+		return Newer, ""
 	case v < 5:
-		return Outdated, v, ""
+		return Outdated, ""
 	}
+	var pwhash sql.NullString
 	if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_='pwhash'").Scan(&pwhash); err != nil || pwhash.String == "" {
-		return Invalid, v, "no password hash"
+		return Invalid, "no password hash"
 	}
-	if v < CurrentSchema {
-		return Upgradable, v, ""
+	if v != xdb.LockoutSchema || g < xdb.CurrentSchema {
+		return Upgradable, ""
 	}
-	return Supported, v, ""
+	return Supported, ""
 }
 
 // Store is the data folder and the registry of open databases.
@@ -175,9 +183,9 @@ func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 			continue
 		}
 		path := filepath.Join(s.Dir, e.Name())
-		st, schema, detail := Classify(ctx, path, false)
+		st, v, detail := Classify(ctx, path, false)
 		out = append(out, Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(),
-			Status: st, Schema: schema, Detail: detail})
+			Status: st, Schema: v.Schema, GoCA: v.GoCA, Detail: detail})
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil
@@ -196,8 +204,9 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 	if !fi.Mode().IsRegular() {
 		return Info{}, os.ErrNotExist
 	}
-	st, schema, detail := Classify(ctx, path, false)
-	return Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, Schema: schema, Detail: detail}, nil
+	st, v, detail := Classify(ctx, path, false)
+	return Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, Schema: v.Schema, GoCA: v.GoCA,
+		Detail: detail}, nil
 }
 
 // ErrLocked means another go-ca process serves the database.
@@ -277,7 +286,7 @@ func (h *Handle) Release() {
 }
 
 // Snapshot returns the cached objects, reloading them when MAX(stamp)
-// changed, for example because desktop XCA wrote to the same file.
+// changed.
 func (h *Handle) Snapshot(ctx context.Context) (*xdb.Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -293,8 +302,8 @@ func (h *Handle) Snapshot(ctx context.Context) (*xdb.Snapshot, error) {
 		return nil, err
 	}
 	h.snap = snap
-	// Every reload means something changed (here or in desktop XCA): keep
-	// the per-CA index files current.
+	// Every reload means something changed: keep the per-CA index files
+	// current.
 	if err := index.Write(h.store.Dir, h.Name, snap); err != nil {
 		slog.Error("writing index files failed", "db", h.Name, "err", err)
 	}
@@ -307,21 +316,6 @@ func (h *Handle) changed(ctx context.Context) {
 	h.Invalidate()
 	if _, err := h.Snapshot(ctx); err != nil {
 		slog.Error("reload after change failed", "db", h.Name, "err", err)
-	}
-}
-
-// PollOpen reloads every open database whose stamp changed, so that
-// changes made by desktop XCA reach the index files while the database is
-// open here. Call it periodically.
-func (s *Store) PollOpen(ctx context.Context) {
-	s.mu.Lock()
-	var hs []*Handle
-	for _, h := range s.open {
-		hs = append(hs, h)
-	}
-	s.mu.Unlock()
-	for _, h := range hs {
-		h.Snapshot(ctx)
 	}
 }
 

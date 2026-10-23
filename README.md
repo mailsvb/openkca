@@ -1,9 +1,11 @@
 # go-ca
 
-A web UI for [XCA](https://github.com/chris2511/xca) certificate databases,
-written in Go. One statically linked binary serves the UI over HTTPS and works
-directly on XCA's SQLite `.xdb` files, so the same file keeps opening in
-desktop XCA.
+A web based certificate authority with SSH and OpenPGP keys, written in Go.
+One statically linked binary serves the UI over HTTPS. It started as a web
+UI for [XCA](https://github.com/chris2511/xca) databases and still takes
+them over: an XCA `.xdb` file opens in go-ca and is converted to go-ca's
+format, which builds on XCA's schema but is no longer opened by desktop
+XCA.
 
 ## Features
 
@@ -15,11 +17,9 @@ desktop XCA.
 - Shows keys, certificate signing requests, certificates (as a tree under
   their issuers), templates and revocation lists, with search, a column
   chooser and expiry colours, plus XCA's shared options.
-- Writes everything the way XCA does (items, hashes, key and issuer links,
-  `stamp`), so a desktop XCA with the same file open picks the changes up,
-  and reloads when desktop XCA changes the file.
-- Older databases are upgraded after a backup (see the table below);
-  private keys in XCA's legacy 3DES format are re-encrypted as PKCS#8.
+- XCA databases are converted to go-ca's format on first login, after a
+  backup (see the table below); private keys in XCA's legacy 3DES format
+  are re-encrypted as PKCS#8.
 
 **Keys, requests and certificates**
 
@@ -47,7 +47,7 @@ desktop XCA.
   OpenSSH (private key and `.pub`), for PuTTY (`.ppk` version 3 and the
   RFC 4716 public key) or for older PuTTY versions and WinSCP (`.ppk`
   version 2), optionally protected by a passphrase.
-- SSH keys are ordinary keys of the database, so desktop XCA sees them.
+- SSH keys are ordinary keys of the database.
 
 **Certificate authorities**
 
@@ -96,14 +96,18 @@ desktop XCA.
 - Diffie-Hellman parameters (1024 to 4096 bit), generated in the background.
 - An OID resolver.
 
-| XCA database                        | go-ca                                          |
-| ----------------------------------- | ---------------------------------------------- |
-| schema 8 (XCA 2.7 and later)        | supported                                      |
-| schema 5 to 7 (XCA 2.x up to 2.6)   | upgraded to 8 on first login, after a backup   |
-| schema below 5, pre-2.0 format      | refused                                        |
-| newer schema                        | refused until supported                        |
+| Database                            | go-ca                                                 |
+| ----------------------------------- | ----------------------------------------------------- |
+| go-ca                               | supported                                             |
+| XCA schema 8 (XCA 2.7 and later)    | converted to go-ca's format on first login, after a backup |
+| XCA schema 5 to 7 (XCA 2.x to 2.6)  | upgraded to schema 8 and converted, after a backup    |
+| XCA schema below 5, pre-2.0 format  | refused                                               |
+| newer XCA or go-ca schema           | refused until supported                               |
 
-XCA 2.6 still opens a database upgraded to schema 8.
+A go-ca database is XCA's schema 8 plus go-ca's own tables (OpenPGP
+certificates). Its `schema` setting is `1000`, so desktop XCA refuses it
+instead of losing go-ca's data, and `gca_schema` holds go-ca's own schema
+version. The backup taken before the conversion is still an XCA database.
 
 ## Download
 
@@ -178,12 +182,12 @@ will warn about the name until you pass a certificate for the real host name.
 ```
 
 A backup is written before every change that rewrites a whole database
-(schema upgrade, 3DES key conversion, database password change), using
+(conversion of an XCA database, schema upgrade, 3DES key conversion,
+database password change), using
 SQLite's `VACUUM INTO`, which copies within one read transaction.
 
 Two go-ca processes cannot open the same database (`flock` on the `.lock`
-file). Desktop XCA can keep the same file open: go-ca polls `MAX(items.stamp)`
-and reloads when XCA changes something.
+file).
 
 ## Security
 
@@ -214,11 +218,9 @@ those are missing.
 
 `testdata/xdb/` holds databases generated with the real XCA command line and
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
-password, schema 8 and 9, a pre-2.0 file). Regenerate them with
-`testdata/gen/gen-fixtures.sh` (needs `xca`, `openssl`, `sqlite3`, `perl`).
-`testdata/gen/check-with-xca.sh` writes databases with go-ca's code and has
-the XCA command line list them, sign CRLs with go-ca CAs and over
-revocations go-ca recorded, and add a key.
+password, schema 8 and 9, a pre-2.0 file); the tests convert them to
+go-ca's format. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
+`xca`, `openssl`, `sqlite3`, `perl`).
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
 and lets the XCA command line import each file, except go-ca's own SSH
 formats.

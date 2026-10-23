@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -39,6 +40,16 @@ func schemaSQL(t *testing.T, path string) []string {
 	return out
 }
 
+// gocaDDL is the DDL of a file XCA created and upgraded to schema 8, plus
+// go-ca's tables.
+func gocaDDL(t *testing.T) []string {
+	out := append(schemaSQL(t, filepath.Join(fixtures, "schema8.xdb")),
+		"CREATE TABLE gca_pgp (item INTEGER UNIQUE, fingerprint VARCHAR(64), cert TEXT, FOREIGN KEY (item) REFERENCES items (id))",
+		"CREATE INDEX i_gca_pgp_item ON gca_pgp (item)")
+	sort.Strings(out)
+	return out
+}
+
 func TestCreate(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
@@ -54,12 +65,12 @@ func TestCreate(t *testing.T) {
 		}
 	}
 	info, err := s.Lookup(ctx, "new-ca")
-	if err != nil || info.Status != Supported || info.Schema != 8 {
+	if err != nil || info.Status != Supported || info.Schema != xdb.LockoutSchema || info.GoCA != xdb.CurrentSchema {
 		t.Fatalf("lookup: %+v %v", info, err)
 	}
-	// Same DDL as a file XCA created and upgraded to schema 8.
+	// XCA's schema 8 DDL plus go-ca's tables.
 	got := schemaSQL(t, info.Path)
-	want := schemaSQL(t, filepath.Join(fixtures, "schema8.xdb"))
+	want := gocaDDL(t)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("DDL differs:\n got %q\nwant %q", got, want)
 	}
@@ -144,13 +155,15 @@ func TestPrepareAfterLogin(t *testing.T) {
 	if rep.UpgradedFrom != 7 || rep.ConvertedKeys != 1 || rep.Backup == "" {
 		t.Fatalf("report %+v", rep)
 	}
-	if h.DB.Schema != 8 {
-		t.Fatalf("schema %d", h.DB.Schema)
+	if !h.DB.Current() {
+		t.Fatalf("schema %d, go-ca %d", h.DB.Schema, h.DB.GoCA)
 	}
 	got := schemaSQL(t, filepath.Join(s.Dir, "variants.xdb"))
-	want := schemaSQL(t, filepath.Join(fixtures, "schema8.xdb"))
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatal("upgraded DDL differs from XCA's schema 8")
+	if strings.Join(got, "\n") != strings.Join(gocaDDL(t), "\n") {
+		t.Fatal("upgraded DDL differs from XCA's schema 8 plus go-ca's tables")
+	}
+	if st, v, _ := Classify(ctx, filepath.Join(s.Dir, "variants.xdb"), true); st != Supported || v.GoCA != xdb.CurrentSchema {
+		t.Fatalf("after upgrade: %s %+v", st, v)
 	}
 	snap, _ := h.Snapshot(ctx)
 	for _, k := range snap.Keys {
@@ -180,5 +193,30 @@ func TestPrepareAfterLogin(t *testing.T) {
 	// A second run changes nothing.
 	if rep, err := h.PrepareAfterLogin(ctx, []byte("secret")); err != nil || rep.Backup != "" {
 		t.Fatalf("second run %+v %v", rep, err)
+	}
+}
+
+// A database from a newer go-ca is refused.
+func TestNewerGoCA(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, "next", []byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir, "next.xdb")
+	db, err := sql.Open("sqlite", dsn(path, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("UPDATE settings SET value=? WHERE key_='gca_schema'", strconv.Itoa(xdb.CurrentSchema+1))
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != xdb.LockoutSchema {
+		t.Fatalf("newer go-ca: %s %+v", st, v)
+	}
+	if _, err := s.Acquire(ctx, "next"); err == nil {
+		t.Fatal("opened a newer go-ca database")
 	}
 }

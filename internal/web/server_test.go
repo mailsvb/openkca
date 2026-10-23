@@ -19,6 +19,7 @@ import (
 	"github.com/mailsvb/go-ca/internal/auth"
 	"github.com/mailsvb/go-ca/internal/i18n"
 	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 const serverPassword = "serverpass1"
@@ -250,7 +251,7 @@ func TestCreateImportUpgrade(t *testing.T) {
 		t.Fatalf("login to imported db: %s", loc)
 	}
 	info, _ := srv.store.Lookup(context.Background(), "uploaded")
-	if info.Status != store.Supported || info.Schema != 8 {
+	if info.Status != store.Supported || info.GoCA != xdb.CurrentSchema {
 		t.Fatalf("after login: %+v", info)
 	}
 	if b, _ := srv.store.Backups("uploaded"); len(b) != 1 {

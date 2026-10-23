@@ -8,8 +8,18 @@ import (
 	"strconv"
 )
 
-// CurrentSchema is the schema version this package creates and upgrades to.
-const CurrentSchema = 8
+// XCASchema is the newest XCA schema; XCA databases are upgraded to it
+// before they become go-ca databases.
+const XCASchema = 8
+
+// LockoutSchema is the "schema" setting of a go-ca database. It is above
+// every XCA schema, so desktop XCA refuses the file instead of losing the
+// data only go-ca knows about.
+const LockoutSchema = 1000
+
+// CurrentSchema is go-ca's own schema version (the "gca_schema" setting),
+// the one this package creates and upgrades to.
+const CurrentSchema = 1
 
 // upgradeSteps are XCA's schema steps (lib/database_schema.cpp, schemas[5]
 // to schemas[7]) keyed by the version they start from; B64_BLOB is TEXT for
@@ -33,9 +43,22 @@ var upgradeSteps = map[int][]string{
 	},
 }
 
+// gocaSteps turn a schema 8 XCA database into a go-ca database
+// (gocaSteps[0]) and then step go-ca's own schema, keyed by the version
+// they start from.
+var gocaSteps = map[int][]string{
+	0: {
+		"CREATE TABLE gca_pgp (item INTEGER UNIQUE, fingerprint VARCHAR(64), cert TEXT, FOREIGN KEY (item) REFERENCES items (id))",
+		"CREATE INDEX i_gca_pgp_item ON gca_pgp (item)",
+		"UPDATE settings SET value='1000' WHERE key_='schema'",
+		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '1')",
+	},
+}
+
+// applySteps upgrades an XCA database from schema from to XCASchema.
 func applySteps(ctx context.Context, tx *sql.Tx, from int) (int, error) {
 	v := from
-	for v < CurrentSchema {
+	for v < XCASchema {
 		steps, ok := upgradeSteps[v]
 		if !ok {
 			return v, fmt.Errorf("xdb: no upgrade path from schema %d", v)
@@ -50,8 +73,26 @@ func applySteps(ctx context.Context, tx *sql.Tx, from int) (int, error) {
 	return v, nil
 }
 
-// Create writes a new, empty database the way XCA does: the schema 7 DDL,
-// the initial settings, then the step to schema 8, all in one transaction.
+// applyGoCASteps brings a schema 8 XCA database (from 0) or a go-ca
+// database to CurrentSchema.
+func applyGoCASteps(ctx context.Context, tx *sql.Tx, from int) error {
+	for v := from; v < CurrentSchema; v++ {
+		steps, ok := gocaSteps[v]
+		if !ok {
+			return fmt.Errorf("xdb: no upgrade path from go-ca schema %d", v)
+		}
+		for _, stmt := range steps {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("xdb: go-ca schema %d step %q: %w", v, stmt, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Create writes a new, empty database: XCA's schema 7 DDL and initial
+// settings, XCA's step to schema 8 and go-ca's steps, all in one
+// transaction.
 func Create(ctx context.Context, db *sql.DB, pwhash string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -71,14 +112,24 @@ func Create(ctx context.Context, db *sql.DB, pwhash string) error {
 	if _, err := applySteps(ctx, tx, 7); err != nil {
 		return err
 	}
+	if err := applyGoCASteps(ctx, tx, 0); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-// Upgrade brings the database to CurrentSchema in one transaction. It
-// returns the version it started from.
+// Current reports whether the database is a go-ca database of
+// CurrentSchema.
+func (d *DB) Current() bool {
+	return d.Schema == LockoutSchema && d.GoCA == CurrentSchema
+}
+
+// Upgrade brings an XCA database (schema 5 to 8) or an older go-ca
+// database to CurrentSchema in one transaction. It returns the schema it
+// started from: the XCA schema, or LockoutSchema for a go-ca database.
 func (d *DB) Upgrade(ctx context.Context) (int, error) {
 	from := d.Schema
-	if from >= CurrentSchema {
+	if d.Current() {
 		return from, nil
 	}
 	tx, err := d.SQL.BeginTx(ctx, nil)
@@ -93,19 +144,25 @@ func (d *DB) Upgrade(ctx context.Context) (int, error) {
 	if v, err := strconv.Atoi(s); err != nil || v != from {
 		return from, fmt.Errorf("xdb: schema changed underneath (%q)", s)
 	}
-	v, err := applySteps(ctx, tx, from)
-	if err != nil {
+	goca := d.GoCA
+	if from != LockoutSchema {
+		if _, err := applySteps(ctx, tx, from); err != nil {
+			return from, err
+		}
+		goca = 0
+	}
+	if err := applyGoCASteps(ctx, tx, goca); err != nil {
 		return from, err
 	}
 	if err := tx.Commit(); err != nil {
 		return from, err
 	}
-	d.Schema = v
+	d.Schema, d.GoCA = LockoutSchema, CurrentSchema
 	return from, nil
 }
 
 // Tx is a write transaction that bumps items.stamp on commit, as XCA's
-// DbTransaction does, so that other XCA instances reload.
+// DbTransaction does; the snapshot cache reloads when MAX(stamp) changes.
 type Tx struct {
 	*sql.Tx
 	touched []int64

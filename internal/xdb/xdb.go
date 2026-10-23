@@ -1,5 +1,7 @@
-// Package xdb reads (and in later phases writes) XCA's SQLite database
-// format. It is the only package that issues SQL against a database file.
+// Package xdb reads and writes go-ca's SQLite database format: XCA's
+// schema 8 plus go-ca's own tables, with a schema setting XCA refuses. It
+// also upgrades XCA databases to it. It is the only package that issues
+// SQL against a database file.
 package xdb
 
 import (
@@ -149,23 +151,43 @@ type Snapshot struct {
 	Deleted     int // items marked deleted, not listed
 }
 
-// DB wraps an open XCA database.
+// DB wraps an open database.
 type DB struct {
 	SQL    *sql.DB
-	Schema int
+	Schema int // the "schema" setting: XCA's schema, LockoutSchema for go-ca
+	GoCA   int // go-ca's schema ("gca_schema"), 0 for an XCA database
 }
 
-// Open wraps an already opened *sql.DB and reads its schema version.
+// Open wraps an already opened *sql.DB and reads its schema versions.
 func Open(ctx context.Context, db *sql.DB) (*DB, error) {
-	s, err := querySetting(ctx, db, "schema")
+	v, g, err := ReadVersion(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	v, err := strconv.Atoi(strings.TrimSpace(s))
+	return &DB{SQL: db, Schema: v, GoCA: g}, nil
+}
+
+// ReadVersion returns the "schema" and "gca_schema" settings (0 when
+// gca_schema is absent).
+func ReadVersion(ctx context.Context, db *sql.DB) (schema, goca int, err error) {
+	s, err := querySetting(ctx, db, "schema")
 	if err != nil {
-		return nil, fmt.Errorf("xdb: invalid schema %q", s)
+		return 0, 0, err
 	}
-	return &DB{SQL: db, Schema: v}, nil
+	if schema, err = strconv.Atoi(strings.TrimSpace(s)); err != nil {
+		return 0, 0, fmt.Errorf("xdb: invalid schema %q", s)
+	}
+	if schema != LockoutSchema {
+		return schema, 0, nil
+	}
+	g, err := querySetting(ctx, db, "gca_schema")
+	if err != nil {
+		return 0, 0, err
+	}
+	if goca, err = strconv.Atoi(strings.TrimSpace(g)); err != nil || goca < 1 {
+		return 0, 0, fmt.Errorf("xdb: invalid gca_schema %q", g)
+	}
+	return schema, goca, nil
 }
 
 type querier interface {
@@ -192,8 +214,8 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 	return d.Write(ctx, func(tx *Tx) error { return tx.SetSetting(ctx, key, value) })
 }
 
-// MaxStamp returns MAX(items.stamp); it changes whenever XCA or this tool
-// commits a change to any item.
+// MaxStamp returns MAX(items.stamp); it changes with every committed
+// change to an item.
 func (d *DB) MaxStamp(ctx context.Context) (int64, error) {
 	var s sql.NullInt64
 	err := d.SQL.QueryRowContext(ctx, "SELECT MAX(stamp) FROM items").Scan(&s)
