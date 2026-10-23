@@ -82,6 +82,12 @@ Requires Go 1.26 or later (the toolchain is downloaded automatically by older
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o go-ca ./cmd/go-ca
 ```
 
+GitHub Actions builds the binaries for Linux (amd64, arm64), Windows (amd64)
+and macOS (amd64, arm64) on every push to `main` (`.github/workflows/build.yml`)
+and attaches them to the workflow run as artifacts; there are no releases yet.
+`.github/workflows/test.yml` checks formatting, runs `go vet` and
+`go test -race` on every push to `main`.
+
 ## Run
 
 ```sh
