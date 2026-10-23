@@ -148,6 +148,7 @@ type Snapshot struct {
 	CRLs        []*CRL
 	Templates   []*Template
 	Revocations []*Revocation
+	PGP         []*PGPCert
 	Deleted     int // items marked deleted, not listed
 }
 
@@ -257,7 +258,7 @@ func (d *DB) Load(ctx context.Context) (*Snapshot, error) {
 	defer tx.Rollback()
 	s := &Snapshot{Schema: d.Schema, Settings: map[string]string{}}
 	steps := []func(context.Context, *sql.Tx, *Snapshot) error{
-		d.loadSettings, d.loadKeys, d.loadRequests, d.loadCerts, d.loadCRLs, d.loadTemplates, d.loadRevocations, d.loadMeta,
+		d.loadSettings, d.loadKeys, d.loadRequests, d.loadCerts, d.loadCRLs, d.loadTemplates, d.loadRevocations, d.loadPGP, d.loadMeta,
 	}
 	for _, f := range steps {
 		if err := f(ctx, tx, s); err != nil {

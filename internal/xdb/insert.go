@@ -457,6 +457,9 @@ func (t *Tx) Delete(ctx context.Context, id int64) error {
 	case TypeKey:
 		stmts = []string{"DELETE FROM private_keys WHERE item=?", "DELETE FROM public_keys WHERE item=?",
 			"DELETE FROM tokens WHERE item=?", "DELETE FROM token_mechanism WHERE item=?"}
+		if t.hasTable(ctx, "gca_pgp") {
+			stmts = append(stmts, "DELETE FROM gca_pgp WHERE item=?")
+		}
 		var users []int64
 		rows, err := t.QueryContext(ctx, "SELECT item FROM x509super WHERE pkey=?", id)
 		if err != nil {
