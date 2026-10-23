@@ -39,7 +39,7 @@ jobs:
           cp internal/web/static/htmx.LICENSE dist/
 
       # Stored with this workflow run only; there are no releases yet.
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: go-ca-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/

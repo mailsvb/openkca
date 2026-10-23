@@ -4,7 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,14 +180,25 @@ func TestExportAllFormats(t *testing.T) {
 	run("crl", "-in", f("Sub_CA-32.crl"), "-noout")
 	run("req", "-in", f("request-30.csr"), "-noout", "-verify")
 	run("x509", "-inform", "DER", "-in", f("www.example.org-13.cer"), "-noout")
-	// The OpenSSL config recreates the certificate's subject and extensions.
-	out := run("req", "-new", "-x509", "-config", f("www.example.org-38.conf"), "-key", f("www.example.org-20.pem"), "-subj", "/CN=ignored", "-text", "-noout")
-	_ = out
-	out = run("req", "-new", "-x509", "-config", f("www.example.org-38.conf"), "-key", f("www.example.org-20.pem"), "-text", "-noout")
-	for _, want := range []string{"Subject: C = DE, O = Test, CN = www.example.org", "DNS:www.example.org, IP Address:192.0.2.1", "TLS Web Server Authentication", "Digital Signature, Key Encipherment"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("conf export: %q missing\n%s\n%s", want, files["www.example.org-38.conf"], out)
-		}
+	// The OpenSSL config recreates the certificate's subject and extensions;
+	// the result is compared parsed, as openssl's text output varies by version.
+	run("req", "-new", "-x509", "-config", f("www.example.org-38.conf"), "-key", f("www.example.org-20.pem"), "-out", f("from-conf.pem"))
+	pemData, _ := os.ReadFile(f("from-conf.pem"))
+	blk, _ := pem.Decode(pemData)
+	if blk == nil {
+		t.Fatal("openssl req wrote no certificate")
+	}
+	got, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := x509.ParseCertificate(findCert(snap, p.leaf).DER)
+	if !bytes.Equal(got.RawSubject, orig.RawSubject) {
+		t.Fatalf("conf export: subject %q, want %q\n%s", got.Subject, orig.Subject, files["www.example.org-38.conf"])
+	}
+	if fmt.Sprint(got.DNSNames, got.IPAddresses, got.ExtKeyUsage, got.KeyUsage, got.BasicConstraintsValid, got.IsCA) !=
+		fmt.Sprint(orig.DNSNames, orig.IPAddresses, orig.ExtKeyUsage, orig.KeyUsage, orig.BasicConstraintsValid, orig.IsCA) {
+		t.Fatalf("conf export: extensions differ\n%s", files["www.example.org-38.conf"])
 	}
 }
 
