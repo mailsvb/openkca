@@ -70,7 +70,7 @@ func refOf(snap *xdb.Snapshot, id int64) *itemRef {
 	for _, c := range snap.Certs {
 		if c.ID == id {
 			r := &itemRef{typ: xdb.TypeCert, item: &c.Item, cert: c}
-			if x, err := x509.ParseCertificate(c.DER); err == nil {
+			if x, err := pki.ParseCertificate(c.DER); err == nil {
 				r.pub, r.pubSPKI = x.PublicKey, x.RawSubjectPublicKeyInfo
 			}
 			return r
@@ -140,6 +140,9 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 		if r.pub == nil || !codec.JWKSupported(r.pub) {
 			d |= codec.FJWK
 		}
+		if r.pub == nil || !codec.PKCS12Supported(r.pub) {
+			d |= codec.FPKCS12
+		}
 	case xdb.TypeKey:
 		k := r.key
 		if r.pub == nil {
@@ -151,8 +154,7 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 			default:
 				d |= codec.FPVK
 			}
-			switch codec.KeyTypeName(r.pub) {
-			case "Ed25519", "X25519":
+			if !codec.TraditionalSupported(r.pub) {
 				d |= codec.FTradition
 			}
 			if !codec.SSHCompatible(r.pub) {
@@ -319,16 +321,6 @@ func unusable(snap *xdb.Snapshot, c *xdb.Cert, now time.Time) bool {
 	return (!info.NoExpiry && info.NotAfter.Before(now)) || revocationOf(snap, c) != nil
 }
 
-func keyTypeText(k *xdb.Key) string {
-	switch k.KeyType {
-	case "ED25":
-		return "ED25519"
-	case "X255":
-		return "X25519"
-	}
-	return k.KeyType
-}
-
 func (e *exporter) certPEM(c *xdb.Cert) []byte {
 	var b []byte
 	if e.req.PEMComment {
@@ -342,7 +334,7 @@ func (e *exporter) keyComment(k *xdb.Key) []byte {
 	if !e.req.PEMComment {
 		return nil
 	}
-	return codec.Comment(k.Name, k.Comment, fmt.Sprintf("%d bit %s", k.Len, keyTypeText(k)))
+	return codec.Comment(k.Name, k.Comment, fmt.Sprintf("%d bit %s", k.Len, pki.KeyTypeText(k.KeyType)))
 }
 
 type exporter struct {
@@ -555,14 +547,14 @@ func (e *exporter) certs() error {
 		if err != nil {
 			return err
 		}
-		cert, err := x509.ParseCertificate(first.DER)
+		cert, err := pki.ParseCertificate(first.DER)
 		if err != nil {
 			return err
 		}
 		var extra []*x509.Certificate
 		if f&codec.FChain != 0 {
 			for _, c := range chain(e.snap, first)[1:] {
-				if x, err := x509.ParseCertificate(c.DER); err == nil {
+				if x, err := pki.ParseCertificate(c.DER); err == nil {
 					extra = append(extra, x)
 				}
 			}
@@ -615,7 +607,7 @@ func (e *exporter) certs() error {
 		}
 		e.vcal(ev)
 	case f&codec.FConfig != 0:
-		x, err := x509.ParseCertificate(first.DER)
+		x, err := pki.ParseCertificate(first.DER)
 		if err != nil {
 			return err
 		}
@@ -778,7 +770,7 @@ func (e *exporter) requests() error {
 		switch {
 		case f&codec.FPEM != 0:
 			if e.req.PEMComment {
-				if x, err := x509.ParseCertificateRequest(q.DER); err == nil {
+				if x, err := pki.ParseCertificateRequest(q.DER); err == nil {
 					e.out.Write(codec.Comment(q.Name, q.Comment, codec.RFC2253(x.RawSubject)))
 				}
 			}
@@ -786,7 +778,7 @@ func (e *exporter) requests() error {
 		case f&codec.FDER != 0:
 			e.out.Write(q.DER)
 		case f&codec.FConfig != 0:
-			x, err := x509.ParseCertificateRequest(q.DER)
+			x, err := pki.ParseCertificateRequest(q.DER)
 			if err != nil {
 				return err
 			}

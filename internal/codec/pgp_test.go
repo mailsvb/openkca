@@ -18,14 +18,25 @@ type pgpCase struct {
 	primary  pki.KeySpec
 	sub      pki.KeySpec
 	versions []int
+	gnupg    bool // GnuPG 2.4 knows the algorithms
 }
 
 var pgpCases = []pgpCase{
-	{"ed25519", pki.KeySpec{Type: "Ed25519"}, pki.KeySpec{Type: "X25519"}, []int{4, 6}},
-	{"p256", pki.KeySpec{Type: "EC", Curve: "P-256"}, pki.KeySpec{Type: "EC", Curve: "P-256"}, []int{4, 6}},
-	{"p384", pki.KeySpec{Type: "EC", Curve: "P-384"}, pki.KeySpec{Type: "EC", Curve: "P-384"}, []int{4}},
-	{"p521", pki.KeySpec{Type: "EC", Curve: "P-521"}, pki.KeySpec{Type: "EC", Curve: "P-521"}, []int{4}},
-	{"rsa", pki.KeySpec{Type: "RSA", Bits: 2048}, pki.KeySpec{Type: "RSA", Bits: 2048}, []int{4, 6}},
+	{"ed25519", pki.KeySpec{Type: "Ed25519"}, pki.KeySpec{Type: "X25519"}, []int{4, 6}, true},
+	{"p256", pki.KeySpec{Type: "EC", Curve: "P-256"}, pki.KeySpec{Type: "EC", Curve: "P-256"}, []int{4, 6}, true},
+	{"p384", pki.KeySpec{Type: "EC", Curve: "P-384"}, pki.KeySpec{Type: "EC", Curve: "P-384"}, []int{4}, true},
+	{"p521", pki.KeySpec{Type: "EC", Curve: "P-521"}, pki.KeySpec{Type: "EC", Curve: "P-521"}, []int{4}, true},
+	{"rsa", pki.KeySpec{Type: "RSA", Bits: 2048}, pki.KeySpec{Type: "RSA", Bits: 2048}, []int{4, 6}, true},
+	{"brainpool256", pki.KeySpec{Type: "EC", Curve: "brainpoolP256r1"}, pki.KeySpec{Type: "EC", Curve: "brainpoolP256r1"}, []int{4, 6}, true},
+	{"brainpool384", pki.KeySpec{Type: "EC", Curve: "brainpoolP384r1"}, pki.KeySpec{Type: "EC", Curve: "brainpoolP384r1"}, []int{4}, true},
+	{"brainpool512", pki.KeySpec{Type: "EC", Curve: "brainpoolP512r1"}, pki.KeySpec{Type: "EC", Curve: "brainpoolP512r1"}, []int{4}, true},
+	{"secp256k1", pki.KeySpec{Type: "EC", Curve: "secp256k1"}, pki.KeySpec{Type: "EC", Curve: "secp256k1"}, []int{4}, true},
+	{"ed448", pki.KeySpec{Type: "Ed448"}, pki.KeySpec{Type: "X448"}, []int{4, 6}, false},
+	{"ed25519-mlkem", pki.KeySpec{Type: "Ed25519"}, pki.KeySpec{Type: "CompositeKEM", Param: "MLKEM768-X25519-SHA3-256"}, []int{4, 6}, false},
+	{"mldsa65", pki.KeySpec{Type: "Composite", Param: "MLDSA65-Ed25519-SHA512"},
+		pki.KeySpec{Type: "CompositeKEM", Param: "MLKEM768-X25519-SHA3-256"}, []int{6}, false},
+	{"mldsa87", pki.KeySpec{Type: "Composite", Param: "MLDSA87-Ed448-SHAKE256"},
+		pki.KeySpec{Type: "CompositeKEM", Param: "MLKEM1024-X448-SHA3-256"}, []int{6}, false},
 }
 
 func genKey(t *testing.T, s pki.KeySpec) crypto.Signer {
@@ -248,6 +259,9 @@ func colonFingerprints(out []byte) []string {
 // revocation certificate.
 func TestPGPWithGnuPG(t *testing.T) {
 	for _, c := range pgpCases {
+		if !c.gnupg {
+			continue
+		}
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			g := newGnuPG(t)
@@ -297,7 +311,8 @@ func TestPGPWithGnuPG(t *testing.T) {
 
 // TestPGPFromGnuPG imports keys gpg generated, in each export form.
 func TestPGPFromGnuPG(t *testing.T) {
-	for _, algo := range [][2]string{{"ed25519", "cv25519"}, {"nistp256", "nistp256"}, {"rsa3072", "rsa3072"}} {
+	for _, algo := range [][2]string{{"ed25519", "cv25519"}, {"nistp256", "nistp256"}, {"rsa3072", "rsa3072"},
+		{"brainpoolP384r1", "brainpoolP384r1"}, {"secp256k1", "secp256k1"}} {
 		t.Run(algo[0], func(t *testing.T) {
 			t.Parallel()
 			g := newGnuPG(t)

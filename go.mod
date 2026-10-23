@@ -6,6 +6,7 @@ toolchain go1.27.3
 
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
+	github.com/cloudflare/circl v1.6.3
 	github.com/gofrs/flock v0.13.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
@@ -15,7 +16,6 @@ require (
 )
 
 require (
-	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

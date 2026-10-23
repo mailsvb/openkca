@@ -2,11 +2,16 @@ package codec
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/mldsa"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
 	"unicode/utf16"
 
+	"github.com/mailsvb/go-ca/internal/pki"
 	"software.sslmate.com/src/go-pkcs12"
 )
 
@@ -23,6 +28,9 @@ var PKCS12Algorithms = []string{"AES-256-CBC", "PBE-SHA1-3DES", "PBE-SHA1-RC2-40
 // with a SHA-1 MAC; RC2-40 for the certificates with a 3DES key, as XCA
 // combines it. An unknown value gets the default.
 func PKCS12(key crypto.Signer, cert *x509.Certificate, chain []*x509.Certificate, password, algo string) ([]byte, error) {
+	if key != nil && !PKCS12Supported(key.Public()) {
+		return nil, ErrUnsupportedKey
+	}
 	enc := pkcs12.Modern2023
 	switch algo {
 	case "PBE-SHA1-3DES":
@@ -31,6 +39,20 @@ func PKCS12(key crypto.Signer, cert *x509.Certificate, chain []*x509.Certificate
 		enc = pkcs12.LegacyRC2
 	}
 	return enc.Encode(key, cert, chain, password)
+}
+
+// PKCS12Supported reports whether a key can go into a PKCS#12 file: the
+// encoder writes it with crypto/x509, which knows RSA, ECDSA on the NIST
+// curves, Ed25519 and ML-DSA.
+func PKCS12Supported(pub crypto.PublicKey) bool {
+	switch k := pub.(type) {
+	case *rsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
+		return true
+	case *ecdsa.PublicKey:
+		c := pki.CurveOf(k.Curve)
+		return c != nil && c.NIST
+	}
+	return false
 }
 
 // ErrPassword is returned when a PKCS#12 password is wrong.

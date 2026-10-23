@@ -220,7 +220,7 @@
 </section>
 {{end}}
 
-{{define "pubkey"}}{{.Algorithm}}{{if .Curve}} {{.Curve}}{{end}} · {{T "unit.bits" .Bits}}{{if .Exponent}} · {{T "key.exponent" .Exponent}}{{end}}{{end}}
+{{define "pubkey"}}{{.Algorithm}}{{if .Curve}} {{.Curve}}{{end}} · {{T "unit.bits" .Bits}}{{if .Exponent}} · {{T "key.exponent" .Exponent}}{{end}}{{if .PSS}} · {{T "key.pss" .PSS}}{{end}}{{if .Parts}} · {{.Parts}}{{end}}{{end}}
 
 {{define "subject"}}{{if .}}
 <section class="card">

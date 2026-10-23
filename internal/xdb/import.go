@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"encoding/asn1"
 	"time"
+
+	"github.com/mailsvb/go-ca/internal/pki"
 )
 
 var oidInvalidityDate = asn1.ObjectIdentifier{2, 5, 29, 24}
@@ -98,17 +100,17 @@ func (t *Tx) InsertImportedCRL(ctx context.Context, name, comment string, der []
 	}
 	var issuer sql.NullInt64
 	for _, c := range cands {
-		if bytes.Equal(c.cert.RawSubject, l.RawIssuer) && l.CheckSignatureFrom(c.cert) == nil {
+		if bytes.Equal(c.cert.RawSubject, l.RawIssuer) && mayIssueCRLs(c.cert) && pki.CheckCRLSignature(c.cert, l) == nil {
 			issuer = sql.NullInt64{Int64: c.id, Valid: true}
 			break
 		}
 	}
 	if !issuer.Valid {
-		// CheckSignatureFrom insists on CA key usage; fall back to the
-		// bare signature check, as OpenSSL's X509_CRL_verify.
+		// prefer a CA allowed to sign CRLs; fall back to the bare
+		// signature check, as OpenSSL's X509_CRL_verify.
 		for _, c := range cands {
 			if bytes.Equal(c.cert.RawSubject, l.RawIssuer) &&
-				c.cert.CheckSignature(l.SignatureAlgorithm, l.RawTBSRevocationList, l.Signature) == nil {
+				pki.CheckCRLSignature(c.cert, l) == nil {
 				issuer = sql.NullInt64{Int64: c.id, Valid: true}
 				break
 			}
@@ -156,4 +158,13 @@ func (t *Tx) InsertImportedCRL(ctx context.Context, name, comment string, der []
 		}
 	}
 	return id, issuer.Int64, nil
+}
+
+// mayIssueCRLs applies the CA and key usage rules of crypto/x509's
+// RevocationList.CheckSignatureFrom.
+func mayIssueCRLs(c *x509.Certificate) bool {
+	if c.Version == 3 && !c.BasicConstraintsValid || c.BasicConstraintsValid && !c.IsCA {
+		return false
+	}
+	return c.KeyUsage == 0 || c.KeyUsage&x509.KeyUsageCRLSign != 0
 }

@@ -1,9 +1,7 @@
 package pki
 
 import (
-	"bytes"
 	"crypto"
-	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -51,63 +49,6 @@ var (
 	oidInvalidDate = asn1.ObjectIdentifier{2, 5, 29, 24}
 )
 
-// asn1Time encodes like OpenSSL's ASN1_TIME_set: UTCTime until 2049,
-// GeneralizedTime from 2050.
-func asn1Time(t time.Time) asn1.RawValue {
-	t = t.UTC().Truncate(time.Second)
-	if t.Year() >= 1950 && t.Year() < 2050 {
-		b, _ := asn1.MarshalWithParams(t, "utc")
-		return asn1.RawValue{FullBytes: b}
-	}
-	b, _ := asn1.MarshalWithParams(t, "generalized")
-	return asn1.RawValue{FullBytes: b}
-}
-
-type sigAlg struct {
-	oid  asn1.ObjectIdentifier
-	null bool
-	hash crypto.Hash
-}
-
-var sigAlgs = map[x509.SignatureAlgorithm]sigAlg{
-	x509.SHA256WithRSA:   {asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}, true, crypto.SHA256},
-	x509.SHA384WithRSA:   {asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 12}, true, crypto.SHA384},
-	x509.SHA512WithRSA:   {asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 13}, true, crypto.SHA512},
-	x509.ECDSAWithSHA256: {asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}, false, crypto.SHA256},
-	x509.ECDSAWithSHA384: {asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 3}, false, crypto.SHA384},
-	x509.ECDSAWithSHA512: {asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 4}, false, crypto.SHA512},
-	x509.PureEd25519:     {asn1.ObjectIdentifier{1, 3, 101, 112}, false, 0},
-}
-
-func (a sigAlg) identifier() pkix.AlgorithmIdentifier {
-	id := pkix.AlgorithmIdentifier{Algorithm: a.oid}
-	if a.null {
-		id.Parameters = asn1.NullRawValue
-	}
-	return id
-}
-
-// signTBS signs DER data and returns the complete signed structure
-// SEQUENCE { tbs, algorithm, signature }.
-func signTBS(tbs []byte, alg sigAlg, key crypto.Signer) ([]byte, error) {
-	digest := tbs
-	var opts crypto.SignerOpts = crypto.Hash(0)
-	if alg.hash != 0 {
-		h := alg.hash.New()
-		h.Write(tbs)
-		digest, opts = h.Sum(nil), alg.hash
-	}
-	sig, err := key.Sign(rand.Reader, digest, opts)
-	if err != nil {
-		return nil, err
-	}
-	return asn1.Marshal(struct {
-		TBS       asn1.RawValue
-		Algorithm pkix.AlgorithmIdentifier
-		Signature asn1.BitString
-	}{asn1.RawValue{FullBytes: tbs}, alg.identifier(), asn1.BitString{Bytes: sig, BitLength: 8 * len(sig)}})
-}
-
 type revokedEntry struct {
 	Serial     *big.Int
 	Date       asn1.RawValue
@@ -119,19 +60,14 @@ type revokedEntry struct {
 // and reason (if wanted and not unspecified); extensions in the order AKI,
 // IAN, CRL number.
 func CreateCRL(p CRLParams) ([]byte, error) {
-	sa, err := SignatureAlgorithm(p.Key, p.Hash)
+	alg, err := signatureScheme(p.Key, p.Hash)
 	if err != nil {
 		return nil, err
-	}
-	alg, ok := sigAlgs[sa]
-	if !ok {
-		return nil, errors.New("unsupported signature algorithm")
 	}
 	if !p.NextUpdate.After(p.ThisUpdate) {
 		return nil, errors.New("the next update must be later than the last update")
 	}
-	pub, _ := x509.MarshalPKIXPublicKey(p.Key.Public())
-	if !bytes.Equal(pub, p.Issuer.RawSubjectPublicKeyInfo) {
+	if ok, err := MatchesPublic(p.Key, p.Issuer.RawSubjectPublicKeyInfo); err != nil || !ok {
 		return nil, errors.New("the key does not belong to the CA certificate")
 	}
 	revoked := append([]Revoked(nil), p.Revoked...)
@@ -190,10 +126,10 @@ func CreateCRL(p CRLParams) ([]byte, error) {
 		NextUpdate asn1.RawValue
 		Revoked    []revokedEntry   `asn1:"optional,omitempty"`
 		Extensions []pkix.Extension `asn1:"optional,omitempty,explicit,tag:0"`
-	}{1, alg.identifier(), asn1.RawValue{FullBytes: p.Issuer.RawSubject}, asn1Time(p.ThisUpdate), asn1Time(p.NextUpdate), entries, exts}
+	}{1, alg.id, asn1.RawValue{FullBytes: p.Issuer.RawSubject}, asn1Time(p.ThisUpdate), asn1Time(p.NextUpdate), entries, exts}
 	tbsDER, err := asn1.Marshal(tbs)
 	if err != nil {
 		return nil, err
 	}
-	return signTBS(tbsDER, alg, p.Key)
+	return signStructure(tbsDER, alg, p.Key)
 }

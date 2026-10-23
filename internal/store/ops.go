@@ -93,7 +93,7 @@ func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki
 }
 
 func insertGenerated(ctx context.Context, tx *xdb.Tx, name, comment string, key crypto.Signer, dbPass []byte) (int64, error) {
-	spki, err := x509.MarshalPKIXPublicKey(key.Public())
+	spki, err := pki.MarshalPublicKey(key.Public())
 	if err != nil {
 		return 0, err
 	}
@@ -161,7 +161,7 @@ func subjectAndKey(snap *xdb.Snapshot, p IssueParams, generated crypto.Signer) (
 		if r == nil {
 			return nil, nil, nil, errors.New("the selected request does not exist")
 		}
-		if req, err = x509.ParseCertificateRequest(r.DER); err != nil {
+		if req, err = pki.ParseCertificateRequest(r.DER); err != nil {
 			return nil, nil, nil, err
 		}
 		spki = req.RawSubjectPublicKeyInfo
@@ -177,7 +177,7 @@ func subjectAndKey(snap *xdb.Snapshot, p IssueParams, generated crypto.Signer) (
 	if spki == nil {
 		switch {
 		case generated != nil:
-			spki, err = x509.MarshalPKIXPublicKey(generated.Public())
+			spki, err = pki.MarshalPublicKey(generated.Public())
 		case p.KeyID != 0:
 			k := findKey(snap, p.KeyID)
 			if k == nil {
@@ -202,7 +202,7 @@ func extContext(snap *xdb.Snapshot, p IssueParams, subject, spki []byte) (pki.Ex
 	if spki == nil {
 		// key not generated yet (preview): use a dummy so SKI can be shown
 		dummy, _ := pki.GenerateKey(pki.KeySpec{Type: "Ed25519"})
-		ectx.SubjectSPKI, _ = x509.MarshalPKIXPublicKey(dummy.Public())
+		ectx.SubjectSPKI, _ = pki.MarshalPublicKey(dummy.Public())
 	}
 	if p.Request {
 		return ectx, nil, nil
@@ -216,7 +216,7 @@ func extContext(snap *xdb.Snapshot, p IssueParams, subject, spki []byte) (pki.Ex
 	if ca == nil || !ca.CA {
 		return ectx, nil, errors.New("the selected signer is not a CA certificate")
 	}
-	cc, err := x509.ParseCertificate(ca.DER)
+	cc, err := pki.ParseCertificate(ca.DER)
 	if err != nil {
 		return ectx, nil, err
 	}
@@ -237,7 +237,7 @@ func mergeReqExt(snap *xdb.Snapshot, reqID int64, exts []pkix.Extension) []pkix.
 	if r == nil {
 		return exts
 	}
-	req, err := x509.ParseCertificateRequest(r.DER)
+	req, err := pki.ParseCertificateRequest(r.DER)
 	if err != nil {
 		return exts
 	}
@@ -331,15 +331,13 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 		if p.CopyReqExt && csr != nil {
 			exts = mergeReqExt(snap, p.FromReqID, exts)
 		}
-		var pub crypto.PublicKey
-		if csr != nil {
-			pub = csr.PublicKey
-		} else if generated != nil {
-			pub = generated.Public()
-		} else if pub, err = x509.ParsePKIXPublicKey(spki); err != nil {
+		// The certificate holds the key exactly as the request or key
+		// item has it, so keys that cannot sign (ML-KEM, X25519, X448)
+		// are certified as well.
+		if _, err := pki.ParsePublicKey(spki); err != nil {
 			return 0, fmt.Errorf("go-ca cannot issue certificates for this key type: %w", err)
 		}
-		cr := pki.CertRequest{Subject: subject, PublicKey: pub, NotBefore: p.NotBefore, NotAfter: p.NotAfter,
+		cr := pki.CertRequest{Subject: subject, SPKI: spki, NotBefore: p.NotBefore, NotAfter: p.NotAfter,
 			Extensions: exts, Hash: p.Hash, SignerKey: subjectKey}
 		if p.NoExpiry {
 			cr.NotAfter = pki.NoExpiry
@@ -355,7 +353,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 			if cr.SignerKey, err = h.unlock(ctx, cak.ID, cak.KeyType, dbPass, p.KeyPass); err != nil {
 				return 0, err
 			}
-			if cr.Issuer, err = x509.ParseCertificate(ca.DER); err != nil {
+			if cr.Issuer, err = pki.ParseCertificate(ca.DER); err != nil {
 				return 0, err
 			}
 		}
@@ -463,11 +461,11 @@ func (h *Handle) ExtractPublicKey(ctx context.Context, id int64) (int64, error) 
 	var name, kind string
 	var spki []byte
 	if c := findCert(snap, id); c != nil {
-		if cc, err := x509.ParseCertificate(c.DER); err == nil {
+		if cc, err := pki.ParseCertificate(c.DER); err == nil {
 			name, kind, spki = c.Name, "Certificate", cc.RawSubjectPublicKeyInfo
 		}
 	} else if r := findRequest(snap, id); r != nil {
-		if rr, err := x509.ParseCertificateRequest(r.DER); err == nil {
+		if rr, err := pki.ParseCertificateRequest(r.DER); err == nil {
 			name, kind, spki = r.Name, "Certificate request", rr.RawSubjectPublicKeyInfo
 		}
 	}
@@ -509,7 +507,7 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, dbPass []byte, kp 
 	if err != nil {
 		return 0, err
 	}
-	cc, err := x509.ParseCertificate(c.DER)
+	cc, err := pki.ParseCertificate(c.DER)
 	if err != nil {
 		return 0, err
 	}
@@ -519,7 +517,7 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, dbPass []byte, kp 
 			exts = append(exts, e)
 		}
 	}
-	der, err := pki.CreateRequest(cc.RawSubject, exts, key, pki.HashName(cc.SignatureAlgorithm))
+	der, err := pki.CreateRequest(cc.RawSubject, exts, key, pki.HashChoice(cc.Raw))
 	if err != nil {
 		return 0, err
 	}

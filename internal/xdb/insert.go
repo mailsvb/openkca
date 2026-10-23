@@ -11,6 +11,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/mailsvb/go-ca/internal/pki"
 )
 
 // These inserts follow XCA's pki_*::insertSqlData and db_x509::inToCont so
@@ -107,10 +109,10 @@ func (t *Tx) InsertKey(ctx context.Context, k NewKey) (int64, error) {
 
 // spkiOf returns the SubjectPublicKeyInfo of a DER certificate or request.
 func spkiOf(der []byte) []byte {
-	if c, err := x509.ParseCertificate(der); err == nil {
+	if c, err := pki.ParseCertificate(der); err == nil {
 		return c.RawSubjectPublicKeyInfo
 	}
-	if r, err := x509.ParseCertificateRequest(der); err == nil {
+	if r, err := pki.ParseCertificateRequest(der); err == nil {
 		return r.RawSubjectPublicKeyInfo
 	}
 	return nil
@@ -163,7 +165,7 @@ type NewRequest struct {
 
 // InsertRequest stores a PKCS#10 request (pki_x509req::insertSqlData).
 func (t *Tx) InsertRequest(ctx context.Context, r NewRequest) (int64, error) {
-	req, err := x509.ParseCertificateRequest(r.DER)
+	req, err := pki.ParseCertificateRequest(r.DER)
 	if err != nil {
 		return 0, err
 	}
@@ -216,7 +218,7 @@ func (t *Tx) certsWhere(ctx context.Context, cond string, args ...any) ([]certRo
 		if err != nil {
 			continue
 		}
-		if c, err := x509.ParseCertificate(der); err == nil {
+		if c, err := pki.ParseCertificate(der); err == nil {
 			out = append(out, certRow{id, c})
 		}
 	}
@@ -224,9 +226,10 @@ func (t *Tx) certsWhere(ctx context.Context, cond string, args ...any) ([]certRo
 }
 
 // signedBy checks a signature without crypto/x509's CA and key usage rules,
-// as OpenSSL's X509_verify used by XCA does.
+// as OpenSSL's X509_verify used by XCA does, for every algorithm pki
+// verifies.
 func signedBy(child, parent *x509.Certificate) bool {
-	return parent.CheckSignature(child.SignatureAlgorithm, child.RawTBSCertificate, child.Signature) == nil
+	return pki.CheckCertSignature(parent, child) == nil
 }
 
 // findIssuer returns the certificate that signed c, preferring the one
@@ -261,7 +264,7 @@ const UndefinedTime = "99991231235959Z"
 // db_x509::inToCont, adopts certificates and CRLs it signed that had no
 // issuer yet.
 func (t *Tx) InsertCert(ctx context.Context, n NewCert) (int64, error) {
-	c, err := x509.ParseCertificate(n.DER)
+	c, err := pki.ParseCertificate(n.DER)
 	if err != nil {
 		return 0, err
 	}
@@ -401,7 +404,7 @@ func (t *Tx) adoptChildren(ctx context.Context, caID int64, ca *x509.Certificate
 			continue
 		}
 		if l, err := x509.ParseRevocationList(der); err == nil &&
-			ca.CheckSignature(l.SignatureAlgorithm, l.RawTBSRevocationList, l.Signature) == nil {
+			pki.CheckCRLSignature(ca, l) == nil {
 			crls = append(crls, id)
 		}
 	}

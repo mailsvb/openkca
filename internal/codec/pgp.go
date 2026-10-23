@@ -8,7 +8,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/mldsa"
 	"crypto/rsa"
+	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -26,11 +28,16 @@ import (
 	gcecdh "github.com/ProtonMail/go-crypto/openpgp/ecdh"
 	gcecdsa "github.com/ProtonMail/go-crypto/openpgp/ecdsa"
 	gced25519 "github.com/ProtonMail/go-crypto/openpgp/ed25519"
+	gced448 "github.com/ProtonMail/go-crypto/openpgp/ed448"
 	"github.com/ProtonMail/go-crypto/openpgp/eddsa"
+	"github.com/ProtonMail/go-crypto/openpgp/mldsa_eddsa"
+	"github.com/ProtonMail/go-crypto/openpgp/mlkem_ecdh"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/go-crypto/openpgp/s2k"
 	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
 	"github.com/ProtonMail/go-crypto/openpgp/x25519"
+	gcx448 "github.com/ProtonMail/go-crypto/openpgp/x448"
+	"github.com/cloudflare/circl/sign/ed448"
 
 	"github.com/mailsvb/go-ca/internal/pki"
 )
@@ -333,13 +340,19 @@ func pgpSignature(signer *packet.PublicKey, typ packet.SignatureType, created ti
 	}
 }
 
-// pgpHash is SHA-256, or SHA-384/SHA-512 for P-384 and P-521 keys.
+// pgpHash is SHA-256, SHA-384 or SHA-512 for keys on 384 and 512/521 bit
+// curves, and SHA-512 for Ed448 (RFC 9580 asks for a 64 octet digest) and
+// the ML-DSA composites (RFC 9980).
 func pgpHash(pub *packet.PublicKey) crypto.Hash {
+	switch pub.PubKeyAlgo {
+	case packet.PubKeyAlgoEd448, packet.PubKeyAlgoMldsa65Ed25519, packet.PubKeyAlgoMldsa87Ed448:
+		return crypto.SHA512
+	}
 	if c, err := pub.Curve(); err == nil {
 		switch c {
-		case packet.CurveNistP384:
+		case packet.CurveNistP384, packet.CurveBrainpoolP384:
 			return crypto.SHA384
-		case packet.CurveNistP521:
+		case packet.CurveNistP521, packet.CurveBrainpoolP512:
 			return crypto.SHA512
 		}
 	}
@@ -362,38 +375,95 @@ func pgpKeyProperties(sig *packet.Signature, pub *packet.PublicKey, lifetime uin
 	}
 }
 
-// OpenPGP encodings of the curves go-ca supports (the OID without tag and
-// length) and the KDF parameters of ECDH keys on them.
+// OpenPGP encodings of the Curve25519 algorithms (the OID without tag and
+// length).
 var (
-	oidP256       = []byte{0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
-	oidP384       = []byte{0x2b, 0x81, 0x04, 0x00, 0x22}
-	oidP521       = []byte{0x2b, 0x81, 0x04, 0x00, 0x23}
 	oidEd25519    = []byte{0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01}
 	oidCurve25519 = []byte{0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01}
 )
 
+// pgpCurves maps go-crypto's curves to the names of pki.ECCurves: the NIST
+// and Brainpool curves of RFC 9580 and secp256k1, which GnuPG knows.
+var pgpCurves = map[packet.Curve]string{
+	packet.CurveNistP256: "P-256", packet.CurveNistP384: "P-384", packet.CurveNistP521: "P-521",
+	packet.CurveBrainpoolP256: "brainpoolP256r1", packet.CurveBrainpoolP384: "brainpoolP384r1",
+	packet.CurveBrainpoolP512: "brainpoolP512r1", packet.CurveSecP256k1: "secp256k1",
+}
+
+// curveOID returns the OpenPGP encoding of a curve (its OID without tag
+// and length) and the KDF parameters of ECDH keys on it (RFC 9580, 9.2):
+// SHA-256 and AES-128 up to 256 bits, SHA-384 and AES-256 up to 384 bits,
+// SHA-512 and AES-256 above.
 func curveOID(c elliptic.Curve) (oid, kdf []byte, err error) {
-	switch c {
-	case elliptic.P256():
-		return oidP256, []byte{3, 1, 8, 7}, nil // SHA-256, AES-128
-	case elliptic.P384():
-		return oidP384, []byte{3, 1, 9, 9}, nil // SHA-384, AES-256
-	case elliptic.P521():
-		return oidP521, []byte{3, 1, 10, 9}, nil // SHA-512, AES-256
+	ec := pki.CurveOf(c)
+	if ec == nil || pgpCurveOf(ec.Name) == "" {
+		return nil, nil, ErrUnsupportedKey
 	}
-	return nil, nil, ErrUnsupportedKey
+	der, err := asn1.Marshal(ec.OID)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch bits := c.Params().BitSize; {
+	case bits <= 256:
+		kdf = []byte{3, 1, 8, 7}
+	case bits <= 384:
+		kdf = []byte{3, 1, 9, 9}
+	default:
+		kdf = []byte{3, 1, 10, 9}
+	}
+	return der[2:], kdf, nil
+}
+
+func pgpCurveOf(name string) packet.Curve {
+	for c, n := range pgpCurves {
+		if n == name {
+			return c
+		}
+	}
+	return ""
 }
 
 func goCurve(c packet.Curve) elliptic.Curve {
-	switch c {
-	case packet.CurveNistP256:
-		return elliptic.P256()
-	case packet.CurveNistP384:
-		return elliptic.P384()
-	case packet.CurveNistP521:
-		return elliptic.P521()
+	if ec := pki.CurveByName(pgpCurves[c]); ec != nil && pgpCurves[c] != "" {
+		return ec.Curve()
 	}
 	return nil
+}
+
+// The composite algorithms of RFC 9980 and their pki names: ML-DSA with
+// EdDSA (v6 keys only) and ML-KEM with X25519 (v4 or v6) or X448 (v6).
+var pgpComposites = map[packet.PublicKeyAlgorithm]string{
+	packet.PubKeyAlgoMldsa65Ed25519: "MLDSA65-Ed25519-SHA512",
+	packet.PubKeyAlgoMldsa87Ed448:   "MLDSA87-Ed448-SHAKE256",
+	packet.PubKeyAlgoMlkem768X25519: "MLKEM768-X25519-SHA3-256",
+	packet.PubKeyAlgoMlkem1024X448:  "MLKEM1024-X448-SHA3-256",
+}
+
+func pgpCompositeAlgo(name string) (packet.PublicKeyAlgorithm, bool) {
+	for a, n := range pgpComposites {
+		if n == name {
+			return a, true
+		}
+	}
+	return 0, false
+}
+
+// rawPoint returns the raw public key of an EdDSA or X25519/X448 key, the
+// traditional part of a composite.
+func rawPoint(pub crypto.PublicKey) ([]byte, error) {
+	switch k := pub.(type) {
+	case ed25519.PublicKey:
+		return k, nil
+	case ed448.PublicKey:
+		return k, nil
+	case pki.X448PublicKey:
+		return k, nil
+	case *ecdh.PublicKey:
+		if k.Curve() == ecdh.X25519() {
+			return k.Bytes(), nil
+		}
+	}
+	return nil, ErrUnsupportedKey
 }
 
 // pgpPublicKey turns a Go public key into an OpenPGP key packet. v4 keys
@@ -434,10 +504,7 @@ func pgpPublicKey(pub crypto.PublicKey, created time.Time, v6, encrypt bool) (*p
 		if cerr != nil {
 			return nil, cerr
 		}
-		point, perr := k.Bytes()
-		if perr != nil {
-			return nil, perr
-		}
+		point := pki.ECPoint(k) // also on curves crypto/ecdsa does not encode
 		if encrypt {
 			pk, err = pgpParsedPublic(packet.PubKeyAlgoECDH, created, pgpOIDField(oid), pgpMPI(point), kdf)
 		} else {
@@ -446,6 +513,40 @@ func pgpPublicKey(pub crypto.PublicKey, created time.Time, v6, encrypt bool) (*p
 		if err == nil && v6 {
 			err = pk.UpgradeToV6()
 		}
+	case ed448.PublicKey:
+		if encrypt {
+			return nil, ErrUnsupportedKey
+		}
+		pk = packet.NewEd448PublicKey(created, &gced448.PublicKey{Point: slices.Clone([]byte(k))})
+	case pki.X448PublicKey:
+		if !encrypt {
+			return nil, ErrUnsupportedKey
+		}
+		pk = packet.NewX448PublicKey(created, &gcx448.PublicKey{Point: slices.Clone([]byte(k))})
+	case *pki.CompositePublicKey:
+		algo, ok := pgpCompositeAlgo(k.Alg.Name)
+		if !ok || encrypt || !v6 {
+			return nil, ErrUnsupportedKey
+		}
+		ec, perr := rawPoint(k.Trad)
+		if perr != nil {
+			return nil, perr
+		}
+		pk, err = pgpParsedPublicVersion(6, algo, created, ec, k.MLDSA.Bytes())
+	case *pki.CompositeKEMPublicKey:
+		algo, ok := pgpCompositeAlgo(k.Alg.Name)
+		if !ok || !encrypt || !v6 && algo != packet.PubKeyAlgoMlkem768X25519 {
+			return nil, ErrUnsupportedKey
+		}
+		ec, perr := rawPoint(k.Trad)
+		if perr != nil {
+			return nil, perr
+		}
+		version := byte(4)
+		if v6 {
+			version = 6
+		}
+		pk, err = pgpParsedPublicVersion(version, algo, created, ec, k.MLKEM.Bytes())
 	default:
 		return nil, ErrUnsupportedKey
 	}
@@ -477,11 +578,19 @@ func pgpMPI(b []byte) []byte {
 // pgpParsedPublic builds a v4 public key packet from its fields and lets
 // go-crypto parse it, which gives its key types their curve.
 func pgpParsedPublic(algo packet.PublicKeyAlgorithm, created time.Time, fields ...[]byte) (*packet.PublicKey, error) {
-	body := []byte{4, 0, 0, 0, 0, byte(algo)}
+	return pgpParsedPublicVersion(4, algo, created, fields...)
+}
+
+// pgpParsedPublicVersion is pgpParsedPublic for a v4 or v6 packet; a v6
+// packet gives the length of the key material.
+func pgpParsedPublicVersion(version byte, algo packet.PublicKeyAlgorithm, created time.Time, fields ...[]byte) (*packet.PublicKey, error) {
+	body := []byte{version, 0, 0, 0, 0, byte(algo)}
 	binary.BigEndian.PutUint32(body[1:], uint32(created.Unix()))
-	for _, f := range fields {
-		body = append(body, f...)
+	material := bytes.Join(fields, nil)
+	if version >= 5 {
+		body = binary.BigEndian.AppendUint32(body, uint32(len(material)))
 	}
+	body = append(body, material...)
 	p, err := packet.Read(bytes.NewReader(pgpPacket(6, body)))
 	if err != nil {
 		return nil, err
@@ -558,7 +667,7 @@ func pgpPrivateKey(pk *packet.PublicKey, key crypto.Signer) (*packet.PrivateKey,
 		if !ok {
 			return nil, ErrUnsupportedKey
 		}
-		secret = k
+		secret = pgpPrimeOrder(k)
 	case *dsa.PublicKey:
 		k, ok := key.(pki.DSAKey)
 		if !ok {
@@ -608,10 +717,75 @@ func pgpPrivateKey(pk *packet.PublicKey, key crypto.Signer) (*packet.PrivateKey,
 		p := x25519.NewPrivateKey(*pub)
 		p.Secret = k.Bytes()
 		secret = p
+	case *gced448.PublicKey:
+		k, ok := key.(ed448.PrivateKey)
+		if !ok {
+			return nil, ErrUnsupportedKey
+		}
+		p := gced448.NewPrivateKey(*pub)
+		p.Key = slices.Clone([]byte(k)) // seed || public key, as circl holds it
+		secret = p
+	case *gcx448.PublicKey:
+		k, ok := key.(pki.X448Key)
+		if !ok {
+			return nil, ErrUnsupportedKey
+		}
+		p := gcx448.NewPrivateKey(*pub)
+		p.Secret = k.Bytes()
+		secret = p
+	case *mldsa_eddsa.PublicKey:
+		k, ok := key.(pki.CompositeKey)
+		if !ok {
+			return nil, ErrUnsupportedKey
+		}
+		p := &mldsa_eddsa.PrivateKey{PublicKey: *pub}
+		switch t := k.Trad.(type) {
+		case ed25519.PrivateKey:
+			p.SecretEc = slices.Clone(t.Seed())
+		case ed448.PrivateKey:
+			p.SecretEc = slices.Clone(t.Seed())
+		default:
+			return nil, ErrUnsupportedKey
+		}
+		if err := p.DeriveMlDsaKeys(k.MLDSA.Bytes(), false); err != nil {
+			return nil, err
+		}
+		secret = p
+	case *mlkem_ecdh.PublicKey:
+		k, ok := key.(pki.CompositeKEMKey)
+		if !ok {
+			return nil, ErrUnsupportedKey
+		}
+		p := &mlkem_ecdh.PrivateKey{PublicKey: *pub}
+		switch t := k.Trad.(type) {
+		case pki.X25519Key:
+			p.SecretEc = t.Bytes()
+		case pki.X448Key:
+			p.SecretEc = t.Bytes()
+		default:
+			return nil, ErrUnsupportedKey
+		}
+		if err := p.DeriveMlKemKeys(k.MLKEM.Seed(), false); err != nil {
+			return nil, err
+		}
+		secret = p
 	default:
 		return nil, ErrUnsupportedKey
 	}
 	return &packet.PrivateKey{PublicKey: *pk, PrivateKey: secret}, nil
+}
+
+// pgpPrimeOrder returns an RSA key whose primes go-crypto writes in the
+// order OpenPGP requires (RFC 9580, 5.5.5.1: p < q, u = p^-1 mod q).
+// go-crypto writes Primes[1] as p and Primes[0] as q, while Go generates
+// them in either order; GnuPG 2.4.8 makes bad signatures with p > q.
+func pgpPrimeOrder(k *rsa.PrivateKey) *rsa.PrivateKey {
+	if len(k.Primes) != 2 || k.Primes[1].Cmp(k.Primes[0]) < 0 {
+		return k
+	}
+	s := &rsa.PrivateKey{PublicKey: k.PublicKey, D: k.D, Primes: []*big.Int{k.Primes[1], k.Primes[0]}}
+	s.Precompute()
+	return s
 }
 
 // PGPGoPublic converts an OpenPGP key to a Go public key, for the
@@ -627,7 +801,7 @@ func PGPGoPublic(pk *packet.PublicKey) (crypto.PublicKey, error) {
 		if err != nil || goCurve(c) == nil {
 			return nil, ErrUnsupportedKey
 		}
-		return ecdsa.ParseUncompressedPublicKey(goCurve(c), pub.MarshalPoint())
+		return pki.ParseECPoint(goCurve(c), pub.MarshalPoint())
 	case *eddsa.PublicKey:
 		if c, err := pk.Curve(); err != nil || c != packet.Curve25519 || len(pub.X) != ed25519.PublicKeySize {
 			return nil, ErrUnsupportedKey
@@ -649,9 +823,70 @@ func PGPGoPublic(pk *packet.PublicKey) (crypto.PublicKey, error) {
 		if goCurve(c) == nil {
 			return nil, ErrUnsupportedKey
 		}
-		return ecdsa.ParseUncompressedPublicKey(goCurve(c), pub.Point)
+		return pki.ParseECPoint(goCurve(c), pub.Point)
 	case *x25519.PublicKey:
 		return ecdh.X25519().NewPublicKey(pub.Point)
+	case *gced448.PublicKey:
+		if len(pub.Point) != ed448.PublicKeySize {
+			return nil, ErrUnsupportedKey
+		}
+		return ed448.PublicKey(slices.Clone(pub.Point)), nil
+	case *gcx448.PublicKey:
+		if len(pub.Point) != gcx448.KeySize {
+			return nil, ErrUnsupportedKey
+		}
+		return pki.X448PublicKey(slices.Clone(pub.Point)), nil
+	case *mldsa_eddsa.PublicKey:
+		a := pki.CompositeAlgByName(pgpComposites[pk.PubKeyAlgo])
+		if a == nil {
+			return nil, ErrUnsupportedKey
+		}
+		b, err := pub.PublicMldsa.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		m, err := mldsa.NewPublicKey(a.MLDSA.Params(), b)
+		if err != nil {
+			return nil, err
+		}
+		trad, err := tradFromPoint(a.Trad, pub.PublicPoint)
+		if err != nil {
+			return nil, err
+		}
+		return &pki.CompositePublicKey{Alg: a, MLDSA: m, Trad: trad}, nil
+	case *mlkem_ecdh.PublicKey:
+		a := pki.CompositeKEMAlgByName(pgpComposites[pk.PubKeyAlgo])
+		if a == nil {
+			return nil, ErrUnsupportedKey
+		}
+		b, err := pub.PublicMlkem.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		m, err := pki.NewMLKEMPublicKey(a.MLKEM, b)
+		if err != nil {
+			return nil, err
+		}
+		trad, err := tradFromPoint(a.Trad, pub.PublicPoint)
+		if err != nil {
+			return nil, err
+		}
+		return &pki.CompositeKEMPublicKey{Alg: a, MLKEM: m, Trad: trad}, nil
+	}
+	return nil, ErrUnsupportedKey
+}
+
+// tradFromPoint decodes the traditional public key of a composite.
+func tradFromPoint(trad string, b []byte) (crypto.PublicKey, error) {
+	switch {
+	case trad == "Ed25519" && len(b) == ed25519.PublicKeySize:
+		return ed25519.PublicKey(slices.Clone(b)), nil
+	case trad == "Ed448" && len(b) == ed448.PublicKeySize:
+		return ed448.PublicKey(slices.Clone(b)), nil
+	case trad == "X25519":
+		return ecdh.X25519().NewPublicKey(b)
+	case trad == "X448" && len(b) == gcx448.KeySize:
+		return pki.X448PublicKey(slices.Clone(b)), nil
 	}
 	return nil, ErrUnsupportedKey
 }
@@ -670,7 +905,7 @@ func pgpGoPrivate(sk *packet.PrivateKey) (crypto.Signer, error) {
 		if cerr != nil || goCurve(c) == nil {
 			return nil, ErrUnsupportedKey
 		}
-		key, err = ecdsa.ParseRawPrivateKey(goCurve(c), k.D.FillBytes(make([]byte, (goCurve(c).Params().BitSize+7)/8)))
+		key, err = pki.ECPrivateKeyFromScalar(goCurve(c), k.D.Bytes())
 	case *eddsa.PrivateKey:
 		if len(k.D) != ed25519.SeedSize {
 			return nil, ErrUnsupportedKey
@@ -689,16 +924,25 @@ func pgpGoPrivate(sk *packet.PrivateKey) (crypto.Signer, error) {
 		if c == packet.Curve25519 {
 			x, xerr := ecdh.X25519().NewPrivateKey(k.D)
 			key, err = pki.X25519Key{PrivateKey: x}, xerr
-		} else if gc := goCurve(c); gc != nil && len(k.D) <= (gc.Params().BitSize+7)/8 {
-			d := make([]byte, (gc.Params().BitSize+7)/8)
-			copy(d[len(d)-len(k.D):], k.D)
-			key, err = ecdsa.ParseRawPrivateKey(gc, d)
+		} else if gc := goCurve(c); gc != nil {
+			key, err = pki.ECPrivateKeyFromScalar(gc, k.D)
 		} else {
 			return nil, ErrUnsupportedKey
 		}
 	case *x25519.PrivateKey:
 		x, xerr := ecdh.X25519().NewPrivateKey(k.Secret)
 		key, err = pki.X25519Key{PrivateKey: x}, xerr
+	case *gced448.PrivateKey:
+		if len(k.Key) < ed448.SeedSize {
+			return nil, ErrUnsupportedKey
+		}
+		key = ed448.NewKeyFromSeed(k.Key[:ed448.SeedSize])
+	case *gcx448.PrivateKey:
+		key, err = pki.NewX448Key(k.Secret)
+	case *mldsa_eddsa.PrivateKey:
+		key, err = pgpCompositeSigner(sk, k)
+	case *mlkem_ecdh.PrivateKey:
+		key, err = pgpCompositeKEMKey(sk, k)
 	default:
 		return nil, ErrUnsupportedKey
 	}
@@ -710,6 +954,58 @@ func pgpGoPrivate(sk *packet.PrivateKey) (crypto.Signer, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+// pgpCompositeSigner converts an ML-DSA + EdDSA secret key.
+func pgpCompositeSigner(sk *packet.PrivateKey, k *mldsa_eddsa.PrivateKey) (crypto.Signer, error) {
+	pub, err := PGPGoPublic(&sk.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	a := pub.(*pki.CompositePublicKey).Alg
+	m, err := mldsa.NewPrivateKey(a.MLDSA.Params(), k.SecretMldsaSeed)
+	if err != nil {
+		return nil, err
+	}
+	var trad crypto.Signer
+	switch {
+	case a.Trad == "Ed25519" && len(k.SecretEc) == ed25519.SeedSize:
+		trad = ed25519.NewKeyFromSeed(k.SecretEc)
+	case a.Trad == "Ed448" && len(k.SecretEc) == ed448.SeedSize:
+		trad = ed448.NewKeyFromSeed(k.SecretEc)
+	default:
+		return nil, ErrUnsupportedKey
+	}
+	return pki.CompositeKey{Alg: a, MLDSA: m, Trad: trad}, nil
+}
+
+// pgpCompositeKEMKey converts an ML-KEM + ECDH secret key.
+func pgpCompositeKEMKey(sk *packet.PrivateKey, k *mlkem_ecdh.PrivateKey) (crypto.Signer, error) {
+	pub, err := PGPGoPublic(&sk.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	a := pub.(*pki.CompositeKEMPublicKey).Alg
+	m, err := pki.NewMLKEMKey(a.MLKEM, k.SecretMlkemSeed)
+	if err != nil {
+		return nil, err
+	}
+	var trad crypto.Signer
+	switch a.Trad {
+	case "X25519":
+		x, err := ecdh.X25519().NewPrivateKey(k.SecretEc)
+		if err != nil {
+			return nil, err
+		}
+		trad = pki.X25519Key{PrivateKey: x}
+	case "X448":
+		if trad, err = pki.NewX448Key(k.SecretEc); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, ErrUnsupportedKey
+	}
+	return pki.CompositeKEMKey{Alg: a, MLKEM: m, Trad: trad}, nil
 }
 
 func readPGPCert(cert []byte) (*openpgp.Entity, error) {
@@ -848,6 +1144,20 @@ func pgpAlgorithm(pk *packet.PublicKey) string {
 		return "Ed448"
 	case packet.PubKeyAlgoX448:
 		return "X448"
+	case packet.PubKeyAlgoMldsa65Ed25519:
+		return "ML-DSA-65+Ed25519"
+	case packet.PubKeyAlgoMldsa87Ed448:
+		return "ML-DSA-87+Ed448"
+	case packet.PubKeyAlgoMlkem768X25519:
+		return "ML-KEM-768+X25519"
+	case packet.PubKeyAlgoMlkem1024X448:
+		return "ML-KEM-1024+X448"
+	case packet.PubKeyAlgoSlhdsaShake128s:
+		return "SLH-DSA-SHAKE-128s"
+	case packet.PubKeyAlgoSlhdsaShake128f:
+		return "SLH-DSA-SHAKE-128f"
+	case packet.PubKeyAlgoSlhdsaShake256s:
+		return "SLH-DSA-SHAKE-256s"
 	}
 	return "algorithm " + strconv.Itoa(int(pk.PubKeyAlgo))
 }

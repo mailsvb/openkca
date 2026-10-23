@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
@@ -188,9 +189,7 @@ func (s *Server) probeOptions(r *http.Request, pw []byte) codec.ProbeOptions {
 	pr := s.printer(r)
 	return codec.ProbeOptions{Password: pw, Pasted: pr.T("import.pasted"),
 		KeyName: func(bits int, typ string, public bool) string {
-			if typ == "ED25" {
-				typ = "Ed25519"
-			}
+			typ = pki.KeyTypeText(typ)
 			if public {
 				return pr.T("import.keyname.public", strconv.Itoa(bits), typ)
 			}

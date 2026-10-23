@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudflare/circl/sign/ed448"
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/session"
@@ -27,6 +28,11 @@ var pgpKeyChoices = []keyChoice{
 	{"Ed25519", "Ed25519 / X25519"},
 	{"EC:P-256", "ECDSA / ECDH P-256"}, {"EC:P-384", "ECDSA / ECDH P-384"}, {"EC:P-521", "ECDSA / ECDH P-521"},
 	{"RSA:3072", "RSA 3072"}, {"RSA:4096", "RSA 4096"},
+	{"Ed448", "Ed448 / X448"},
+	{"EC:brainpoolP256r1", "ECDSA / ECDH brainpoolP256r1"}, {"EC:brainpoolP384r1", "ECDSA / ECDH brainpoolP384r1"},
+	{"EC:brainpoolP512r1", "ECDSA / ECDH brainpoolP512r1"},
+	{"Composite:MLDSA65-Ed25519-SHA512", "ML-DSA-65+Ed25519 / ML-KEM-768+X25519 (v6)"},
+	{"Composite:MLDSA87-Ed448-SHAKE256", "ML-DSA-87+Ed448 / ML-KEM-1024+X448 (v6)"},
 }
 
 // pgpVersions and pgpExpiries are the choices of the forms, default first.
@@ -68,18 +74,49 @@ func pgpParams(r *http.Request) (codec.PGPParams, []string, bool) {
 func encryptionSpec(pub crypto.PublicKey) *pki.KeySpec {
 	switch k := pub.(type) {
 	case ed25519.PublicKey:
-		return &pki.KeySpec{Type: "X25519"}
+		return subkeySpec(pki.KeySpec{Type: "Ed25519"})
+	case ed448.PublicKey:
+		return subkeySpec(pki.KeySpec{Type: "Ed448"})
 	case *ecdsa.PublicKey:
-		return &pki.KeySpec{Type: "EC", Curve: k.Curve.Params().Name}
+		if c := pki.CurveOf(k.Curve); c != nil {
+			return subkeySpec(pki.KeySpec{Type: "EC", Curve: c.Name})
+		}
 	case *rsa.PublicKey:
 		bits := k.N.BitLen()
 		if !slices.Contains(pki.RSASizes, bits) {
 			bits = 3072
 		}
-		return &pki.KeySpec{Type: "RSA", Bits: bits}
+		return subkeySpec(pki.KeySpec{Type: "RSA", Bits: bits})
+	case *pki.CompositePublicKey:
+		return subkeySpec(pki.KeySpec{Type: "Composite", Param: k.Alg.Name})
 	}
 	return nil
 }
+
+// subkeySpec is the encryption subkey for a primary key of the spec: ECDH
+// on the same curve, RSA of the same size, X25519 or X448 for EdDSA, and
+// for the ML-DSA composites the ML-KEM composite of RFC 9980.
+func subkeySpec(primary pki.KeySpec) *pki.KeySpec {
+	switch primary.Type {
+	case "Ed25519":
+		return &pki.KeySpec{Type: "X25519"}
+	case "Ed448":
+		return &pki.KeySpec{Type: "X448"}
+	case "EC", "RSA":
+		return &primary
+	case "Composite":
+		switch primary.Param {
+		case "MLDSA65-Ed25519-SHA512":
+			return &pki.KeySpec{Type: "CompositeKEM", Param: "MLKEM768-X25519-SHA3-256"}
+		case "MLDSA87-Ed448-SHAKE256":
+			return &pki.KeySpec{Type: "CompositeKEM", Param: "MLKEM1024-X448-SHA3-256"}
+		}
+	}
+	return nil
+}
+
+// pgpV6Only reports whether keys of the spec exist only as v6 OpenPGP keys.
+func pgpV6Only(spec pki.KeySpec) bool { return spec.Type == "Composite" }
 
 func (s *Server) newPGPKeyPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "newpgpkey", &page{Title: "newpgpkey.title", Tab: "keys", Data: map[string]any{
@@ -102,16 +139,17 @@ func (s *Server) newPGPKey(w http.ResponseWriter, r *http.Request) {
 			Error: "newpgpkey.error.input", Data: data})
 		return
 	}
+	if pgpV6Only(*spec) && p.Version != 6 {
+		s.render(w, r, http.StatusUnprocessableEntity, "newpgpkey", &page{Title: "newpgpkey.title", Tab: "keys",
+			Error: "pgpkey.error.version", Data: data})
+		return
+	}
 	if name == "" {
 		name = uids[0]
 	}
 	var subs []store.PGPSubkey
-	if subkey {
-		sub := *spec // ECDH on the same curve, RSA of the same size
-		if spec.Type == "Ed25519" {
-			sub = pki.KeySpec{Type: "X25519"}
-		}
-		subs = append(subs, store.PGPSubkey{Spec: &sub, Name: s.printer(r).T("pgpkey.subkey.name", name), Usage: codec.PGPEncrypt})
+	if sub := subkeySpec(*spec); subkey && sub != nil {
+		subs = append(subs, store.PGPSubkey{Spec: sub, Name: s.printer(r).T("pgpkey.subkey.name", name), Usage: codec.PGPEncrypt})
 	}
 	pw := ds.Password()
 	defer clear(pw)
@@ -210,14 +248,17 @@ func (s *Server) pgpKeyForm(r *http.Request, snap *xdb.Snapshot) (*pgpKeyForm, b
 	if err != nil {
 		return nil, false
 	}
-	f.CanCreate = k.HasPrivate && !k.Token && codec.PGPCompatible(pub, 4, false)
+	f.CanCreate = k.HasPrivate && !k.Token && (codec.PGPCompatible(pub, 4, false) || codec.PGPCompatible(pub, 6, false))
 	f.OwnPass = k.OwnPass == xdb.PassPrivate
 	if spec := encryptionSpec(pub); spec != nil {
 		f.SubkeySpec = spec.Type
-		if spec.Curve != "" {
+		switch {
+		case spec.Curve != "":
 			f.SubkeySpec += " " + spec.Curve
-		} else if spec.Bits != 0 {
+		case spec.Bits != 0:
 			f.SubkeySpec += " " + strconv.Itoa(spec.Bits)
+		case spec.Param != "":
+			f.SubkeySpec = spec.Param
 		}
 	}
 	return f, f.CanCreate
@@ -295,6 +336,9 @@ func (s *Server) pgpCreate(w http.ResponseWriter, r *http.Request) {
 		p, _, ok := pgpParams(r)
 		if !ok {
 			return "newpgpkey.error.input", "", nil
+		}
+		if pub, err := codec.ParsePublic(f.Key.Public); err != nil || !codec.PGPCompatible(pub, p.Version, false) {
+			return "pgpkey.error.version", "", nil
 		}
 		var subs []store.PGPSubkey
 		if r.PostFormValue("subkey") != "" {

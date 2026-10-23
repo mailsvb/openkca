@@ -17,8 +17,6 @@ import (
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
-type keyChoice struct{ Value, Label string }
-
 // sshKeyChoices are the key types offered for new SSH keys, the usual one
 // first.
 var sshKeyChoices = []keyChoice{

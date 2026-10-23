@@ -2,56 +2,16 @@ package pki
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
-	"errors"
 	"fmt"
 	"math/big"
 	"strings"
 	"time"
 )
-
-// Hashes offered for signatures; "sha256" is XCA's default_hash.
-var Hashes = []string{"sha256", "sha384", "sha512"}
-
-// SignatureAlgorithm picks the algorithm for a signer key and hash name.
-// Ed25519 ignores the hash.
-func SignatureAlgorithm(key crypto.Signer, hash string) (x509.SignatureAlgorithm, error) {
-	hash = strings.ToLower(strings.ReplaceAll(hash, "-", ""))
-	switch key.(type) {
-	case *rsa.PrivateKey:
-		switch hash {
-		case "sha256", "":
-			return x509.SHA256WithRSA, nil
-		case "sha384":
-			return x509.SHA384WithRSA, nil
-		case "sha512":
-			return x509.SHA512WithRSA, nil
-		}
-	case *ecdsa.PrivateKey:
-		switch hash {
-		case "sha256", "":
-			return x509.ECDSAWithSHA256, nil
-		case "sha384":
-			return x509.ECDSAWithSHA384, nil
-		case "sha512":
-			return x509.ECDSAWithSHA512, nil
-		}
-	case ed25519.PrivateKey:
-		return x509.PureEd25519, nil
-	case DSAKey:
-		return 0, errors.New("DSA keys cannot sign in go-ca")
-	default:
-		return 0, fmt.Errorf("unsupported signing key %T", key)
-	}
-	return 0, fmt.Errorf("unsupported hash %q", hash)
-}
 
 // RandomSerial returns a serial number like XCA's randomSerial: serialLen
 // bits taken from SHA-512 over random bytes, retried until the first byte is
@@ -79,6 +39,7 @@ var NoExpiry = noExpiry
 type CertRequest struct {
 	Subject    []byte // DER name
 	PublicKey  crypto.PublicKey
+	SPKI       []byte // DER SubjectPublicKeyInfo, used instead of PublicKey when set
 	Serial     *big.Int
 	NotBefore  time.Time
 	NotAfter   time.Time
@@ -88,53 +49,19 @@ type CertRequest struct {
 	SignerKey  crypto.Signer
 }
 
-// CreateCertificate signs a certificate. All extensions come from
-// req.Extensions; nothing is added implicitly.
-func CreateCertificate(req CertRequest) ([]byte, error) {
-	alg, err := SignatureAlgorithm(req.SignerKey, req.Hash)
-	if err != nil {
-		return nil, err
-	}
-	if !req.NotAfter.After(req.NotBefore) {
-		return nil, errors.New("not after must be later than not before")
-	}
-	tpl := &x509.Certificate{
-		SerialNumber:       req.Serial,
-		RawSubject:         req.Subject,
-		NotBefore:          req.NotBefore.UTC().Truncate(time.Second),
-		NotAfter:           req.NotAfter.UTC().Truncate(time.Second),
-		ExtraExtensions:    req.Extensions,
-		SignatureAlgorithm: alg,
-	}
-	parent := tpl
-	if req.Issuer != nil {
-		// A copy without SubjectKeyId: crypto/x509 would otherwise add an
-		// authority key identifier the user did not ask for.
-		p := *req.Issuer
-		p.SubjectKeyId = nil
-		parent = &p
-	}
-	return x509.CreateCertificate(rand.Reader, tpl, parent, req.PublicKey, req.SignerKey)
-}
-
-// CreateRequest signs a PKCS#10 request.
-func CreateRequest(subject []byte, exts []pkix.Extension, key crypto.Signer, hash string) ([]byte, error) {
-	alg, err := SignatureAlgorithm(key, hash)
-	if err != nil {
-		return nil, err
-	}
-	return x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		RawSubject: subject, ExtraExtensions: exts, SignatureAlgorithm: alg,
-	}, key)
-}
-
-// HashName names the hash of a signature algorithm, for "Similar".
+// HashName names the hash choice of a signature algorithm, for "Similar".
 func HashName(alg x509.SignatureAlgorithm) string {
 	switch alg {
-	case x509.SHA384WithRSA, x509.ECDSAWithSHA384, x509.SHA384WithRSAPSS:
+	case x509.SHA384WithRSA, x509.ECDSAWithSHA384:
 		return "sha384"
-	case x509.SHA512WithRSA, x509.ECDSAWithSHA512, x509.SHA512WithRSAPSS:
+	case x509.SHA512WithRSA, x509.ECDSAWithSHA512:
 		return "sha512"
+	case x509.SHA256WithRSAPSS:
+		return "sha256-pss"
+	case x509.SHA384WithRSAPSS:
+		return "sha384-pss"
+	case x509.SHA512WithRSAPSS:
+		return "sha512-pss"
 	}
 	return "sha256"
 }

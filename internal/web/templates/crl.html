@@ -10,7 +10,7 @@
     <label for="thisupdate">{{T "col.thisupdate"}}</label><input type="datetime-local" id="thisupdate" name="thisupdate" value="{{.Data.This}}">
     <label for="nextupdate">{{T "col.nextupdate"}}</label><input type="datetime-local" id="nextupdate" name="nextupdate" value="{{.Data.Next}}">
     <label for="hash">{{T "editor.hash"}}</label>
-    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $o.Hash}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $o.Hash}} selected{{end}}>{{T (print "hash." .)}}</option>{{end}}</select>
     <label for="number">{{T "col.crlnumber"}}</label>
     <div class="inline-fields"><input type="number" id="number" name="number" value="{{$o.Number}}" min="1">
       <label><input type="checkbox" name="setnumber" value="1"{{if $o.SetNumber}} checked{{end}}> {{T "crlgen.setnumber"}}</label></div>

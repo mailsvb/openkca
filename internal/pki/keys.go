@@ -9,6 +9,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -17,15 +18,12 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+
+	"github.com/cloudflare/circl/sign/ed448"
+	"github.com/cloudflare/circl/sign/slhdsa"
 )
 
 var oidDSA = asn1.ObjectIdentifier{1, 2, 840, 10040, 4, 1}
-
-type privateKeyInfo struct {
-	Version    int
-	Algo       pkix.AlgorithmIdentifier
-	PrivateKey []byte
-}
 
 type dsaParams struct{ P, Q, G *big.Int }
 
@@ -69,39 +67,6 @@ func DecryptPrivateKey(blob []byte, keyType string, password []byte) (key crypto
 	return key, true, err
 }
 
-// ParsePKCS8 parses an unencrypted PrivateKeyInfo, including DSA keys which
-// crypto/x509 no longer supports.
-func ParsePKCS8(der []byte) (crypto.Signer, error) {
-	var pki privateKeyInfo
-	if _, err := asn1.Unmarshal(der, &pki); err != nil {
-		return nil, err
-	}
-	if pki.Algo.Algorithm.Equal(oidDSA) {
-		var p dsaParams
-		if _, err := asn1.Unmarshal(pki.Algo.Parameters.FullBytes, &p); err != nil {
-			return nil, err
-		}
-		x := new(big.Int)
-		if _, err := asn1.Unmarshal(pki.PrivateKey, &x); err != nil {
-			return nil, err
-		}
-		y := new(big.Int).Exp(p.G, x, p.P)
-		return dsaKey(p.P, p.Q, p.G, y, x), nil
-	}
-	k, err := x509.ParsePKCS8PrivateKey(der)
-	if err != nil {
-		return nil, err
-	}
-	if x, ok := k.(*ecdh.PrivateKey); ok && x.Curve() == ecdh.X25519() {
-		return X25519Key{x}, nil
-	}
-	s, ok := k.(crypto.Signer)
-	if !ok {
-		return nil, fmt.Errorf("unsupported private key %T", k)
-	}
-	return s, nil
-}
-
 // DSAKey wraps a DSA key so it satisfies crypto.Signer for type handling.
 // Signing is not supported: Go dropped DSA signing for new code.
 type DSAKey struct{ *dsa.PrivateKey }
@@ -125,7 +90,7 @@ func (k X25519Key) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, err
 // CanSign reports whether a key can make signatures in go-ca.
 func CanSign(k crypto.Signer) bool {
 	switch k.(type) {
-	case DSAKey, X25519Key:
+	case DSAKey, X25519Key, X448Key, MLKEMKey, CompositeKEMKey:
 		return false
 	}
 	return true
@@ -153,7 +118,7 @@ func MatchesPublic(priv crypto.Signer, spkiDER []byte) (bool, error) {
 		}
 		return y.Cmp(k.Y) == 0, nil
 	}
-	der, err := x509.MarshalPKIXPublicKey(priv.Public())
+	der, err := MarshalPublicKey(priv.Public())
 	if err != nil {
 		return false, err
 	}
@@ -161,7 +126,7 @@ func MatchesPublic(priv crypto.Signer, spkiDER []byte) (bool, error) {
 		return true, nil
 	}
 	// Encodings can differ (explicit EC parameters); compare parsed keys.
-	pub, err := x509.ParsePKIXPublicKey(spkiDER)
+	pub, err := ParsePublicKey(spkiDER)
 	if err != nil {
 		return false, nil
 	}
@@ -174,7 +139,7 @@ func MatchesPublic(priv crypto.Signer, spkiDER []byte) (bool, error) {
 
 // KeyAlgorithm names the algorithm of a private key for display.
 func KeyAlgorithm(k crypto.Signer) string {
-	switch k.(type) {
+	switch k := k.(type) {
 	case *rsa.PrivateKey:
 		return "RSA"
 	case *ecdsa.PrivateKey:
@@ -185,6 +150,22 @@ func KeyAlgorithm(k crypto.Signer) string {
 		return "DSA"
 	case X25519Key:
 		return "X25519"
+	case RSAPSSKey:
+		return "RSA-PSS"
+	case ed448.PrivateKey:
+		return "Ed448"
+	case X448Key:
+		return "X448"
+	case *mldsa.PrivateKey:
+		return mldsaOf(k.PublicKey().Parameters()).Name
+	case slhdsa.PrivateKey:
+		return slhdsaByID(k.ID).Name
+	case MLKEMKey:
+		return k.pub.Params.Name
+	case CompositeKey:
+		return k.Alg.Name
+	case CompositeKEMKey:
+		return k.Alg.Name
 	}
 	return fmt.Sprintf("%T", k)
 }

@@ -89,6 +89,28 @@ var oidRegistry = func() []OIDInfo {
 	} {
 		list = append(list, x)
 	}
+	// key and signature algorithms beyond OpenSSL 3.0's names (OpenSSL
+	// 3.5 and the LAMPS drafts)
+	list = append(list, OIDInfo{"1.3.101.110", "X25519", "X25519", "other"}, OIDInfo{"1.3.101.111", "X448", "X448", "other"},
+		OIDInfo{"1.2.840.113549.1.1.8", "MGF1", "mgf1", "other"},
+		OIDInfo{"2.16.840.1.101.3.4.2.1", "SHA256", "sha256", "other"},
+		OIDInfo{"2.16.840.1.101.3.4.2.2", "SHA384", "sha384", "other"},
+		OIDInfo{"2.16.840.1.101.3.4.2.3", "SHA512", "sha512", "other"})
+	for _, p := range MLDSAParamSets {
+		list = append(list, OIDInfo{p.OID.String(), "id-ml-dsa-" + strings.TrimPrefix(p.Name, "ML-DSA-"), p.Name, "signature"})
+	}
+	for _, p := range SLHDSAParamSets {
+		list = append(list, OIDInfo{p.OID.String(), "id-slh-dsa-" + strings.ToLower(strings.TrimPrefix(p.Name, "SLH-DSA-")), p.Name, "signature"})
+	}
+	for _, p := range MLKEMParamSets {
+		list = append(list, OIDInfo{p.OID.String(), "id-alg-ml-kem-" + strings.TrimPrefix(p.Name, "ML-KEM-"), p.Name, "other"})
+	}
+	for _, a := range CompositeAlgs {
+		list = append(list, OIDInfo{a.OID.String(), "id-" + a.Name, a.Name, "signature"})
+	}
+	for _, a := range CompositeKEMAlgs {
+		list = append(list, OIDInfo{a.OID.String(), "id-" + a.Name, a.Name, "other"})
+	}
 	for name, oid := range ekuOIDs {
 		list = append(list, OIDInfo{oid.String(), name, ekuNames[oid.String()], "eku"})
 	}
