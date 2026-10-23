@@ -32,7 +32,7 @@
   {{end}}
 </header>
 <main>
-{{if .Error}}<p class="error" role="alert">{{T .Error}}</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{if .ErrorArg}}{{T .Error .ErrorArg}}{{else}}{{T .Error}}{{end}}</p>{{end}}
 {{if .Notice}}<p class="notice" role="status">{{if .NoticeArg}}{{T .Notice .NoticeArg}}{{else}}{{T .Notice}}{{end}}</p>{{end}}
 {{end}}
 

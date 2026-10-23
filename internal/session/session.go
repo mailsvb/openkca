@@ -30,6 +30,14 @@ func (s *Session) Password() []byte {
 	return append([]byte(nil), s.password...)
 }
 
+// SetPassword replaces the stored database password.
+func (s *Session) SetPassword(pw []byte) {
+	s.mu.Lock()
+	clear(s.password)
+	s.password = append([]byte(nil), pw...)
+	s.mu.Unlock()
+}
+
 func (s *Session) wipe() {
 	s.mu.Lock()
 	clear(s.password)
@@ -104,6 +112,11 @@ func (m *Manager) End(id string) {
 // EndServer closes every database session of one server session.
 func (m *Manager) EndServer(serverID string) {
 	m.endWhere(func(s *Session) bool { return s.ServerID == serverID })
+}
+
+// EndDatabase closes every session on a database except keep.
+func (m *Manager) EndDatabase(dbName, keep string) {
+	m.endWhere(func(s *Session) bool { return s.DBName == dbName && s.ID != keep })
 }
 
 // Sweep closes idle sessions.

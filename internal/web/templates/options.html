@@ -1,12 +1,24 @@
 {{template "head" .}}
 <h1>{{T "options.heading"}}</h1>
 <p class="muted">{{T "options.intro"}}</p>
+<form method="post" action="/db/{{.DB.Name}}/options">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
 <table class="kv">
   <thead><tr><th>{{T "options.setting"}}</th><th>{{T "options.value"}}</th><th class="muted">{{T "options.key"}}</th></tr></thead>
   <tbody>
-  {{range .Data.Options}}
-    <tr><th>{{T .Label}}</th><td>{{.Value}}{{if .Default}} <span class="muted small">{{T "options.default"}}</span>{{end}}</td><td class="mono small muted">{{.Key}}</td></tr>
+  {{range .Data.Options}}{{$o := .}}
+    <tr><th><label for="opt-{{.Key}}">{{T .Label}}</label></th><td>
+    {{if eq .Kind "bool"}}<input type="checkbox" id="opt-{{.Key}}" name="{{.Key}}" value="yes"{{if eq .Value "yes"}} checked{{end}}>
+    {{else if eq .Kind "select"}}<select id="opt-{{.Key}}" name="{{.Key}}">{{range .Choices}}<option value="{{.}}"{{if eq . $o.Value}} selected{{end}}>{{.}}</option>{{end}}</select>
+    {{else if eq .Kind "expiry"}}<span class="inline-fields"><input type="number" id="opt-{{.Key}}" name="{{.Key}}.n" value="{{.Num}}" min="0" max="10000">
+      <select name="{{.Key}}.u" aria-label="{{T "editor.unit"}}">{{range .Units}}<option value="{{.}}"{{if eq . $o.Unit}} selected{{end}}>{{T (print "unit.sym." .)}}</option>{{end}}</select></span>
+    {{else}}<input type="text" id="opt-{{.Key}}" name="{{.Key}}" value="{{.Value}}">{{end}}
+    {{if .Default}} <span class="muted small">{{T "options.default"}}</span>{{end}}
+    </td><td class="mono small muted">{{.Key}}</td></tr>
   {{end}}
   </tbody>
 </table>
+<div class="actions"><button type="submit">{{T "options.save"}}</button>
+<a href="/db/{{.DB.Name}}/password">{{T "dbpw.link"}}</a></div>
+</form>
 {{template "foot" .}}

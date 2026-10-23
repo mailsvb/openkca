@@ -122,7 +122,62 @@
 </section>
 {{template "subject" $d.Subject}}
 {{end}}
+{{template "actions" .}}
 {{template "foot" .}}
+
+{{define "actions"}}{{$d := .Data.D}}{{$db := .DB.Name}}{{$csrf := .CSRF}}{{$id := $d.Item.ID}}
+<section class="card">
+  <h2>{{T "actions.heading"}}</h2>
+  <div class="actionbar">
+    {{if eq $d.Kind "cert"}}
+      <a class="button secondary" href="/db/{{$db}}/new/cert?similar={{$id}}">{{T "actions.similar.cert"}}</a>
+      {{if and $d.Cert.CA $d.KeyPrivate}}<a class="button secondary" href="/db/{{$db}}/new/cert?signer={{$id}}">{{T "actions.issue"}}</a>{{end}}
+      {{if $d.KeyPrivate}}<form method="post" action="/db/{{$db}}/item/{{$id}}/to-request" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">{{if $d.KeyOwnPass}}<input type="password" name="keypass" placeholder="{{T "editor.keypass"}}" aria-label="{{T "editor.keypass"}}">{{end}}<button type="submit" class="secondary">{{T "actions.torequest"}}</button></form>{{end}}
+      {{if not $d.HasKey}}<form method="post" action="/db/{{$db}}/item/{{$id}}/extract-key" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.extractkey"}}</button></form>{{end}}
+    {{end}}
+    {{if eq $d.Kind "request"}}
+      <a class="button secondary" href="/db/{{$db}}/new/cert?req={{$id}}">{{T "actions.sign"}}</a>
+      <a class="button secondary" href="/db/{{$db}}/new/request?similar={{$id}}">{{T "actions.similar.request"}}</a>
+      <form method="post" action="/db/{{$db}}/item/{{$id}}/signed" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">
+        {{if $d.Request.Signed}}<input type="hidden" name="signed" value="0"><button type="submit" class="secondary">{{T "actions.unmarksigned"}}</button>
+        {{else}}<input type="hidden" name="signed" value="1"><button type="submit" class="secondary">{{T "actions.marksigned"}}</button>{{end}}</form>
+      {{if not $d.HasKey}}<form method="post" action="/db/{{$db}}/item/{{$id}}/extract-key" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.extractkey"}}</button></form>{{end}}
+    {{end}}
+  </div>
+  {{if and (eq $d.Kind "key") $d.Key.HasPrivate (ne $d.Key.OwnPass 3)}}
+  <details>
+    <summary>{{T "keypw.heading"}}</summary>
+    <form method="post" action="/db/{{$db}}/item/{{$id}}/key-password" class="stack">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      {{if eq $d.Key.OwnPass 1}}<label for="kp-cur">{{T "keypw.current"}}</label><input type="password" id="kp-cur" name="current" autocomplete="off">{{end}}
+      <label for="kp-new">{{T "keypw.new"}}</label><input type="password" id="kp-new" name="new" autocomplete="new-password">
+      <label for="kp-new2">{{T "keypw.new2"}}</label><input type="password" id="kp-new2" name="new2" autocomplete="new-password">
+      <div class="actionbar"><button type="submit" name="action" value="set">{{T "keypw.set"}}</button>
+      {{if eq $d.Key.OwnPass 1}}<button type="submit" name="action" value="reset" class="secondary">{{T "keypw.reset"}}</button>{{end}}</div>
+      <p class="muted small">{{T "keypw.help"}}</p>
+    </form>
+  </details>
+  {{end}}
+  <details>
+    <summary>{{T "actions.rename"}}</summary>
+    <form method="post" action="/db/{{$db}}/item/{{$id}}/rename" class="stack">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <label for="rn-name">{{T "col.name"}}</label><input type="text" id="rn-name" name="name" value="{{$d.Item.Name}}" required>
+      <label for="rn-comment">{{T "item.comment"}}</label><textarea id="rn-comment" name="comment" rows="3">{{$d.Item.Comment}}</textarea>
+      <button type="submit">{{T "actions.save"}}</button>
+    </form>
+  </details>
+  <details>
+    <summary>{{T "actions.delete"}}</summary>
+    <form method="post" action="/db/{{$db}}/item/{{$id}}/delete" class="stack">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <p class="muted">{{T (print "actions.delete.warn." $d.Kind)}}</p>
+      <label><input type="checkbox" name="confirm" value="1" required> {{T "actions.delete.confirm"}}</label>
+      <button type="submit" class="danger">{{T "actions.delete"}}</button>
+    </form>
+  </details>
+</section>
+{{end}}
 
 {{define "pubkey"}}{{.Algorithm}}{{if .Curve}} {{.Curve}}{{end}} · {{T "unit.bits" .Bits}}{{if .Exponent}} · {{T "key.exponent" .Exponent}}{{end}}{{end}}
 

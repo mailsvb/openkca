@@ -10,6 +10,11 @@
     <label><input type="checkbox" name="unusable" value="hide"{{if .Data.HideUnusable}} checked{{end}}> {{T "list.hideunusable"}}</label>
     {{end}}
   </form>
+  <div class="newbuttons">
+    {{if eq .Tab "keys"}}<a class="button" href="/db/{{.DB.Name}}/new/key">{{T "newkey.button"}}</a>{{end}}
+    {{if eq .Tab "requests"}}<a class="button" href="/db/{{.DB.Name}}/new/request">{{T "editor.button.request"}}</a>{{end}}
+    {{if eq .Tab "certs"}}<a class="button" href="/db/{{.DB.Name}}/new/cert">{{T "editor.button.cert"}}</a>{{end}}
+  </div>
   <details class="columns">
     <summary>{{T "list.columns"}}</summary>
     <div class="colmenu" data-table="tbl-{{.Tab}}">

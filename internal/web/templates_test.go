@@ -61,7 +61,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|dbpw|item|keypw|create|import)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -100,6 +100,22 @@ func TestMessageKeys(t *testing.T) {
 		keys = append(keys, "reason."+r)
 	}
 	keys = append(keys, "val.yes", "val.no")
+	for _, k := range []string{"cert", "request"} {
+		keys = append(keys, "editor.title."+k, "editor.heading."+k, "editor.create."+k)
+	}
+	for _, k := range []string{"key", "cert", "request", "crl", "template"} {
+		keys = append(keys, "actions.delete.warn."+k)
+	}
+	for _, k := range []string{"created", "saved", "keypw"} {
+		keys = append(keys, "item.notice."+k)
+	}
+	for _, k := range []string{"noname", "extract", "keypass", "torequest"} {
+		keys = append(keys, "item.error."+k)
+	}
+	for _, u := range []string{"%", "D", "W"} {
+		keys = append(keys, "unit.sym."+u)
+	}
+	keys = append(keys, "keypw.error.mismatch", "keypw.error.current", "list.deleted.notice")
 	for _, k := range keys {
 		if !cat.Has(k) {
 			t.Errorf("message key %q missing from locales/en.json", k)

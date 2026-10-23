@@ -257,3 +257,102 @@ func TestCreateImportUpgrade(t *testing.T) {
 		t.Fatalf("backups: %v", b)
 	}
 }
+
+func TestEditorFlow(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := client(t, ts)
+	csrf := login(t, ts, c)
+	post := func(path string, v url.Values) *http.Response {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := c.PostForm(ts.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	post("/", url.Values{"name": {"ed"}, "password": {"pw"}, "password2": {"pw"}})
+	post("/db/ed/login", url.Values{"password": {"pw"}})
+	itemFrom := func(r *http.Response) string {
+		t.Helper()
+		loc := r.Header.Get("Location")
+		if !strings.Contains(loc, "/item/") {
+			b := body(t, r)
+			if m := regexp.MustCompile(`class="error"[^>]*>([^<]*)`).FindStringSubmatch(b); m != nil {
+				t.Fatalf("no redirect to an item: %d %s", r.StatusCode, m[1])
+			}
+			t.Fatalf("no redirect to an item: %d %q", r.StatusCode, loc)
+		}
+		return strings.TrimSuffix(strings.Split(strings.Split(loc, "/item/")[1], "?")[0], "/")
+	}
+	ca := url.Values{"name": {"Web Root"}, "dn.C": {"DE"}, "dn.O": {"Web"}, "dn.CN": {"Web Root"},
+		"keymode": {"new"}, "newkey": {"EC:P-256"}, "signer": {"self"}, "hash": {"sha256"},
+		"notbefore": {"2026-01-01T00:00"}, "validn": {"10"}, "validunit": {"y"},
+		"ca": {"1"}, "bccritical": {"1"}, "subkey": {"1"}, "ku.5": {"1"}, "ku.6": {"1"}, "kucritical": {"1"}}
+	// Validate shows a preview without storing anything.
+	req, _ := http.NewRequest("POST", ts.URL+"/db/ed/new/cert", strings.NewReader(func() string {
+		v := url.Values{}
+		for k, x := range ca {
+			v[k] = x
+		}
+		v.Set("action", "validate")
+		return v.Encode()
+	}()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("X-CSRF-Token", csrf)
+	r, _ := c.Do(req)
+	if b := body(t, r); !strings.Contains(b, "Basic Constraints") || strings.Contains(b, "<html") {
+		t.Fatalf("preview: %s", b)
+	}
+	rootID := itemFrom(post("/db/ed/new/cert", ca))
+
+	// CSR with a new key, then signed by the root from the request.
+	csr := url.Values{"dn.CN": {"svc.example.org"}, "keymode": {"new"}, "newkey": {"RSA:2048"}, "hash": {"sha256"},
+		"san": {"DNS:copycn"}, "ku.0": {"1"}, "eku.serverAuth": {"1"}}
+	reqID := itemFrom(post("/db/ed/new/request", csr))
+	leaf := url.Values{"fromreq": {reqID}, "reqsubject": {"1"}, "copyreqext": {"1"}, "signer": {rootID}, "hash": {"sha256"},
+		"notbefore": {"2026-06-01T12:00"}, "validn": {"90"}, "validunit": {"d"}, "ca": {"2"}, "subkey": {"1"}, "authkey": {"1"}}
+	leafID := itemFrom(post("/db/ed/new/cert", leaf))
+	r, _ = c.Get(ts.URL + "/db/ed/item/" + leafID)
+	if b := body(t, r); !strings.Contains(b, "DNS:svc.example.org") || !strings.Contains(b, "Web Root") {
+		t.Fatal("leaf page lacks SAN or issuer")
+	}
+
+	// Similar certificate page is prefilled.
+	r, _ = c.Get(ts.URL + "/db/ed/new/cert?similar=" + rootID)
+	if b := body(t, r); !strings.Contains(b, `value="Web Root"`) {
+		t.Fatal("similar not prefilled")
+	}
+	// New key, rename, delete.
+	keyID := itemFrom(post("/db/ed/new/key", url.Values{"name": {"spare"}, "type": {"Ed25519"}}))
+	post("/db/ed/item/"+keyID+"/rename", url.Values{"name": {"spare2"}, "comment": {"hello"}})
+	r = post("/db/ed/item/"+keyID+"/delete", url.Values{"confirm": {"1"}})
+	if loc := r.Header.Get("Location"); !strings.HasSuffix(loc, "/keys?notice=deleted") {
+		t.Fatalf("delete redirect %s", loc)
+	}
+	// Mandatory subject entry from the options.
+	opts := url.Values{"default_hash": {"sha384"}, "mandatory_dn": {"O"}, "explicit_dn": {"C,O,CN"}, "string_opt": {"MASK:0x2002"},
+		"serial_len": {"128"}, "cert_expiry.n": {"30"}, "cert_expiry.u": {"D"}, "ical_expiry.n": {"1"}, "ical_expiry.u": {"W"},
+		"pkcs12_enc_algo": {"aes256"}}
+	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "notice=saved") {
+		t.Fatalf("options: %s", loc)
+	}
+	r = post("/db/ed/new/cert", url.Values{"dn.CN": {"no org"}, "keymode": {"new"}, "newkey": {"EC:P-256"}, "signer": {rootID},
+		"hash": {"sha384"}, "notbefore": {"2026-01-01T00:00"}, "validn": {"1"}, "validunit": {"y"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body(t, r), "mandatory subject entry O") {
+		t.Fatal("mandatory_dn not enforced")
+	}
+	// Database password change keeps this session working.
+	r = post("/db/ed/password", url.Values{"old": {"pw"}, "new": {"pw2"}, "new2": {"pw2"}})
+	if !strings.Contains(body(t, r), "was changed") {
+		t.Fatal("password change")
+	}
+	r = post("/db/ed/item/"+rootID+"/to-request", url.Values{})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
+		t.Fatalf("to-request after password change: %s", loc)
+	}
+	if b, _ := srv.store.Backups("ed"); len(b) != 1 {
+		t.Fatalf("backup before password change: %v", b)
+	}
+}

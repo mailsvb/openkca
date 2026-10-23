@@ -17,6 +17,7 @@ import (
 type page struct {
 	Title     string // message key
 	Error     string // message key
+	ErrorArg  string // its argument, if any
 	Notice    string // message key
 	NoticeArg string // its argument, if any
 	CSRF      string
@@ -84,6 +85,28 @@ func funcs(pr *i18n.Printer) template.FuncMap {
 		"join": strings.Join,
 		"depth": func(depth int) string {
 			return fmt.Sprintf("d%d", min(depth, 8))
+		},
+		"bit": func(v, i int) bool { return v&(1<<i) != 0 },
+		"has": func(list []string, v string) bool {
+			for _, x := range list {
+				if x == v {
+					return true
+				}
+			}
+			return false
+		},
+		"otherEKU": func(list, known []string) string {
+			var out []string
+			for _, x := range list {
+				k := false
+				for _, y := range known {
+					k = k || x == y
+				}
+				if !k {
+					out = append(out, x)
+				}
+			}
+			return strings.Join(out, ", ")
 		},
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}

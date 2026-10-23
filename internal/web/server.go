@@ -121,6 +121,19 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /db/{name}/item/{id}", s.requireServer(s.requireDB(s.item)))
 	m.HandleFunc("POST /db/{name}/item/{id}/check-key", s.requireServer(s.requireDB(s.checkKey)))
 	m.HandleFunc("GET /db/{name}/{tab}", s.requireServer(s.requireDB(s.list)))
+	m.HandleFunc("POST /db/{name}/options", s.requireServer(s.requireDB(s.saveOptions)))
+	m.HandleFunc("GET /db/{name}/password", s.requireServer(s.requireDB(s.dbPasswordPage)))
+	m.HandleFunc("POST /db/{name}/password", s.requireServer(s.requireDB(s.dbPassword)))
+	m.HandleFunc("GET /db/{name}/new/key", s.requireServer(s.requireDB(s.newKeyPage)))
+	m.HandleFunc("POST /db/{name}/new/key", s.requireServer(s.requireDB(s.newKey)))
+	m.HandleFunc("GET /db/{name}/new/{kind}", s.requireServer(s.requireDB(s.editorPage)))
+	m.HandleFunc("POST /db/{name}/new/{kind}", s.requireServer(s.requireDB(s.editorSubmit)))
+	m.HandleFunc("POST /db/{name}/item/{id}/rename", s.requireServer(s.requireDB(s.renameItem)))
+	m.HandleFunc("POST /db/{name}/item/{id}/delete", s.requireServer(s.requireDB(s.deleteItem)))
+	m.HandleFunc("POST /db/{name}/item/{id}/signed", s.requireServer(s.requireDB(s.markSigned)))
+	m.HandleFunc("POST /db/{name}/item/{id}/extract-key", s.requireServer(s.requireDB(s.extractKey)))
+	m.HandleFunc("POST /db/{name}/item/{id}/to-request", s.requireServer(s.requireDB(s.toRequest)))
+	m.HandleFunc("POST /db/{name}/item/{id}/key-password", s.requireServer(s.requireDB(s.keyPassword)))
 	s.mux = m
 }
 

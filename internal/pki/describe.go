@@ -212,6 +212,15 @@ type RequestInfo struct {
 	ParseError   string
 }
 
+// SubjectAttrs returns the subject as editable attributes.
+func (r *RequestInfo) SubjectAttrs() []DNAttr {
+	out := make([]DNAttr, len(r.Subject))
+	for i, e := range r.Subject {
+		out[i] = DNAttr{Name: e.Short, Value: e.Value}
+	}
+	return out
+}
+
 // DescribeRequest decodes a DER certificate request.
 func DescribeRequest(der []byte) *RequestInfo {
 	info := &RequestInfo{Fingerprints: fingerprints(der)}

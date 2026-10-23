@@ -7,20 +7,32 @@ desktop XCA.
 
 ## Status
 
-**Phase 2 of 6: databases.** go-ca opens XCA databases and shows keys,
-certificate signing requests, certificates (as a tree under their issuers),
-templates, revocation lists and the shared options. It decrypts every private
-key on request, including keys with their own password. On the login page you
-can create new databases and import existing `.xdb` files.
+**Phase 3 of 6: keys, requests and certificates.** go-ca opens, creates and
+imports XCA databases and shows keys, certificate signing requests,
+certificates (as a tree under their issuers), templates, revocation lists and
+the shared options. You can:
+
+- generate RSA, ECDSA (P-256/384/521) and Ed25519 keys,
+- create CSRs and certificates in an editor modelled on XCA's: self-signed or
+  signed by a CA, from a CSR, with subject, validity, basic constraints, key
+  identifiers, key usage, extended key usage, alternative names (including
+  `DNS:copycn` and `email:copy`), CRL distribution points, AIA, name
+  constraints, OCSP must-staple and Netscape extensions, with a preview,
+- sign requests, create similar certificates and requests, transform a
+  certificate into a request, extract public keys, mark requests signed,
+- rename, comment and delete items, give keys their own password or reset it,
+  change the database password (after a backup) and edit the shared options.
+
+Everything is written the way XCA writes it (items, hashes, key and issuer
+links, `stamp`), so a desktop XCA with the same file open picks it up.
 
 Opening an older database (schema 5 to 7, written by XCA 2.6 or earlier)
 first saves a backup and then upgrades it to schema 8, as XCA 2.7 and later
 do; XCA 2.6 still opens the upgraded file. Private keys still in XCA's legacy
-3DES format are re-encrypted as PKCS#8 at the same time. Apart from that and
-upgrading an old password hash after a correct login, nothing is written yet.
+3DES format are re-encrypted as PKCS#8 at the same time.
 
-Later phases add key and certificate generation, CA operations (revocation,
-CRLs, renewal), templates and every import and export format.
+Later phases add CA operations (revocation, CRLs, renewal), templates and
+every import and export format.
 
 | XCA database                        | go-ca                                          |
 | ----------------------------------- | ---------------------------------------------- |
@@ -110,6 +122,8 @@ go test -race ./...
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
 password, schema 8 and 9, a pre-2.0 file). Regenerate them with
 `testdata/gen/gen-fixtures.sh` (needs `xca`, `openssl`, `sqlite3`, `perl`).
+`testdata/gen/check-with-xca.sh` writes a database with go-ca's code and has
+the XCA command line list it, sign a CRL with a go-ca CA and add a key.
 
 Third-party code: [htmx](https://htmx.org) 2.0.4 (BSD Zero Clause License,
 `internal/web/static/htmx.LICENSE`).

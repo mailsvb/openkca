@@ -101,3 +101,25 @@ table.hide-revoked .col-revoked { display: none; }
   dl.props dd { margin-bottom: 8px; }
   .right { margin-left: 0; }
 }
+
+/* phase 3: editor and actions */
+button.secondary, .button.secondary { background: var(--card); color: var(--accent); }
+button.danger { background: var(--red-fg); border-color: var(--red-fg); color: var(--card); }
+.grid-form { display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
+.grid-form > input, .grid-form > select { width: 100%; max-width: 560px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.inline-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: grid; gap: 4px; margin: 0; min-width: 0; }
+legend { color: var(--muted); padding: 0 4px; }
+.crit { margin-top: 6px; font-weight: 600; }
+textarea { font: inherit; width: 100%; max-width: 720px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+select { font: inherit; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); max-width: 100%; }
+input[type=number] { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); width: 7em; }
+input[type=datetime-local] { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+.actions, .actionbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 16px; }
+.actionbar form.inline { display: inline-flex; gap: 8px; }
+details.card > summary, .card details > summary { cursor: pointer; color: var(--accent); margin: 8px 0; }
+.inline-h { display: inline; }
+.newbuttons { margin-left: auto; }
+@media (max-width: 640px) { .grid-form { grid-template-columns: 1fr; } }

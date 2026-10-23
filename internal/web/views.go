@@ -339,6 +339,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Target") != "rows" {
 		delete(p.Data, "fragment")
 	}
+	if r.URL.Query().Get("notice") == "deleted" {
+		p.Notice = "list.deleted.notice"
+	}
 	s.render(w, r, http.StatusOK, "list", p)
 }
 
@@ -367,6 +370,10 @@ type detail struct {
 	UsedBy   []link
 	CRLs     []link
 	Entries  []crlEntry
+	// action availability
+	HasKey     bool
+	KeyPrivate bool
+	KeyOwnPass bool
 }
 
 type link struct {
@@ -491,7 +498,25 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Source = "source." + xdb.SourceName(d.Item.Source)
-	s.render(w, r, http.StatusOK, "item", &page{Title: "tab." + tab, Tab: tab, Data: map[string]any{"D": d}})
+	if d.Cert != nil && d.Cert.KeyID != 0 {
+		d.HasKey = true
+		if k := ix.keys[d.Cert.KeyID]; k != nil {
+			d.KeyPrivate = k.HasPrivate
+			d.KeyOwnPass = k.OwnPass == xdb.PassPrivate
+		}
+	}
+	if d.Request != nil && d.Request.KeyID != 0 {
+		d.HasKey = true
+	}
+	p := &page{Title: "tab." + tab, Tab: tab, Data: map[string]any{"D": d}}
+	q := r.URL.Query()
+	if n := q.Get("notice"); n == "created" || n == "saved" || n == "keypw" {
+		p.Notice = "item.notice." + n
+	}
+	if e := q.Get("error"); strings.HasPrefix(e, "item.error.") || strings.HasPrefix(e, "keypw.error.") {
+		p.Error = e
+	}
+	s.render(w, r, http.StatusOK, "item", p)
 }
 
 // checkKey decrypts a private key in memory and checks it against the
@@ -571,25 +596,35 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 
 // optionRow is one entry of the options page.
 type optionRow struct {
-	Key, Label, Value string
-	Default           bool
+	Key, Label, Value, Kind string
+	Default                 bool
+	Choices                 []string
+	Units                   []string
+	Num                     string // expiry: number part
+	Unit                    string // expiry: unit part
 }
 
-var optionKeys = []struct{ key, label, def string }{
-	{"default_hash", "opt.default_hash", "sha256"},
-	{"mandatory_dn", "opt.mandatory_dn", ""},
-	{"explicit_dn", "opt.explicit_dn", "C,ST,L,O,OU,CN,emailAddress"},
-	{"adapt_explicit_subj", "opt.adapt_explicit_subj", "no"},
-	{"string_opt", "opt.string_opt", "MASK:0x2002"},
-	{"serial_len", "opt.serial_len", "64"},
-	{"cert_expiry", "opt.cert_expiry", "80%"},
-	{"ical_expiry", "opt.ical_expiry", "1W"},
-	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", "aes256"},
-	{"disable_netscape", "opt.disable_netscape", "no"},
-	{"no_expire_colors", "opt.no_expire_colors", "no"},
-	{"hide_unusable", "opt.hide_unusable", "no"},
-	{"translate_dn", "opt.translate_dn", "no"},
-	{"suppress_messages", "opt.suppress_messages", "no"},
+var serialLens = []string{"64", "72", "80", "88", "96", "104", "112", "120", "128", "136", "144", "152", "160"}
+
+var optionKeys = []struct {
+	key, label, def, kind string
+	choices               []string
+	units                 string
+}{
+	{"default_hash", "opt.default_hash", "sha256", "select", []string{"sha256", "sha384", "sha512"}, ""},
+	{"mandatory_dn", "opt.mandatory_dn", "", "text", nil, ""},
+	{"explicit_dn", "opt.explicit_dn", "C,ST,L,O,OU,CN,emailAddress", "text", nil, ""},
+	{"adapt_explicit_subj", "opt.adapt_explicit_subj", "no", "bool", nil, ""},
+	{"string_opt", "opt.string_opt", "MASK:0x2002", "select", []string{"MASK:0x2002", "utf8only", "pkix", "nombstr", "default"}, ""},
+	{"serial_len", "opt.serial_len", "64", "select", serialLens, ""},
+	{"cert_expiry", "opt.cert_expiry", "80%", "expiry", nil, "%DW"},
+	{"ical_expiry", "opt.ical_expiry", "1W", "expiry", nil, "DW"},
+	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", "aes256", "text", nil, ""},
+	{"disable_netscape", "opt.disable_netscape", "no", "bool", nil, ""},
+	{"no_expire_colors", "opt.no_expire_colors", "no", "bool", nil, ""},
+	{"hide_unusable", "opt.hide_unusable", "no", "bool", nil, ""},
+	{"translate_dn", "opt.translate_dn", "no", "bool", nil, ""},
+	{"suppress_messages", "opt.suppress_messages", "no", "bool", nil, ""},
 }
 
 func (s *Server) options(w http.ResponseWriter, r *http.Request) {
@@ -602,11 +637,52 @@ func (s *Server) options(w http.ResponseWriter, r *http.Request) {
 	var rows []optionRow
 	for _, o := range optionKeys {
 		v, ok := snap.Settings[o.key]
-		rows = append(rows, optionRow{Key: o.key, Label: o.label, Value: v, Default: !ok})
 		if !ok {
-			rows[len(rows)-1].Value = o.def
+			v = o.def
+		}
+		row := optionRow{Key: o.key, Label: o.label, Value: v, Default: !ok, Kind: o.kind, Choices: o.choices}
+		if o.kind == "select" && !contains(row.Choices, v) {
+			row.Choices = append([]string{v}, row.Choices...)
+		}
+		if o.kind == "expiry" && v != "" {
+			row.Num, row.Unit = v[:len(v)-1], v[len(v)-1:]
+			for _, u := range o.units {
+				row.Units = append(row.Units, string(u))
+			}
+		}
+		rows = append(rows, row)
+	}
+	p := &page{Title: "options.title", Tab: "options", Data: map[string]any{"Options": rows, "Schema": snap.Schema}}
+	switch q := r.URL.Query(); {
+	case q.Get("notice") == "saved":
+		p.Notice = "options.saved"
+	case q.Get("error") == "options.error.value":
+		p.Error, p.ErrorArg = "options.error.value", q.Get("key")
+	}
+	s.render(w, r, http.StatusOK, "options", p)
+}
+
+// tabOf returns the list tab an item belongs to.
+func tabOf(snap *xdb.Snapshot, id int64) string {
+	for _, k := range snap.Keys {
+		if k.ID == id {
+			return "keys"
 		}
 	}
-	s.render(w, r, http.StatusOK, "options", &page{Title: "options.title", Tab: "options",
-		Data: map[string]any{"Options": rows, "Schema": snap.Schema}})
+	for _, r := range snap.Requests {
+		if r.ID == id {
+			return "requests"
+		}
+	}
+	for _, c := range snap.CRLs {
+		if c.ID == id {
+			return "crls"
+		}
+	}
+	for _, t := range snap.Templates {
+		if t.ID == id {
+			return "templates"
+		}
+	}
+	return "certs"
 }
