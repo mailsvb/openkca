@@ -140,6 +140,9 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 		if r.pub == nil || !codec.JWKSupported(r.pub) {
 			d |= codec.FJWK
 		}
+		if r.pub == nil || !codec.PKCS12Supported(r.pub) {
+			d |= codec.FPKCS12
+		}
 	case xdb.TypeKey:
 		k := r.key
 		if r.pub == nil {
@@ -151,8 +154,7 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 			default:
 				d |= codec.FPVK
 			}
-			switch codec.KeyTypeName(r.pub) {
-			case "Ed25519", "X25519":
+			if !codec.TraditionalSupported(r.pub) {
 				d |= codec.FTradition
 			}
 			if !codec.SSHCompatible(r.pub) {

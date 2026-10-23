@@ -77,3 +77,51 @@ func TestBrainpoolTraditional(t *testing.T) {
 		}
 	}
 }
+
+// TestExportGating checks which formats take the new key types.
+func TestExportGating(t *testing.T) {
+	for _, c := range []struct {
+		spec              pki.KeySpec
+		trad, pkcs12, ssh bool
+	}{
+		{pki.KeySpec{Type: "RSA", Bits: 2048}, true, true, true},
+		{pki.KeySpec{Type: "RSA-PSS", Bits: 2048}, false, false, false},
+		{pki.KeySpec{Type: "EC", Curve: "P-256"}, true, true, true},
+		{pki.KeySpec{Type: "EC", Curve: "brainpoolP384r1"}, true, false, false},
+		{pki.KeySpec{Type: "Ed25519"}, false, true, true},
+		{pki.KeySpec{Type: "Ed448"}, false, false, false},
+		{pki.KeySpec{Type: "X448"}, false, false, false},
+		{pki.KeySpec{Type: "ML-DSA", Param: "ML-DSA-65"}, false, true, false},
+		{pki.KeySpec{Type: "ML-KEM", Param: "ML-KEM-768"}, false, false, false},
+		{pki.KeySpec{Type: "Composite", Param: "MLDSA44-Ed25519-SHA512"}, false, false, false},
+	} {
+		key, _ := pki.GenerateKey(c.spec)
+		pub := key.Public()
+		if TraditionalSupported(pub) != c.trad || PKCS12Supported(pub) != c.pkcs12 || SSHCompatible(pub) != c.ssh {
+			t.Errorf("%v: traditional %v PKCS#12 %v SSH %v", c.spec, TraditionalSupported(pub), PKCS12Supported(pub), SSHCompatible(pub))
+		}
+		if JWKSupported(pub) && c.spec.Type != "RSA" && c.spec.Curve != "P-256" && c.spec.Type != "Ed25519" {
+			t.Errorf("%v: JWK offered", c.spec)
+		}
+		if _, err := PVK(key); (err == nil) != (c.spec.Type == "RSA") {
+			t.Errorf("%v: PVK %v", c.spec, err)
+		}
+		// every key has a PEM form: its own or PKCS#8
+		typ, der, err := Traditional(key)
+		if err != nil {
+			t.Fatalf("%v: %v", c.spec, err)
+		}
+		if (typ == PEMPrivateKey) == c.trad {
+			t.Errorf("%v: traditional form %s", c.spec, typ)
+		}
+		r := Probe("k", PEM(typ, der), ProbeOptions{})
+		if len(r.Objects) != 1 || r.Objects[0].Private == nil {
+			t.Errorf("%v: %s does not read back: %v", c.spec, typ, r.Unrecognized)
+		}
+		if !c.pkcs12 {
+			if _, err := PKCS12(key, nil, nil, "pw", ""); err != ErrUnsupportedKey {
+				t.Errorf("%v: PKCS#12 %v", c.spec, err)
+			}
+		}
+	}
+}

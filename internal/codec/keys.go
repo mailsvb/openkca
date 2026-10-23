@@ -37,8 +37,9 @@ func ParsePublic(spki []byte) (crypto.PublicKey, error) {
 }
 
 // Traditional returns OpenSSL's "traditional" encoding of a private key
-// (i2d_PrivateKey): PKCS#1, SEC 1 or the DSA sequence; Ed25519 has none and
-// gets PKCS#8, as OpenSSL writes it.
+// (i2d_PrivateKey): PKCS#1, SEC 1 (on every curve) or the DSA sequence.
+// Keys without one (Ed25519, Ed448, X25519, X448, RSA-PSS and the
+// post-quantum keys) get PKCS#8, as OpenSSL 3 writes them.
 func Traditional(key crypto.Signer) (typ string, der []byte, err error) {
 	switch k := key.(type) {
 	case *rsa.PrivateKey:
@@ -49,11 +50,22 @@ func Traditional(key crypto.Signer) (typ string, der []byte, err error) {
 	case pki.DSAKey:
 		der, err = asn1.Marshal(dsaPrivate{P: k.P, Q: k.Q, G: k.G, Y: k.Y, X: k.X})
 		return pemDSAPrivate, der, err
-	case ed25519.PrivateKey:
-		der, err = x509.MarshalPKCS8PrivateKey(k)
-		return PEMPrivateKey, der, err
 	}
-	return "", nil, ErrUnsupportedKey
+	if der, err = pki.MarshalPKCS8(key); err != nil {
+		return "", nil, ErrUnsupportedKey
+	}
+	return PEMPrivateKey, der, nil
+}
+
+// TraditionalSupported reports whether a key has a traditional form of its
+// own, which encrypted traditional PEM (Proc-Type, DEK-Info) is for: RSA
+// (without the PSS restriction), EC and DSA.
+func TraditionalSupported(pub crypto.PublicKey) bool {
+	switch pub.(type) {
+	case *rsa.PublicKey, *ecdsa.PublicKey, *dsa.PublicKey:
+		return true
+	}
+	return false
 }
 
 // PrivatePEM writes a private key in traditional PEM form, encrypted with

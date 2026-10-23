@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
@@ -131,6 +132,72 @@ func TestNewKeyTypes(t *testing.T) {
 		// the root back to a request
 		if _, err := h.CertToRequest(ctx, rootID, pw, nil); err != nil {
 			t.Fatalf("%s: to request: %v", name, err)
+		}
+	}
+}
+
+// TestNewKeyTypesExport exports keys and certificates of the new types in
+// every format offered for them; formats that cannot hold them are not
+// offered and are refused.
+func TestNewKeyTypesExport(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	pw := []byte("pw")
+	if err := s.Create(ctx, "newexport", pw); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := load(t, s, "newexport")
+	rootP := params("export root", 0)
+	rootID, err := h.Issue(ctx, rootP, pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs := []pki.KeySpec{
+		{Type: "RSA-PSS", Bits: 2048}, {Type: "EC", Curve: "brainpoolP256r1"}, {Type: "EC", Curve: "secp256k1"},
+		{Type: "Ed448"}, {Type: "X448"}, {Type: "X25519"}, {Type: "ML-DSA", Param: "ML-DSA-44"},
+		{Type: "SLH-DSA", Param: "SLH-DSA-SHA2-128f"}, {Type: "ML-KEM", Param: "ML-KEM-512"},
+		{Type: "Composite", Param: "MLDSA44-Ed25519-SHA512"}, {Type: "CompositeKEM", Param: "MLKEM768-X25519-SHA3-256"},
+	}
+	for _, spec := range specs {
+		name := spec.Type + spec.Curve + spec.Param
+		p := params(name, rootID)
+		p.NewKey = &spec
+		p.Ext = pki.ExtSpec{CA: 2, SubKey: true, AuthKey: true}
+		certID, err := h.Issue(ctx, p, pw)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		snap, _ := h.Snapshot(ctx)
+		keyID := findCert(snap, certID).KeyID
+		for _, id := range []int64{keyID, certID} {
+			offered := map[int]bool{}
+			for _, f := range ExportFormats(snap, []int64{id}) {
+				offered[f.ID] = true
+				res, err := h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), DBPass: pw})
+				if err != nil {
+					t.Errorf("%s: item %d format %d (%s): %v", name, id, f.ID, f.Label, err)
+					continue
+				}
+				if len(res.Data) == 0 && f.ID != 16 && f.ID != 40 { // 40: no unusable certificates
+					t.Errorf("%s: format %d: empty", name, f.ID)
+				}
+				// what go-ca writes, it reads back
+				if f.Flags&(codec.FPKCS8|codec.FPKCS12) != 0 || f.ID == 20 || f.ID == 21 || f.ID == 25 {
+					r := codec.Probe("x."+f.Ext, res.Data, codec.ProbeOptions{Password: []byte("export")})
+					if len(r.Objects) == 0 || r.Objects[0].Type == xdb.TypeKey && !bytes.Equal(r.Objects[0].DER, findKey(snap, keyID).Public) {
+						t.Errorf("%s: format %d does not read back: %v", name, f.ID, r.Unrecognized)
+					}
+				}
+			}
+			// never offered for the new types
+			for _, f := range []int{21, 22, 23, 26, 50, 51, 100, 102, 106} {
+				if f == 21 && spec.Type == "EC" {
+					continue // SEC 1 on every curve
+				}
+				if offered[f] {
+					t.Errorf("%s: format %d offered", name, f)
+				}
+			}
 		}
 	}
 }
