@@ -57,7 +57,8 @@ type ProbeResult struct {
 
 // Probe reads all objects of a file in any format XCA imports (PEM with
 // any number of blocks, DER certificates, requests, CRLs and keys, PKCS#7,
-// PKCS#8, PKCS#12, SSH public and private keys, PVK and XCA templates).
+// PKCS#8, PKCS#12, OpenSSH public and private keys, RFC 4716 public keys,
+// PuTTY private keys, PVK and XCA templates).
 func Probe(filename string, data []byte, o ProbeOptions) ProbeResult {
 	p := &prober{file: path.Base(strings.ReplaceAll(filename, `\`, "/")), opts: o}
 	if filename == "" {
@@ -69,8 +70,12 @@ func Probe(filename string, data []byte, o ProbeOptions) ProbeResult {
 	}
 	text := bytes.TrimSpace(data)
 	switch {
+	case isPPK(text):
+		p.putty(text)
 	case bytes.Contains(text, []byte("-----BEGIN ")):
 		p.pemFile(data)
+	case bytes.Contains(text, []byte(rfc4716Begin)):
+		p.rfc4716(text)
 	case isSSHLine(text):
 		p.sshPublicLines(text)
 	default:
@@ -110,11 +115,14 @@ func (p *prober) pemFile(data []byte) {
 	for _, b := range decodePEMAll(data) {
 		p.pemBlock(b)
 	}
-	// SSH public key lines next to PEM blocks
+	// SSH public keys next to PEM blocks
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if isSSHLine(bytes.TrimSpace(line)) {
 			p.sshPublicLines(bytes.TrimSpace(line))
 		}
+	}
+	if bytes.Contains(data, []byte(rfc4716Begin)) {
+		p.rfc4716(data)
 	}
 }
 
@@ -163,7 +171,7 @@ func (p *prober) pemBlock(b *pem.Block) {
 		}
 		p.traditional(b.Type, der)
 	case PEMOpenSSHKey:
-		p.opensshPrivate(pem.EncodeToMemory(b))
+		p.opensshPrivate(b.Bytes)
 	case PEMTemplate:
 		p.template(b.Bytes)
 	case "EC PARAMETERS", "DH PARAMETERS", "X9.42 DH PARAMETERS":
@@ -323,7 +331,7 @@ func (p *prober) pkcs12(der []byte) {
 	}
 	if s, ok := c.Key.(crypto.Signer); ok {
 		if der, err := pki.MarshalPKCS8(normalizeKey(s)); err == nil {
-			p.privateKey(der, alias+"_key")
+			p.privateKey(der, alias+"_key", "")
 		}
 	}
 	for i, ca := range c.Chain {
@@ -351,7 +359,7 @@ func (p *prober) publicKey(spki []byte) {
 	p.add(Object{Type: xdb.TypeKey, Name: name, DER: spki, KeyType: typ, KeyBits: bits})
 }
 
-func (p *prober) privateKey(pkcs8 []byte, name string) {
+func (p *prober) privateKey(pkcs8 []byte, name, comment string) {
 	spki := pkcs8SPKI(pkcs8)
 	if spki == nil {
 		p.skip("private key: unsupported algorithm")
@@ -361,10 +369,10 @@ func (p *prober) privateKey(pkcs8 []byte, name string) {
 	if name == "" || name == "_key" {
 		name = n
 	}
-	p.add(Object{Type: xdb.TypeKey, Name: name, DER: spki, Private: pkcs8, KeyType: typ, KeyBits: bits})
+	p.add(Object{Type: xdb.TypeKey, Name: name, Comment: comment, DER: spki, Private: pkcs8, KeyType: typ, KeyBits: bits})
 }
 
-func (p *prober) pkcs8(der []byte) { p.privateKey(der, "") }
+func (p *prober) pkcs8(der []byte) { p.privateKey(der, "", "") }
 
 func (p *prober) encryptedPKCS8(der []byte) {
 	pw, ok := p.password()
@@ -376,7 +384,7 @@ func (p *prober) encryptedPKCS8(der []byte) {
 		p.wrongPassword()
 		return
 	}
-	p.privateKey(plain, "")
+	p.privateKey(plain, "", "")
 }
 
 func (p *prober) traditional(typ string, der []byte) {
@@ -388,7 +396,7 @@ func (p *prober) traditional(typ string, der []byte) {
 	case pemECPrivate:
 		if key, err = x509.ParseECPrivateKey(der); err != nil {
 			if pk8 := sec1ToPKCS8(der); pk8 != nil {
-				p.privateKey(pk8, "") // a curve Go cannot compute with
+				p.privateKey(pk8, "", "") // a curve Go cannot compute with
 				return
 			}
 		}
@@ -407,7 +415,7 @@ func (p *prober) traditional(typ string, der []byte) {
 		p.skip("%s: %v", typ, err)
 		return
 	}
-	p.privateKey(pk8, "")
+	p.privateKey(pk8, "", "")
 }
 
 // normalizeKey converts key types returned by x/crypto/ssh and PKCS#12
@@ -420,39 +428,60 @@ func normalizeKey(k crypto.Signer) crypto.Signer {
 	return k
 }
 
-func (p *prober) opensshPrivate(pemBytes []byte) {
-	raw, err := ssh.ParseRawPrivateKey(pemBytes)
-	var missing *ssh.PassphraseMissingError
-	if errors.As(err, &missing) {
-		pw, ok := p.password()
-		if !ok {
-			return
-		}
-		if raw, err = ssh.ParseRawPrivateKeyWithPassphrase(pemBytes, pw); err != nil {
+func (p *prober) opensshPrivate(data []byte) {
+	key, comment, err := parseOpenSSHPrivate(data, p.password)
+	p.sshPrivate("OpenSSH key", key, comment, err)
+}
+
+func (p *prober) putty(data []byte) {
+	key, comment, err := parsePPK(data, p.password)
+	p.sshPrivate("PuTTY key", key, comment, err)
+}
+
+// sshPrivate adds a private key read from an SSH format; its comment is
+// the item's comment and suggested name.
+func (p *prober) sshPrivate(what string, key crypto.Signer, comment string, err error) {
+	if errors.Is(err, errSSHPassword) {
+		if len(p.opts.Password) > 0 {
 			p.wrongPassword()
-			return
 		}
+		return
 	}
 	if err != nil {
-		p.skip("OpenSSH key: %v", err)
+		p.skip("%s: %v", what, err)
 		return
 	}
-	var s crypto.Signer
-	switch k := raw.(type) {
-	case crypto.Signer:
-		s = k
-	case *dsa.PrivateKey:
-		s = pki.DSAKey{PrivateKey: k}
-	default:
-		p.skip("OpenSSH key %T", raw)
-		return
-	}
-	der, err := pki.MarshalPKCS8(normalizeKey(s))
+	der, err := pki.MarshalPKCS8(key)
 	if err != nil {
-		p.skip("OpenSSH key: %v", err)
+		p.skip("%s: %v", what, err)
 		return
 	}
-	p.privateKey(der, "")
+	p.privateKey(der, SSHComment(comment), comment)
+}
+
+// sshPublic adds a public key read from an SSH format, named like
+// sshPrivate does.
+func (p *prober) sshPublic(pub crypto.PublicKey, comment string) {
+	spki, err := marshalSPKI(pub)
+	if err != nil {
+		p.skip("SSH key: %v", err)
+		return
+	}
+	name, typ, bits := p.keyName(spki, true)
+	if c := SSHComment(comment); c != "" {
+		name = c
+	}
+	p.add(Object{Type: xdb.TypeKey, Name: name, Comment: comment, DER: spki, KeyType: typ, KeyBits: bits})
+}
+
+func (p *prober) rfc4716(text []byte) {
+	keys, errs := parseRFC4716(text)
+	for _, k := range keys {
+		p.sshPublic(k.pub, k.comment)
+	}
+	for _, err := range errs {
+		p.skip("%v", err)
+	}
 }
 
 func isSSHLine(b []byte) bool {
@@ -480,13 +509,7 @@ func (p *prober) sshPublicLines(text []byte) {
 			p.skip("SSH key type %s", pub.Type())
 			continue
 		}
-		spki, err := marshalSPKI(cp.CryptoPublicKey())
-		if err != nil {
-			p.skip("SSH key: %v", err)
-			continue
-		}
-		name, typ, bits := p.keyName(spki, true)
-		p.add(Object{Type: xdb.TypeKey, Name: name, Comment: comment, DER: spki, KeyType: typ, KeyBits: bits})
+		p.sshPublic(cp.CryptoPublicKey(), comment)
 	}
 }
 
@@ -523,7 +546,7 @@ func (p *prober) pvk(data []byte) {
 		p.skip("PVK: %v", err)
 		return
 	}
-	p.privateKey(der, "")
+	p.privateKey(der, "", "")
 }
 
 // marshalSPKI encodes a public key, DSA included.

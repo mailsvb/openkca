@@ -30,10 +30,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The SSH tests also compare against puttygen; ssh-keygen is on the runner.
+      - name: Install puttygen
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends putty-tools
+
       # Some tests compare against the openssl command line; the runner has it.
       - name: Test
         run: |
           echo "::notice title=openssl::$(openssl version)"
+          echo "::notice title=ssh::$(ssh -V 2>&1), $(puttygen --version | head -1)"
           set +e
           go test -race -count=1 ./... 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
