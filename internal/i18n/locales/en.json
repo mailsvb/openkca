@@ -1,6 +1,5 @@
 {
   "app.name": "go-ca",
-
   "login.title": "Sign in",
   "login.heading": "Sign in to go-ca",
   "login.intro": "Enter the server password to continue.",
@@ -9,7 +8,6 @@
   "login.error.password": "Wrong password.",
   "login.error.ratelimit": "Too many failed attempts. Wait a minute and try again.",
   "nav.logout": "Sign out",
-
   "databases.title": "Databases",
   "databases.heading": "Databases",
   "databases.empty": "There are no databases in the data folder yet.",
@@ -17,7 +15,6 @@
   "databases.continue": "Continue",
   "databases.password": "Database password",
   "databases.open": "Open",
-  "databases.phase2": "Creating and importing databases arrives in a later version.",
   "dbstatus.supported": "Supported",
   "dbstatus.upgradable": "Older schema",
   "dbstatus.outdated": "Too old",
@@ -34,22 +31,21 @@
   "dblogin.error.missing": "The database was not found.",
   "dblogin.error.unsupported": "This database cannot be opened.",
   "db.close": "Close database",
-  "db.readonly": "This database uses schema %d (XCA 2.6 or older). go-ca will upgrade it to schema 8 after a backup in a later version; until then it is only read.",
-
   "tab.keys": "Keys",
   "tab.requests": "Requests",
   "tab.certs": "Certificates",
   "tab.templates": "Templates",
   "tab.crls": "Revocation lists",
   "tab.options": "Options",
-
   "list.search": "Search",
   "list.plain": "Plain view",
   "list.hideunusable": "Hide unusable",
   "list.columns": "Columns",
   "list.none": "Nothing found.",
-  "list.deleted": {"one": "%d deleted item is not listed.", "other": "%d deleted items are not listed."},
-
+  "list.deleted": {
+    "one": "%d deleted item is not listed.",
+    "other": "%d deleted items are not listed."
+  },
   "col.name": "Internal name",
   "col.keytype": "Type",
   "col.size": "Size (bit)",
@@ -73,7 +69,6 @@
   "col.thisupdate": "Last update",
   "col.nextupdate": "Next update",
   "col.revokedcount": "Revoked",
-
   "status.valid": "Valid",
   "status.revoked": "Revoked",
   "status.expired": "Expired",
@@ -86,7 +81,6 @@
   "private.token": "Security token",
   "val.yes": "Yes",
   "val.no": "No",
-
   "item.type": "Type",
   "item.source": "Source",
   "item.date": "Added",
@@ -105,7 +99,6 @@
   "source.token": "Security token",
   "source.legacy_db": "Legacy database",
   "source.renewed": "Renewed",
-
   "cert.heading": "Certificate",
   "cert.status": "Status",
   "cert.revokedon": "Revoked on",
@@ -128,7 +121,6 @@
   "ca.nocrl": "No CRL issued yet",
   "ca.issued": "Issued certificates",
   "ca.crls": "Revocation lists",
-
   "key.heading": "Key",
   "key.algorithm": "Algorithm",
   "key.private": "Private key",
@@ -144,16 +136,18 @@
   "keycheck.nokey": "This key has no private part.",
   "keycheck.token": "The private key is on a security token, which go-ca does not access.",
   "keycheck.ratelimit": "Too many failed attempts. Wait a minute and try again.",
-  "keycheck.legacy": "Stored in XCA's legacy 3DES format. It will be converted to PKCS#8 once database upgrades arrive.",
-
+  "keycheck.legacy": "Stored in XCA's legacy 3DES format with its own password. It is converted when the key's password is reset (phase 3).",
   "req.heading": "Certificate signing request",
   "req.signed": "Signed",
   "req.signature": "Signature",
   "req.sigok": "Valid",
   "req.sigbad": "Invalid",
-
   "crl.heading": "Revocation list",
-  "crl.entries": {"zero": "No revoked certificates", "one": "%d revoked certificate", "other": "%d revoked certificates"},
+  "crl.entries": {
+    "zero": "No revoked certificates",
+    "one": "%d revoked certificate",
+    "other": "%d revoked certificates"
+  },
   "crl.certificate": "Certificate",
   "crl.date": "Revoked on",
   "crl.reason": "Reason",
@@ -167,7 +161,6 @@
   "reason.removeFromCRL": "Remove from CRL",
   "reason.privilegeWithdrawn": "Privilege withdrawn",
   "reason.AACompromise": "AA compromise",
-
   "tmpl.heading": "Template",
   "tmpl.settings": "Stored values",
   "tmpl.phase5": "The template editor arrives in a later version; the values are shown as XCA stores them.",
@@ -179,7 +172,6 @@
   "fp.sha1": "SHA-1",
   "fp.md5": "MD5",
   "unit.bits": "%d bit",
-
   "options.title": "Options",
   "options.heading": "Options",
   "options.intro": "These settings are stored in the database and shared with desktop XCA. Editing them arrives in a later version.",
@@ -201,9 +193,33 @@
   "opt.hide_unusable": "Hide unusable certificates",
   "opt.translate_dn": "Translate established X.509 terms",
   "opt.suppress_messages": "Suppress success messages",
-
   "error.title": "Error",
   "error.internal": "Something went wrong. Details are in the server log.",
   "error.notfound": "Not found.",
-  "error.back": "Back to the databases"
+  "error.back": "Back to the databases",
+  "dbstatus.help.upgradable": "Opening it first saves a backup, then upgrades it to schema 8 as XCA 2.7 and later do. XCA 2.6 can still open the upgraded file.",
+  "dblogin.error.upgrade": "The database could not be upgraded. It was left unchanged; details are in the server log.",
+  "databases.notice.created": "Database %s created.",
+  "databases.notice.imported": "Database imported as %s.",
+  "create.heading": "New database",
+  "create.name": "Name",
+  "create.namehelp": "Letters, digits, dot, dash and underscore; .xdb is added.",
+  "create.password": "Password",
+  "create.password2": "Repeat password",
+  "create.submit": "Create",
+  "create.error.mismatch": "The passwords do not match.",
+  "create.error.name": "Invalid name. Use up to 64 letters, digits, dots, dashes or underscores.",
+  "create.error.exists": "A database with this name already exists.",
+  "create.error.failed": "The database could not be created. Details are in the server log.",
+  "import.heading": "Import a database",
+  "import.file": "XCA database file (.xdb)",
+  "import.help": "Up to %d MB. The file is checked before it is stored; its password is only needed to open it.",
+  "import.submit": "Import",
+  "import.error.nofile": "Choose a file to import.",
+  "import.error.toolarge": "The file is larger than the upload limit.",
+  "import.error.legacy": "This is a pre-2.0 XCA database. Convert it with a current XCA first.",
+  "import.error.invalid": "This is not a valid XCA database.",
+  "import.error.newer": "This database was written by a newer XCA than go-ca supports.",
+  "import.error.outdated": "This database uses a schema older than 5, which has no upgrade path.",
+  "import.error.failed": "The import failed. Details are in the server log."
 }

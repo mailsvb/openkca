@@ -54,6 +54,11 @@ label { color: var(--muted); }
 .db.selected { border-color: var(--accent); }
 .dbmeta { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
 .dblogin { display: flex; gap: 8px; flex-wrap: wrap; }
+.fullrow { flex-basis: 100%; margin: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 24px; }
+.stack { display: grid; gap: 6px; max-width: 420px; }
+.stack button { justify-self: start; margin-top: 6px; }
+input[type=file] { font: inherit; color: var(--fg); max-width: 100%; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
 .columns summary { cursor: pointer; color: var(--accent); }

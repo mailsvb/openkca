@@ -40,6 +40,7 @@ type Config struct {
 	PasswordHash string // argon2id hash of the server password
 	Catalog      *i18n.Catalog
 	IdleTimeout  time.Duration
+	MaxUpload    int64 // import size limit in bytes
 	Logger       *slog.Logger
 }
 
@@ -61,6 +62,9 @@ type Server struct {
 func New(cfg Config) (*Server, error) {
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = 30 * time.Minute
+	}
+	if cfg.MaxUpload == 0 {
+		cfg.MaxUpload = 256 << 20
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -108,6 +112,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /login", s.login)
 	m.HandleFunc("POST /logout", s.requireServer(s.logout))
 	m.HandleFunc("GET /{$}", s.requireServer(s.databases))
+	m.HandleFunc("POST /{$}", s.requireServer(s.createDB))
+	m.HandleFunc("POST /import", s.requireServer(s.importDB))
 	m.HandleFunc("POST /db/{name}/login", s.requireServer(s.dbLogin))
 	m.HandleFunc("POST /db/{name}/logout", s.requireServer(s.requireDB(s.dbLogout)))
 	m.HandleFunc("GET /db/{name}/{$}", s.requireServer(s.requireDB(s.dbHome)))
@@ -188,7 +194,9 @@ func (s *Server) requireServer(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			token := r.Header.Get("X-CSRF-Token")
-			if token == "" {
+			// Uploads must send the header (htmx does): parsing a multipart
+			// body here would spool it to the system temp folder.
+			if token == "" && !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 				token = r.PostFormValue("csrf")
 			}
 			if !ss.CSRFOK(token) {
@@ -279,9 +287,14 @@ func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 	open := s.dbs.OpenDatabases(serverSession(r).ID)
 	p := &page{Title: "databases.title", Data: map[string]any{
 		"Databases": infos, "Open": open, "Selected": r.URL.Query().Get("db"),
+		"MaxUploadMB": s.cfg.MaxUpload >> 20,
 	}}
-	if e := r.URL.Query().Get("error"); e != "" && strings.HasPrefix(e, "dblogin.error.") {
+	q := r.URL.Query()
+	if e := q.Get("error"); strings.HasPrefix(e, "dblogin.error.") || strings.HasPrefix(e, "create.error.") || strings.HasPrefix(e, "import.error.") {
 		p.Error = e
+	}
+	if n := q.Get("notice"); n == "created" || n == "imported" {
+		p.Notice, p.NoticeArg = "databases.notice."+n, q.Get("name")
 	}
 	s.render(w, r, http.StatusOK, "databases", p)
 }
@@ -331,6 +344,20 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.log.Info("password hash upgraded to T form", "db", name)
 		}
+	}
+	rep, err := h.PrepareAfterLogin(r.Context(), pw)
+	if err != nil {
+		h.Release()
+		s.log.Error("database preparation failed", "db", name, "err", err)
+		back("dblogin.error.upgrade")
+		return
+	}
+	if rep.Backup != "" {
+		s.log.Info("database prepared", "db", name, "backup", rep.Backup, "upgraded_from", rep.UpgradedFrom,
+			"converted_keys", rep.ConvertedKeys)
+	}
+	if rep.OwnPassLegacy > 0 {
+		s.log.Warn("legacy keys with their own password left unconverted", "db", name, "count", rep.OwnPassLegacy)
 	}
 	if c, err := r.Cookie(dbCookie); err == nil {
 		s.dbs.End(c.Value)

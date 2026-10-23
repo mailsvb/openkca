@@ -39,7 +39,7 @@ const (
 )
 
 // CurrentSchema is the schema version this tool reads and writes.
-const CurrentSchema = 8
+const CurrentSchema = xdb.CurrentSchema
 
 // Openable reports whether a database with this status can be logged into.
 func (s Status) Openable() bool { return s == Supported || s == Upgradable }
@@ -210,8 +210,9 @@ type Handle struct {
 	lock  *flock.Flock
 	refs  int
 
-	mu   sync.Mutex
-	snap *xdb.Snapshot
+	mu     sync.Mutex
+	snap   *xdb.Snapshot
+	prepMu sync.Mutex // serialises PrepareAfterLogin
 }
 
 // Acquire opens the named database or returns the already open handle. Each

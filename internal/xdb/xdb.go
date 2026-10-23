@@ -189,21 +189,7 @@ func (d *DB) Setting(ctx context.Context, key string) (string, error) {
 
 // SetSetting writes one settings value (used for the pwhash upgrade).
 func (d *DB) SetSetting(ctx context.Context, key, value string) error {
-	tx, err := d.SQL.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key_=?", value, key)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO settings (key_, value) VALUES (?, ?)", key, value); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return d.Write(ctx, func(tx *Tx) error { return tx.SetSetting(ctx, key, value) })
 }
 
 // MaxStamp returns MAX(items.stamp); it changes whenever XCA or this tool

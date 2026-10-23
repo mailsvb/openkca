@@ -15,20 +15,20 @@ import (
 
 // page is the data every template receives.
 type page struct {
-	Title  string // message key
-	Error  string // message key
-	Notice string // message key
-	CSRF   string
-	DB     *dbHeader
-	Tab    string
-	Data   map[string]any
-	Lang   string
+	Title     string // message key
+	Error     string // message key
+	Notice    string // message key
+	NoticeArg string // its argument, if any
+	CSRF      string
+	DB        *dbHeader
+	Tab       string
+	Data      map[string]any
+	Lang      string
 }
 
 type dbHeader struct {
-	Name     string
-	Schema   int
-	ReadOnly bool // schema below 8: upgrade arrives in phase 2
+	Name   string
+	Schema int
 }
 
 var tabs = []string{"keys", "requests", "certs", "templates", "crls"}
@@ -135,5 +135,5 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 }
 
 func header(ds *session.Session) *dbHeader {
-	return &dbHeader{Name: ds.DBName, Schema: ds.Handle.DB.Schema, ReadOnly: ds.Handle.DB.Schema < 8}
+	return &dbHeader{Name: ds.DBName, Schema: ds.Handle.DB.Schema}
 }

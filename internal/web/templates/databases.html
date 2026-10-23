@@ -23,8 +23,33 @@
     {{else}}
       <p class="muted">{{T (print "dbstatus.help." .Status)}}</p>
     {{end}}
+    {{if eq .Status "upgradable"}}<p class="muted small fullrow">{{T "dbstatus.help.upgradable"}}</p>{{end}}
   </li>
 {{end}}
 </ul>
-<p class="muted small">{{T "databases.phase2"}}</p>
+<div class="grid2">
+<section class="card">
+  <h2>{{T "create.heading"}}</h2>
+  <form method="post" action="/" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="new-name">{{T "create.name"}}</label>
+    <input type="text" id="new-name" name="name" required maxlength="64" pattern="[A-Za-z0-9_\-][A-Za-z0-9._\-]*" autocomplete="off">
+    <span class="muted small">{{T "create.namehelp"}}</span>
+    <label for="new-pw">{{T "create.password"}}</label>
+    <input type="password" id="new-pw" name="password" autocomplete="new-password">
+    <label for="new-pw2">{{T "create.password2"}}</label>
+    <input type="password" id="new-pw2" name="password2" autocomplete="new-password">
+    <button type="submit">{{T "create.submit"}}</button>
+  </form>
+</section>
+<section class="card">
+  <h2>{{T "import.heading"}}</h2>
+  <form class="stack" hx-post="/import" hx-encoding="multipart/form-data">
+    <label for="import-file">{{T "import.file"}}</label>
+    <input type="file" id="import-file" name="file" accept=".xdb" required>
+    <span class="muted small">{{T "import.help" .Data.MaxUploadMB}}</span>
+    <button type="submit">{{T "import.submit"}}</button>
+  </form>
+</section>
+</div>
 {{template "foot" .}}

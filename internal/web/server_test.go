@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -187,3 +189,71 @@ func TestLegacyRefused(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+func TestCreateImportUpgrade(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := client(t, ts)
+	csrf := login(t, ts, c)
+
+	// Create
+	r, _ := c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"pw1"}, "password2": {"pw2"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "create.error.mismatch") {
+		t.Fatalf("mismatch: %s", loc)
+	}
+	r, _ = c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"pw1"}, "password2": {"pw1"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
+		t.Fatalf("create: %s", loc)
+	}
+	r, _ = c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"pw1"}, "password2": {"pw1"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "create.error.exists") {
+		t.Fatalf("duplicate: %s", loc)
+	}
+	r, _ = c.PostForm(ts.URL+"/db/fresh/login", url.Values{"password": {"pw1"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); loc != "/db/fresh/" {
+		t.Fatalf("login to new db: %s", loc)
+	}
+
+	// Import: the multipart body needs the CSRF header.
+	data, _ := os.ReadFile("../../testdata/xdb/sample.xdb")
+	upload := func(withToken bool, filename string, content []byte) *http.Response {
+		var buf strings.Builder
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("file", filename)
+		fw.Write(content)
+		mw.Close()
+		req, _ := http.NewRequest("POST", ts.URL+"/import", strings.NewReader(buf.String()))
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("HX-Request", "true")
+		if withToken {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	if r := upload(false, "x.xdb", data); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("import without CSRF header: %d", r.StatusCode)
+	}
+	if r := upload(true, "uploaded.xdb", data); !strings.Contains(r.Header.Get("HX-Redirect"), "notice=imported&name=uploaded") {
+		t.Fatalf("import: %s", r.Header.Get("HX-Redirect"))
+	}
+	legacy, _ := os.ReadFile("../../testdata/xdb/legacy.xdb")
+	if r := upload(true, "old.xdb", legacy); !strings.Contains(r.Header.Get("HX-Redirect"), "import.error.legacy") {
+		t.Fatalf("legacy import: %s", r.Header.Get("HX-Redirect"))
+	}
+
+	// Login to the schema 7 import upgrades it after a backup.
+	r, _ = c.PostForm(ts.URL+"/db/uploaded/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); loc != "/db/uploaded/" {
+		t.Fatalf("login to imported db: %s", loc)
+	}
+	info, _ := srv.store.Lookup(context.Background(), "uploaded")
+	if info.Status != store.Supported || info.Schema != 8 {
+		t.Fatalf("after login: %+v", info)
+	}
+	if b, _ := srv.store.Backups("uploaded"); len(b) != 1 {
+		t.Fatalf("backups: %v", b)
+	}
+}

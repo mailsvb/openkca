@@ -99,6 +99,7 @@ func serve(args []string) error {
 	certFile := fs.String("tls-cert", "", "TLS certificate (PEM); default: self-issued certificate in <data-dir>/.go-ca/")
 	keyFile := fs.String("tls-key", "", "TLS private key (PEM) for --tls-cert")
 	idle := fs.Duration("idle-timeout", 30*time.Minute, "idle timeout of server and database sessions")
+	maxUpload := fs.Int64("max-upload", 256, "largest database file accepted for import, in MB")
 	fs.Parse(args)
 	if *dataDir == "" {
 		return errors.New("--data-dir is required")
@@ -125,7 +126,8 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv, err := web.New(web.Config{Store: st, PasswordHash: hash, Catalog: cat, IdleTimeout: *idle, Logger: log})
+	srv, err := web.New(web.Config{Store: st, PasswordHash: hash, Catalog: cat, IdleTimeout: *idle,
+		MaxUpload: *maxUpload << 20, Logger: log})
 	if err != nil {
 		return err
 	}

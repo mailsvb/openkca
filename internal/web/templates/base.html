@@ -31,10 +31,9 @@
   </form>
   {{end}}
 </header>
-{{if and .DB .DB.ReadOnly}}<p class="banner">{{T "db.readonly" .DB.Schema}}</p>{{end}}
 <main>
 {{if .Error}}<p class="error" role="alert">{{T .Error}}</p>{{end}}
-{{if .Notice}}<p class="notice">{{T .Notice}}</p>{{end}}
+{{if .Notice}}<p class="notice" role="status">{{if .NoticeArg}}{{T .Notice .NoticeArg}}{{else}}{{T .Notice}}{{end}}</p>{{end}}
 {{end}}
 
 {{define "foot"}}

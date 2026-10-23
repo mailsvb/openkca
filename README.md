@@ -7,21 +7,25 @@ desktop XCA.
 
 ## Status
 
-**Phase 1 of 6: read-only viewer.** It opens XCA databases and shows keys,
+**Phase 2 of 6: databases.** go-ca opens XCA databases and shows keys,
 certificate signing requests, certificates (as a tree under their issuers),
 templates, revocation lists and the shared options. It decrypts every private
-key on request, including XCA's legacy 3DES format and keys with their own
-password. Apart from upgrading an old password hash after a correct login,
-as XCA does, it writes nothing.
+key on request, including keys with their own password. On the login page you
+can create new databases and import existing `.xdb` files.
 
-Later phases add creating and importing databases, key and certificate
-generation, CA operations (revocation, CRLs, renewal), templates and every
-import and export format. See the implementation plan for details.
+Opening an older database (schema 5 to 7, written by XCA 2.6 or earlier)
+first saves a backup and then upgrades it to schema 8, as XCA 2.7 and later
+do; XCA 2.6 still opens the upgraded file. Private keys still in XCA's legacy
+3DES format are re-encrypted as PKCS#8 at the same time. Apart from that and
+upgrading an old password hash after a correct login, nothing is written yet.
+
+Later phases add key and certificate generation, CA operations (revocation,
+CRLs, renewal), templates and every import and export format.
 
 | XCA database                        | go-ca                                          |
 | ----------------------------------- | ---------------------------------------------- |
 | schema 8 (XCA 2.7 and later)        | supported                                      |
-| schema 5 to 7 (XCA 2.x up to 2.6)   | opened read-only; upgraded in phase 2          |
+| schema 5 to 7 (XCA 2.x up to 2.6)   | upgraded to 8 on first login, after a backup   |
 | schema below 5, pre-2.0 format      | refused                                        |
 | newer schema                        | refused until supported                        |
 
@@ -51,6 +55,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o go-ca ./cmd/go-ca
 | `--tls-cert`     |          | PEM certificate; without it a self-issued certificate is used    |
 | `--tls-key`      |          | PEM key for `--tls-cert`                                         |
 | `--idle-timeout` | `30m`    | idle timeout of server and database sessions                     |
+| `--max-upload`   | `256`    | largest database file accepted for import, in MB                 |
 
 Without `--tls-cert`, go-ca creates a self-signed certificate (CN `go-ca`,
 SANs `localhost`, `127.0.0.1`, `::1`, valid 365 days) on first start, reuses it
@@ -66,7 +71,13 @@ will warn about the name until you pass a certificate for the real host name.
 └── .go-ca/               server state (never listed)
     ├── server-password   argon2id hash
     ├── tls.crt, tls.key  self-issued certificate
+    └── backup/           <name>.<yyyyMMddHHmmss>.xdb, newest 10 per database
 ```
+
+A backup is written before every change that rewrites a whole database
+(schema upgrade, 3DES key conversion and, from phase 3, a database password
+change), using SQLite's `VACUUM INTO`, which copies within one read
+transaction.
 
 Two go-ca processes cannot open the same database (`flock` on the `.lock`
 file). Desktop XCA can keep the same file open: go-ca polls `MAX(items.stamp)`
