@@ -651,14 +651,14 @@ func (e *exporter) keys() error {
 				return err
 			}
 		}
+		var pw []byte
+		if f&codec.FCrypt != 0 {
+			if pw, err = e.password(); err != nil {
+				return err
+			}
+		}
 		switch {
 		case f&codec.FPEM != 0 && f&codec.FPrivate != 0:
-			var pw []byte
-			if f&codec.FCrypt != 0 {
-				if pw, err = e.password(); err != nil {
-					return err
-				}
-			}
 			b, err := codec.PrivatePEM(s, pw)
 			if err != nil {
 				return err
@@ -677,12 +677,6 @@ func (e *exporter) keys() error {
 		case f&codec.FDER != 0:
 			e.out.Write(k.Public)
 		case f&codec.FPKCS8 != 0:
-			var pw []byte
-			if f&codec.FCrypt != 0 {
-				if pw, err = e.password(); err != nil {
-					return err
-				}
-			}
 			der, err := e.h.privateDER(e.ctx, k, e.req.DBPass, e.req.Keys)
 			if err != nil {
 				return err
@@ -693,6 +687,28 @@ func (e *exporter) keys() error {
 				return err
 			}
 			e.out.Write(e.keyComment(k))
+			e.out.Write(b)
+		case f&codec.FOpenSSH != 0:
+			b, err := codec.OpenSSHPrivate(s, k.Comment, pw)
+			if err != nil {
+				return err
+			}
+			e.out.Write(b)
+		case f&codec.FPuTTY != 0 && f&codec.FPrivate != 0:
+			version := 3
+			if f&codec.FPPK2 != 0 {
+				version = 2
+			}
+			b, err := codec.PuTTYPrivate(s, k.Comment, version, pw)
+			if err != nil {
+				return err
+			}
+			e.out.Write(b)
+		case f&codec.FPuTTY != 0:
+			b, err := codec.RFC4716Public(r.pub, k.Comment)
+			if err != nil {
+				return err
+			}
 			e.out.Write(b)
 		case f&codec.FSSH2 != 0 && f&codec.FPrivate != 0:
 			b, err := codec.SSHPrivate(s)
