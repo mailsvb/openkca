@@ -1,0 +1,16 @@
+{{template "head" .}}
+<h1>{{T "newsshkey.heading"}}</h1>
+<section class="card">
+  <form method="post" action="/db/{{.DB.Name}}/new/sshkey" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="name">{{T "col.name"}}</label>
+    <input type="text" id="name" name="name" value="{{.Data.Name}}" required autofocus>
+    <label for="type">{{T "col.keytype"}}</label>
+    <select id="type" name="type">{{$t := .Data.Type}}{{range .Data.KeyChoices}}<option value="{{.Value}}"{{if eq .Value $t}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+    <label for="comment">{{T "newsshkey.comment"}}</label>
+    <input type="text" id="comment" name="comment" value="{{.Data.Comment}}" placeholder="{{T "newsshkey.comment.placeholder"}}">
+    <span class="muted small">{{T "newsshkey.help"}}</span>
+    <button type="submit">{{T "newkey.submit"}}</button>
+  </form>
+</section>
+{{template "foot" .}}

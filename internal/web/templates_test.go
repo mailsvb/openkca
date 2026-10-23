@@ -61,7 +61,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -117,6 +117,9 @@ func TestMessageKeys(t *testing.T) {
 	}
 	for _, u := range []string{"%", "D", "W"} {
 		keys = append(keys, "unit.sym."+u)
+	}
+	for _, f := range sshFlavors {
+		keys = append(keys, "sshkey.flavor."+f, "sshkey.flavor."+f+".help")
 	}
 	keys = append(keys, "keypw.error.mismatch", "keypw.error.current", "list.deleted.notice")
 	for _, k := range keys {

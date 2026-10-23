@@ -18,9 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"strings"
-
-	"golang.org/x/crypto/ssh"
 
 	"github.com/mailsvb/go-ca/internal/pki"
 )
@@ -89,43 +86,6 @@ func PKCS8PEM(der, password []byte) ([]byte, error) {
 		return nil, err
 	}
 	return PEM(PEMEncrypted, enc), nil
-}
-
-// SSHCompatible reports whether a public key has an OpenSSH encoding.
-func SSHCompatible(pub crypto.PublicKey) bool {
-	_, err := ssh.NewPublicKey(pub)
-	return err == nil
-}
-
-// SSHPublic writes an authorized_keys line: type, base64 key and the first
-// line of the comment (pki_key::SSH2publicQByteArray).
-func SSHPublic(pub crypto.PublicKey, comment string) ([]byte, error) {
-	k, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return nil, ErrUnsupportedKey
-	}
-	line := k.Type() + " " + base64.StdEncoding.EncodeToString(k.Marshal())
-	first, _, _ := strings.Cut(comment, "\n")
-	if c := strings.Join(strings.Fields(first), " "); c != "" {
-		line += " " + c
-	}
-	return []byte(line + "\n"), nil
-}
-
-// SSHPrivate writes a private key for OpenSSH: openssh-key-v1 for Ed25519,
-// traditional PEM for the others, as XCA does.
-func SSHPrivate(key crypto.Signer) ([]byte, error) {
-	if k, ok := key.(ed25519.PrivateKey); ok {
-		b, err := ssh.MarshalPrivateKey(k, "")
-		if err != nil {
-			return nil, err
-		}
-		return pem.EncodeToMemory(b), nil
-	}
-	if !SSHCompatible(key.Public()) {
-		return nil, ErrUnsupportedKey
-	}
-	return PrivatePEM(key, nil)
 }
 
 // JWKCurve returns the JWK curve name of a public key, "" if JWK cannot

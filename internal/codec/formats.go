@@ -1,6 +1,7 @@
 // Package codec converts between the objects of an XCA database and the
 // file formats XCA exports and imports: PEM, DER, PKCS#7, PKCS#8, PKCS#12,
-// SSH, PVK, JWK, vCalendar, OpenVPN, OpenSSL config and XCA templates.
+// OpenSSH, PuTTY, PVK, JWK, vCalendar, OpenVPN, OpenSSL config and XCA
+// templates.
 // It works on DER and Go keys only; it does not touch databases.
 package codec
 
@@ -33,10 +34,14 @@ const (
 	FMulti           // several items
 	FClipboard       // text that fits the clipboard
 	FUsual           // listed first
+	FOpenSSH         // OpenSSH's own private key format
+	FPuTTY           // PuTTY formats: PPK private key, RFC 4716 public key
+	FPPK2            // PPK format version 2
 )
 
-// Format is one export format. IDs are XCA's, so its names and the
-// "CertFormat"/"KeyFormat" settings map onto them.
+// Format is one export format. IDs below 100 are XCA's, so its names and
+// the "CertFormat"/"KeyFormat" settings map onto them; formats XCA lacks
+// start at 100.
 type Format struct {
 	ID    int
 	Type  int    // xdb.Type*
@@ -52,7 +57,7 @@ func (f Format) Text() bool {
 }
 
 // Formats follows XCA's pki_export::init_elements without the OpenVPN
-// tls-auth key.
+// tls-auth key, with go-ca's SSH formats next to XCA's.
 var Formats = []Format{
 	{1, xdb.TypeCert, "crt", "fmt.pem", "fmt.help.cert_pem", FPEM | FUsual | FSingle | FClipboard},
 	{3, xdb.TypeCert, "pem", "fmt.pem_selected", "fmt.help.cert_pem_selected", FPEM | FMulti},
@@ -80,6 +85,13 @@ var Formats = []Format{
 	{21, xdb.TypeKey, "pem", "fmt.pem_encrypted", "fmt.help.key_pem_encrypted", FPEM | FPrivate | FCrypt | FSingle | FTradition},
 	{22, xdb.TypeKey, "priv", "fmt.ssh2_private", "fmt.help.key_ssh2_private", FPrivate | FSSH2 | FSingle},
 	{23, xdb.TypeKey, "pub", "fmt.ssh2_public", "fmt.help.key_ssh2_public", FSSH2},
+	{100, xdb.TypeKey, "priv", "fmt.openssh_private", "fmt.help.key_openssh_private", FSSH2 | FOpenSSH | FPrivate | FSingle | FClipboard},
+	{101, xdb.TypeKey, "priv", "fmt.openssh_encrypted", "fmt.help.key_openssh_encrypted", FSSH2 | FOpenSSH | FPrivate | FCrypt | FSingle},
+	{102, xdb.TypeKey, "ppk", "fmt.ppk", "fmt.help.key_ppk", FSSH2 | FPuTTY | FPrivate | FSingle | FClipboard},
+	{103, xdb.TypeKey, "ppk", "fmt.ppk_encrypted", "fmt.help.key_ppk_encrypted", FSSH2 | FPuTTY | FPrivate | FCrypt | FSingle},
+	{104, xdb.TypeKey, "ppk", "fmt.ppk2", "fmt.help.key_ppk2", FSSH2 | FPuTTY | FPPK2 | FPrivate | FSingle},
+	{105, xdb.TypeKey, "ppk", "fmt.ppk2_encrypted", "fmt.help.key_ppk2_encrypted", FSSH2 | FPuTTY | FPPK2 | FPrivate | FCrypt | FSingle},
+	{106, xdb.TypeKey, "pub", "fmt.rfc4716_public", "fmt.help.key_rfc4716_public", FSSH2 | FPuTTY | FClipboard},
 	{24, xdb.TypeKey, "der", "fmt.der_public", "fmt.help.key_der_public", FDER | FSingle},
 	{25, xdb.TypeKey, "der", "fmt.der_private", "fmt.help.key_der_private", FDER | FPrivate | FSingle},
 	{26, xdb.TypeKey, "pvk", "fmt.pvk_private", "fmt.help.key_pvk", FPVK | FPrivate | FSingle},

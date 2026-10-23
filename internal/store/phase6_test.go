@@ -64,7 +64,7 @@ func buildSet(t *testing.T, s *Store, name string, pw []byte) pkiSet {
 	snap, _ := h.Snapshot(ctx)
 	p.crl = must(h.GenerateCRL(ctx, p.sub, DefaultCRLOptions(snap, findCert(snap, p.sub)), pw, nil))
 	p.tmpl = must(h.TemplateFromItem(ctx, p.leaf))
-	p.pubK = must(h.GenerateKey(ctx, "spare", pki.KeySpec{Type: "EC", Curve: "P-384"}, pw))
+	p.pubK = must(h.GenerateKey(ctx, "spare", "", pki.KeySpec{Type: "EC", Curve: "P-384"}, pw))
 	snap, _ = h.Snapshot(ctx)
 	p.leafKey = findCert(snap, p.leaf).KeyID
 	p.edKey = findCert(snap, p.edLeaf).KeyID
@@ -126,6 +126,19 @@ func TestExportAllFormats(t *testing.T) {
 	}
 	if _, err := ssh.ParseRawPrivateKey(files["ed-22.priv"]); err != nil {
 		t.Fatalf("ssh ed25519 private: %v", err)
+	}
+	// go-ca's SSH formats read back to the stored keys
+	for name, id := range map[string]int64{"www.example.org": p.leafKey, "ed": p.edKey} {
+		for _, f := range []string{"-100.priv", "-101.priv", "-102.ppk", "-103.ppk", "-104.ppk", "-105.ppk", "-106.pub"} {
+			r := codec.Probe(name+f, files[name+f], codec.ProbeOptions{Password: []byte("export")})
+			if len(r.Objects) != 1 || !bytes.Equal(r.Objects[0].DER, findKey(snap, id).Public) || (r.Objects[0].Private == nil) != (f == "-106.pub") {
+				t.Fatalf("%s%s: %+v", name, f, r)
+			}
+		}
+	}
+	if !bytes.Contains(files["ed-101.priv"], []byte("OPENSSH PRIVATE KEY")) || !bytes.Contains(files["ed-103.ppk"], []byte("Encryption: aes256-cbc")) ||
+		!bytes.HasPrefix(files["ed-104.ppk"], []byte("PuTTY-User-Key-File-2: ssh-ed25519\nEncryption: none\n")) {
+		t.Fatal("SSH formats: wrong variants")
 	}
 	if !bytes.Contains(files["www.example.org-17.ics"], []byte("BEGIN:VEVENT")) ||
 		bytes.Count(files["Sub_CA-18.ics"], []byte("BEGIN:VEVENT")) != 3 { // CA, valid leaf, CRL
@@ -199,6 +212,59 @@ func TestExportAllFormats(t *testing.T) {
 	if fmt.Sprint(got.DNSNames, got.IPAddresses, got.ExtKeyUsage, got.KeyUsage, got.BasicConstraintsValid, got.IsCA) !=
 		fmt.Sprint(orig.DNSNames, orig.IPAddresses, orig.ExtKeyUsage, orig.KeyUsage, orig.BasicConstraintsValid, orig.IsCA) {
 		t.Fatalf("conf export: extensions differ\n%s", files["www.example.org-38.conf"])
+	}
+}
+
+func TestSSHExportImport(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	pw := []byte("pw")
+	if err := s.Create(ctx, "sshc", pw); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := load(t, s, "sshc")
+	id, err := h.GenerateKey(ctx, "laptop", "user@laptop  key\nsecond line", pki.KeySpec{Type: "Ed25519"}, pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []int{23, 100, 102, 106} {
+		res, err := h.Export(ctx, ExportRequest{Format: f, IDs: []int64{id}, DBPass: pw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := codec.Probe(res.Filename, res.Data, codec.ProbeOptions{})
+		if len(r.Objects) != 1 || r.Objects[0].Comment != "user@laptop key" || r.Objects[0].Name != "user@laptop key" {
+			t.Fatalf("format %d: %+v\n%s", f, r, res.Data)
+		}
+	}
+	if _, err := h.Export(ctx, ExportRequest{Format: 103, IDs: []int64{id}, DBPass: pw}); err != ErrNeedExportPassword {
+		t.Fatalf("encrypted PPK without password: %v", err)
+	}
+	// into another database: the public key, then the PuTTY file completes it
+	if err := s.Create(ctx, "sshd", pw); err != nil {
+		t.Fatal(err)
+	}
+	dst, _ := load(t, s, "sshd")
+	for _, c := range []struct {
+		format int
+		action string
+	}{{106, ImportNew}, {103, ImportComplete}} {
+		res, err := h.Export(ctx, ExportRequest{Format: c.format, IDs: []int64{id}, Password: []byte("export"), DBPass: pw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := codec.Probe(res.Filename, res.Data, codec.ProbeOptions{Password: []byte("export")})
+		plans, err := dst.PlanImport(ctx, r.Objects)
+		if err != nil || len(plans) != 1 || plans[0].Action != c.action {
+			t.Fatalf("format %d: %v %+v", c.format, err, plans)
+		}
+		if _, err := dst.Import(ctx, plans, []int{0}, pw, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, _ := dst.Snapshot(ctx)
+	if len(snap.Keys) != 1 || !snap.Keys[0].HasPrivate || snap.Keys[0].Name != "user@laptop key" || !strings.HasPrefix(snap.Keys[0].Comment, "user@laptop key") {
+		t.Fatalf("imported: %+v", snap.Keys[0])
 	}
 }
 

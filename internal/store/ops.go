@@ -76,22 +76,23 @@ func findRequest(snap *xdb.Snapshot, id int64) *xdb.Request {
 	return nil
 }
 
-// GenerateKey creates a key, encrypted with the database password.
-func (h *Handle) GenerateKey(ctx context.Context, name string, spec pki.KeySpec, dbPass []byte) (int64, error) {
+// GenerateKey creates a key with a comment, encrypted with the database
+// password.
+func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki.KeySpec, dbPass []byte) (int64, error) {
 	key, err := pki.GenerateKey(spec)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
-		id, err = insertGenerated(ctx, tx, name, key, dbPass)
+		id, err = insertGenerated(ctx, tx, name, comment, key, dbPass)
 		return err
 	})
 	h.changed(ctx)
 	return id, err
 }
 
-func insertGenerated(ctx context.Context, tx *xdb.Tx, name string, key crypto.Signer, dbPass []byte) (int64, error) {
+func insertGenerated(ctx context.Context, tx *xdb.Tx, name, comment string, key crypto.Signer, dbPass []byte) (int64, error) {
 	spki, err := x509.MarshalPKIXPublicKey(key.Public())
 	if err != nil {
 		return 0, err
@@ -101,7 +102,7 @@ func insertGenerated(ctx context.Context, tx *xdb.Tx, name string, key crypto.Si
 		return 0, err
 	}
 	typ, bits := pki.StoredKeyType(spki)
-	return tx.InsertKey(ctx, xdb.NewKey{Name: name, Source: 2, KeyType: typ, Len: bits, SPKI: spki,
+	return tx.InsertKey(ctx, xdb.NewKey{Name: name, Comment: comment, Source: 2, KeyType: typ, Len: bits, SPKI: spki,
 		Private: blob, OwnPass: xdb.PassCommon})
 }
 
@@ -380,7 +381,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 	var id int64
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
 		if generated != nil {
-			if _, err := insertGenerated(ctx, tx, p.Name, generated, dbPass); err != nil {
+			if _, err := insertGenerated(ctx, tx, p.Name, "", generated, dbPass); err != nil {
 				return err
 			}
 		}

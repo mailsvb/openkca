@@ -39,6 +39,16 @@ desktop XCA.
   certificate into a request, extract public keys, mark requests signed,
   rename, comment and delete items.
 
+**SSH keys**
+
+- Generate SSH keys (Ed25519, ECDSA, RSA) with an SSH comment. Every key
+  SSH can use has an SSH page with its `authorized_keys` line, its SSH
+  fingerprint and a download of the key pair as a ZIP archive: for
+  OpenSSH (private key and `.pub`), for PuTTY (`.ppk` version 3 and the
+  RFC 4716 public key) or for older PuTTY versions and WinSCP (`.ppk`
+  version 2), optionally protected by a passphrase.
+- SSH keys are ordinary keys of the database, so desktop XCA sees them.
+
 **Certificate authorities**
 
 - Revoke and unrevoke certificates, manage a CA's revocations (also of
@@ -63,10 +73,18 @@ desktop XCA.
   the `pkcs12_enc_algo` option), OpenVPN inline tags, OpenSSL config,
   vCalendar reminders, JSON Web Key and the OpenSSL index; keys as PEM
   (public, private, encrypted), DER, PKCS#8, SSH, PVK and JWK; requests,
-  CRLs and templates in their formats. Select several items in a list to
+  CRLs and templates in their formats.
+- Beyond XCA, keys also export as OpenSSH private keys with their comment
+  (plain or passphrase protected, as ssh-keygen writes them), as PuTTY
+  private keys (`.ppk` version 3 or 2, plain or encrypted) and as RFC 4716
+  public keys. The first line of a key's comment is its SSH comment. Select several items in a list to
   export them together; text formats can be shown and copied.
 - Import PEM (any number of blocks), DER, PKCS#7, PKCS#8, PKCS#12, SSH
-  keys, PVK, CRLs and XCA templates, from files or pasted text. Everything
+  keys (`authorized_keys` lines, RFC 4716 public keys, OpenSSH private
+  keys in any cipher ssh-keygen offers except 3DES and ChaCha20, PuTTY
+  `.ppk` files of version 2 and 3), PVK, CRLs and XCA templates, from
+  files or pasted text. An SSH key's comment becomes the item's comment
+  and suggested name. Everything
   found is listed for review, with names that can be changed, before
   anything is stored. As in XCA, existing items are skipped, a private key
   completes a stored public key and an imported CRL adds its revocations to
@@ -190,6 +208,10 @@ the build on untranslated text in a template or a missing message key.
 go test -race ./...
 ```
 
+Some tests compare against the `openssl`, `ssh-keygen` and `puttygen`
+command lines (`putty-tools` on Debian and Ubuntu) and are skipped where
+those are missing.
+
 `testdata/xdb/` holds databases generated with the real XCA command line and
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
 password, schema 8 and 9, a pre-2.0 file). Regenerate them with
@@ -198,7 +220,8 @@ password, schema 8 and 9, a pre-2.0 file). Regenerate them with
 the XCA command line list them, sign CRLs with go-ca CAs and over
 revocations go-ca recorded, and add a key.
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
-and lets the XCA command line import each file.
+and lets the XCA command line import each file, except go-ca's own SSH
+formats.
 
 Third-party code: [htmx](https://htmx.org) 2.0.11 (BSD Zero Clause License,
 `internal/web/static/htmx.LICENSE`).
