@@ -12,9 +12,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -32,4 +32,13 @@ jobs:
 
       # Some tests compare against the openssl command line; the runner has it.
       - name: Test
-        run: go test -race -count=1 ./...
+        run: |
+          echo "::notice title=openssl::$(openssl version)"
+          set +e
+          go test -race -count=1 ./... 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          # failing tests as annotations, readable without the full log
+          grep -E -A8 '^\s*--- FAIL|^FAIL|panic:' test.log | head -60 | while IFS= read -r line; do
+            echo "::error title=go test::$line"
+          done
+          exit "$status"
