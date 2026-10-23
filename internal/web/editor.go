@@ -1,7 +1,6 @@
 package web
 
 import (
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -374,10 +373,10 @@ func similar(f *editorForm, snap *xdb.Snapshot, id int64) {
 	}
 	var subject []byte
 	var keyType string
-	if c, err := x509.ParseCertificate(der); err == nil {
+	if c, err := pki.ParseCertificate(der); err == nil {
 		subject = c.RawSubject
 		f.Ext = pki.SpecWithAdvanced(c.Extensions)
-		f.Hash = pki.HashName(c.SignatureAlgorithm)
+		f.Hash = pki.HashChoice(c.Raw)
 		days := int(c.NotAfter.Sub(c.NotBefore).Hours()/24 + 0.5)
 		f.ValidN, f.ValidUnit = days, "d"
 		f.NoExpiry = c.NotAfter.Year() == 9999
@@ -385,10 +384,10 @@ func similar(f *editorForm, snap *xdb.Snapshot, id int64) {
 		if keyType == "RSA" {
 			f.NewKey = fmt.Sprintf("RSA:%d", pki.DescribePublicKey(c.RawSubjectPublicKeyInfo).Bits)
 		}
-	} else if r, err := x509.ParseCertificateRequest(der); err == nil {
+	} else if r, err := pki.ParseCertificateRequest(der); err == nil {
 		subject = r.RawSubject
 		f.Ext = pki.SpecWithAdvanced(r.Extensions)
-		f.Hash = pki.HashName(r.SignatureAlgorithm)
+		f.Hash = pki.HashChoice(r.Raw)
 		keyType = pki.DescribePublicKey(r.RawSubjectPublicKeyInfo).Algorithm
 	}
 	switch keyType {

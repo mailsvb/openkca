@@ -70,7 +70,7 @@ func refOf(snap *xdb.Snapshot, id int64) *itemRef {
 	for _, c := range snap.Certs {
 		if c.ID == id {
 			r := &itemRef{typ: xdb.TypeCert, item: &c.Item, cert: c}
-			if x, err := x509.ParseCertificate(c.DER); err == nil {
+			if x, err := pki.ParseCertificate(c.DER); err == nil {
 				r.pub, r.pubSPKI = x.PublicKey, x.RawSubjectPublicKeyInfo
 			}
 			return r
@@ -555,14 +555,14 @@ func (e *exporter) certs() error {
 		if err != nil {
 			return err
 		}
-		cert, err := x509.ParseCertificate(first.DER)
+		cert, err := pki.ParseCertificate(first.DER)
 		if err != nil {
 			return err
 		}
 		var extra []*x509.Certificate
 		if f&codec.FChain != 0 {
 			for _, c := range chain(e.snap, first)[1:] {
-				if x, err := x509.ParseCertificate(c.DER); err == nil {
+				if x, err := pki.ParseCertificate(c.DER); err == nil {
 					extra = append(extra, x)
 				}
 			}
@@ -615,7 +615,7 @@ func (e *exporter) certs() error {
 		}
 		e.vcal(ev)
 	case f&codec.FConfig != 0:
-		x, err := x509.ParseCertificate(first.DER)
+		x, err := pki.ParseCertificate(first.DER)
 		if err != nil {
 			return err
 		}
@@ -778,7 +778,7 @@ func (e *exporter) requests() error {
 		switch {
 		case f&codec.FPEM != 0:
 			if e.req.PEMComment {
-				if x, err := x509.ParseCertificateRequest(q.DER); err == nil {
+				if x, err := pki.ParseCertificateRequest(q.DER); err == nil {
 					e.out.Write(codec.Comment(q.Name, q.Comment, codec.RFC2253(x.RawSubject)))
 				}
 			}
@@ -786,7 +786,7 @@ func (e *exporter) requests() error {
 		case f&codec.FDER != 0:
 			e.out.Write(q.DER)
 		case f&codec.FConfig != 0:
-			x, err := x509.ParseCertificateRequest(q.DER)
+			x, err := pki.ParseCertificateRequest(q.DER)
 			if err != nil {
 				return err
 			}

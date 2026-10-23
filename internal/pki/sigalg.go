@@ -274,6 +274,35 @@ func SignatureAlgorithmName(der []byte) string {
 	return sigAlgName(sd.Algorithm)
 }
 
+// HashChoice reads the hash choice of Hashes back from a DER certificate,
+// request or CRL (for "Similar", renewal and "to request"), also for PSS
+// parameters crypto/x509 does not name. Algorithms without a hash choice
+// give "sha256".
+func HashChoice(der []byte) string {
+	var sd signedData
+	if _, err := asn1.Unmarshal(der, &sd); err != nil {
+		return "sha256"
+	}
+	oid := sd.Algorithm.Algorithm
+	h := hashOfSigRSA[oid.String()]
+	if h == 0 {
+		h = hashOfSigECDSA[oid.String()]
+	}
+	suffix := ""
+	if oid.Equal(oidRSAPSS) {
+		if p, err := parsePSSParams(sd.Algorithm.Parameters.FullBytes); err == nil {
+			h, suffix = p.Hash, "-pss"
+		}
+	}
+	switch h {
+	case crypto.SHA384:
+		return "sha384" + suffix
+	case crypto.SHA512:
+		return "sha512" + suffix
+	}
+	return "sha256" + suffix
+}
+
 func sigAlgName(ai pkix.AlgorithmIdentifier) string {
 	oid := ai.Algorithm
 	switch {

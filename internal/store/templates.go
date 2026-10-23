@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"strings"
@@ -83,7 +82,7 @@ var placeholder []byte
 func placeholderSPKI() []byte {
 	if placeholder == nil {
 		k, _ := pki.GenerateKey(pki.KeySpec{Type: "Ed25519"})
-		placeholder, _ = x509.MarshalPKIXPublicKey(k.Public())
+		placeholder, _ = pki.MarshalPublicKey(k.Public())
 	}
 	return placeholder
 }
@@ -127,7 +126,7 @@ func (h *Handle) TemplateFromItem(ctx context.Context, id int64) (int64, error) 
 	}
 	d := TemplateData{Source: 3}
 	if c := findCert(snap, id); c != nil {
-		cc, err := x509.ParseCertificate(c.DER)
+		cc, err := pki.ParseCertificate(c.DER)
 		if err != nil {
 			return 0, err
 		}
@@ -139,7 +138,7 @@ func (h *Handle) TemplateFromItem(ctx context.Context, id int64) (int64, error) 
 			d.Validity.N, d.Validity.Unit = tmpl.ValidityFromDates(int(cc.NotAfter.Sub(cc.NotBefore).Hours() / 24))
 		}
 	} else if r := findRequest(snap, id); r != nil {
-		rr, err := x509.ParseCertificateRequest(r.DER)
+		rr, err := pki.ParseCertificateRequest(r.DER)
 		if err != nil {
 			return 0, err
 		}

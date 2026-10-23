@@ -31,10 +31,9 @@ type dsaPrivate struct {
 	P, Q, G, Y, X *big.Int
 }
 
-// ParsePublic parses a SubjectPublicKeyInfo; Go's parser handles RSA, NIST
-// EC, Ed25519, X25519 and DSA.
+// ParsePublic parses a SubjectPublicKeyInfo of any algorithm pki knows.
 func ParsePublic(spki []byte) (crypto.PublicKey, error) {
-	return x509.ParsePKIXPublicKey(spki)
+	return pki.ParsePublicKey(spki)
 }
 
 // Traditional returns OpenSSL's "traditional" encoding of a private key
@@ -45,7 +44,7 @@ func Traditional(key crypto.Signer) (typ string, der []byte, err error) {
 	case *rsa.PrivateKey:
 		return pemRSAPrivate, x509.MarshalPKCS1PrivateKey(k), nil
 	case *ecdsa.PrivateKey:
-		der, err = x509.MarshalECPrivateKey(k)
+		der, err = pki.MarshalECPrivateKey(k) // SEC 1 on every curve, Brainpool included
 		return pemECPrivate, der, err
 	case pki.DSAKey:
 		der, err = asn1.Marshal(dsaPrivate{P: k.P, Q: k.Q, G: k.G, Y: k.Y, X: k.X})
@@ -243,6 +242,8 @@ func dsaFromParts(p, q, g, x *big.Int) pki.DSAKey {
 
 func keyTypeName(pub crypto.PublicKey) string {
 	switch p := pub.(type) {
+	case *pki.RSAPSSPublicKey:
+		return "RSA-PSS"
 	case *rsa.PublicKey:
 		return "RSA"
 	case *ecdsa.PublicKey:
@@ -255,6 +256,10 @@ func keyTypeName(pub crypto.PublicKey) string {
 		if p.Curve() == ecdh.X25519() {
 			return "X25519"
 		}
+	}
+	// Ed448, X448 and the post-quantum keys: the algorithm or parameter set
+	if spki, err := pki.MarshalPublicKey(pub); err == nil {
+		return pki.DescribePublicKey(spki).Algorithm
 	}
 	return fmt.Sprintf("%T", pub)
 }

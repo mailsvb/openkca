@@ -2,8 +2,7 @@ package codec
 
 import (
 	"bytes"
-	"crypto"
-	"crypto/dsa" //nolint:staticcheck // DSA keys exist in old databases
+	"crypto" //nolint:staticcheck // DSA keys exist in old databases
 	"crypto/ed25519"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -150,7 +149,7 @@ func (p *prober) pemBlock(b *pem.Block) {
 		p.publicKey(b.Bytes)
 	case "RSA PUBLIC KEY":
 		if k, err := x509.ParsePKCS1PublicKey(b.Bytes); err == nil {
-			if der, err := x509.MarshalPKIXPublicKey(k); err == nil {
+			if der, err := pki.MarshalPublicKey(k); err == nil {
 				p.publicKey(der)
 				return
 			}
@@ -202,9 +201,9 @@ func (p *prober) der(data []byte) {
 	}
 	der := raw.FullBytes
 	switch {
-	case parses(func() error { _, err := x509.ParseCertificate(der); return err }):
+	case parses(func() error { _, err := pki.ParseCertificate(der); return err }):
 		p.cert(der)
-	case parses(func() error { _, err := x509.ParseCertificateRequest(der); return err }):
+	case parses(func() error { _, err := pki.ParseCertificateRequest(der); return err }):
 		p.request(der)
 	case parses(func() error { _, err := x509.ParseRevocationList(der); return err }):
 		p.crl(der)
@@ -216,11 +215,11 @@ func (p *prober) der(data []byte) {
 		p.encryptedPKCS8(der)
 	case parses(func() error { _, err := pki.ParsePKCS8(der); return err }) || pkcs8SPKI(der) != nil:
 		p.pkcs8(der)
-	case parses(func() error { _, err := x509.ParsePKIXPublicKey(der); return err }):
+	case parses(func() error { _, err := pki.ParsePublicKey(der); return err }):
 		p.publicKey(der)
 	case parses(func() error { _, err := x509.ParsePKCS1PrivateKey(der); return err }):
 		p.traditional(pemRSAPrivate, der)
-	case parses(func() error { _, err := x509.ParseECPrivateKey(der); return err }):
+	case parses(func() error { _, err := pki.ParseECPrivateKey(der); return err }) || sec1ToPKCS8(der) != nil:
 		p.traditional(pemECPrivate, der)
 	case parses(func() error { var k dsaPrivate; _, err := asn1.Unmarshal(der, &k); return err }):
 		p.traditional(pemDSAPrivate, der)
@@ -266,7 +265,7 @@ func (p *prober) x509Name(name []byte) string {
 }
 
 func (p *prober) cert(der []byte) {
-	c, err := x509.ParseCertificate(der)
+	c, err := pki.ParseCertificate(der)
 	if err != nil {
 		p.skip("certificate: %v", err)
 		return
@@ -275,7 +274,7 @@ func (p *prober) cert(der []byte) {
 }
 
 func (p *prober) request(der []byte) {
-	r, err := x509.ParseCertificateRequest(der)
+	r, err := pki.ParseCertificateRequest(der)
 	if err != nil {
 		p.skip("request: %v", err)
 		return
@@ -399,7 +398,7 @@ func (p *prober) traditional(typ string, der []byte) {
 	case pemRSAPrivate:
 		key, err = x509.ParsePKCS1PrivateKey(der)
 	case pemECPrivate:
-		if key, err = x509.ParseECPrivateKey(der); err != nil {
+		if key, err = pki.ParseECPrivateKey(der); err != nil {
 			if pk8 := sec1ToPKCS8(der); pk8 != nil {
 				p.privateKey(pk8, "", "") // a curve Go cannot compute with
 				return
@@ -602,29 +601,11 @@ func (p *prober) pvk(data []byte) {
 	p.privateKey(der, "", "")
 }
 
-// marshalSPKI encodes a public key, DSA included.
-// MarshalSPKI encodes a public key as SubjectPublicKeyInfo, including DSA
-// keys, which crypto/x509 no longer writes.
+// MarshalSPKI encodes a public key as SubjectPublicKeyInfo, for every
+// algorithm pki knows, DSA included.
 func MarshalSPKI(pub crypto.PublicKey) ([]byte, error) { return marshalSPKI(pub) }
 
-func marshalSPKI(pub crypto.PublicKey) ([]byte, error) {
-	if k, ok := pub.(*dsa.PublicKey); ok {
-		params, err := asn1.Marshal(struct{ P, Q, G any }{k.P, k.Q, k.G})
-		if err != nil {
-			return nil, err
-		}
-		y, err := asn1.Marshal(k.Y)
-		if err != nil {
-			return nil, err
-		}
-		return asn1.Marshal(struct {
-			Algo pkix.AlgorithmIdentifier
-			Key  asn1.BitString
-		}{pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10040, 4, 1}, Parameters: asn1.RawValue{FullBytes: params}},
-			asn1.BitString{Bytes: y, BitLength: 8 * len(y)}})
-	}
-	return x509.MarshalPKIXPublicKey(pub)
-}
+func marshalSPKI(pub crypto.PublicKey) ([]byte, error) { return pki.MarshalPublicKey(pub) }
 
 // pkcs8SPKI derives the SubjectPublicKeyInfo of a PKCS#8 key, also for EC
 // curves Go cannot compute with (from the public key inside the SEC 1

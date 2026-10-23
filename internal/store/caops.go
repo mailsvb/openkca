@@ -162,7 +162,7 @@ func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, dbPa
 	if err != nil {
 		return 0, err
 	}
-	cc, err := x509.ParseCertificate(ca.DER)
+	cc, err := pki.ParseCertificate(ca.DER)
 	if err != nil {
 		return 0, err
 	}
@@ -244,13 +244,13 @@ func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, dbPass
 	if err != nil {
 		return 0, err
 	}
-	oc, err := x509.ParseCertificate(old.DER)
+	oc, err := pki.ParseCertificate(old.DER)
 	if err != nil {
 		return 0, err
 	}
 	var issuer *x509.Certificate
 	if !self {
-		if issuer, err = x509.ParseCertificate(signer.DER); err != nil {
+		if issuer, err = pki.ParseCertificate(signer.DER); err != nil {
 			return 0, err
 		}
 	}
