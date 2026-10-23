@@ -154,10 +154,14 @@ func ValidPGPUserID(s string) bool {
 	return true
 }
 
-// PGPCompatible reports whether a key can be an OpenPGP key of the
+// PGPCompatible reports whether go-ca can make a key an OpenPGP key of the
 // version: a primary key or signing subkey (encrypt false) or an
-// encryption subkey (encrypt true).
+// encryption subkey (encrypt true). DSA keys, which go-ca cannot sign
+// with, only come in with imported keys.
 func PGPCompatible(pub crypto.PublicKey, version int, encrypt bool) bool {
+	if _, ok := pub.(*dsa.PublicKey); ok {
+		return false
+	}
 	_, err := pgpPublicKey(pub, time.Unix(0, 0), version == 6, encrypt)
 	return err == nil
 }

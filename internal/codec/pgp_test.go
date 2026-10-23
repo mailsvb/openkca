@@ -132,6 +132,9 @@ func TestPGPRejects(t *testing.T) {
 	if _, err := NewPGPCert(ed, nil, PGPParams{Version: 4, UIDs: []string{"a\nb"}, Created: now}); err == nil {
 		t.Error("user ID with a line break accepted")
 	}
+	if !PGPCompatible(ed.Public(), 4, false) || PGPCompatible(ed.Public(), 4, true) || !PGPCompatible(x.Public(), 6, true) || PGPCompatible(x.Public(), 6, false) {
+		t.Error("PGPCompatible")
+	}
 	if _, err := NewPGPCert(ed, nil, PGPParams{Version: 6, Created: now}); err != nil {
 		t.Errorf("v6 key without user ID: %v", err)
 	}
