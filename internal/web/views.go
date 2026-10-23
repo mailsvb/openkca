@@ -655,7 +655,7 @@ var optionKeys = []struct {
 	{"serial_len", "opt.serial_len", "64", "select", serialLens, ""},
 	{"cert_expiry", "opt.cert_expiry", "80%", "expiry", nil, "%DW"},
 	{"ical_expiry", "opt.ical_expiry", "1W", "expiry", nil, "DW"},
-	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", "PBE-SHA1-3DES", "select", []string{"PBE-SHA1-3DES", "AES-256-CBC", "PBE-SHA1-RC2-40"}, ""},
+	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", codec.PKCS12Algorithms[0], "select", codec.PKCS12Algorithms, ""},
 	{"disable_netscape", "opt.disable_netscape", "no", "bool", nil, ""},
 	{"no_expire_colors", "opt.no_expire_colors", "no", "bool", nil, ""},
 	{"hide_unusable", "opt.hide_unusable", "no", "bool", nil, ""},

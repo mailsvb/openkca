@@ -14,14 +14,17 @@ type PrepareReport struct {
 	UpgradedFrom  int    // schema setting before the upgrade, 0 if none
 	ConvertedKeys int    // legacy 3DES keys re-encrypted as PKCS#8
 	OwnPassLegacy int    // legacy keys with their own password, left as they are
+	Strengthened  int    // PKCS#8 keys re-encrypted with pki.PBKDF2Iterations
 }
 
 // PrepareAfterLogin runs after a successful database login. It converts an
 // XCA database (schema 5 to 8) or an older go-ca database to the current
 // go-ca schema and re-encrypts private keys still in XCA's legacy 3DES form
-// as PKCS#8. Both rewrite the file, so a backup is taken first (once for
-// both). Keys with their own password cannot be converted without it and
-// are left alone, as in XCA.
+// as PKCS#8. Keys under the database password whose PBKDF2 iteration count
+// is below pki.PBKDF2Iterations (XCA writes 2048) are re-encrypted with the
+// current count. All of this rewrites the file, so a backup is taken first
+// (once). Keys with their own password cannot be converted without it and
+// are left alone; they get the current count when their password is set.
 func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (PrepareReport, error) {
 	h.prepMu.Lock()
 	defer h.prepMu.Unlock()
@@ -30,18 +33,54 @@ func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (Prepar
 	if err != nil {
 		return rep, err
 	}
-	var legacy []xdb.PrivateKeyRow
+	// Re-encrypt before the backup and the write transaction: each key costs
+	// a full PBKDF2 run in each direction, and a weak key that does not open
+	// with the database password must not cause a backup on every login.
+	type update struct {
+		row  xdb.PrivateKeyRow
+		blob []byte
+	}
+	var updates []update
+	reencrypt := func(r xdb.PrivateKeyRow) (bool, error) {
+		pw := password
+		if r.OwnPass == xdb.PassBogus {
+			pw = []byte("Bogus")
+		}
+		key, _, err := pki.DecryptPrivateKey(r.Blob, r.KeyType, pw)
+		if err != nil {
+			return false, err
+		}
+		blob, err := pki.EncryptPrivateKey(key, pw)
+		if err != nil {
+			return false, err
+		}
+		updates = append(updates, update{r, blob})
+		return true, nil
+	}
 	for _, r := range rows {
-		if pki.IsEncryptedPKCS8(r.Blob) || r.OwnPass == xdb.PassPIN {
+		if r.OwnPass == xdb.PassPIN {
+			continue
+		}
+		if pki.IsEncryptedPKCS8(r.Blob) {
+			n, ok := pki.PKCS8Iterations(r.Blob)
+			if !ok || n >= pki.PBKDF2Iterations || r.OwnPass == xdb.PassPrivate {
+				continue
+			}
+			if done, _ := reencrypt(r); done { // optional: a key that does not open stays as it is
+				rep.Strengthened++
+			}
 			continue
 		}
 		if r.OwnPass == xdb.PassPrivate {
 			rep.OwnPassLegacy++
 			continue
 		}
-		legacy = append(legacy, r)
+		if _, err := reencrypt(r); err != nil {
+			return rep, fmt.Errorf("legacy key %d: %w", r.ID, err)
+		}
+		rep.ConvertedKeys++
 	}
-	if h.DB.Current() && len(legacy) == 0 {
+	if h.DB.Current() && len(updates) == 0 {
 		return rep, nil
 	}
 	if rep.Backup, err = h.Backup(ctx); err != nil {
@@ -54,26 +93,14 @@ func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (Prepar
 		}
 		rep.UpgradedFrom = from
 	}
-	if len(legacy) > 0 {
+	if len(updates) > 0 {
 		err := h.DB.Write(ctx, func(tx *xdb.Tx) error {
-			for _, r := range legacy {
-				pw := password
-				if r.OwnPass == xdb.PassBogus {
-					pw = []byte("Bogus")
-				}
-				key, _, err := pki.DecryptPrivateKey(r.Blob, r.KeyType, pw)
-				if err != nil {
-					return fmt.Errorf("legacy key %d: %w", r.ID, err)
-				}
-				blob, err := pki.EncryptPrivateKey(key, pw)
-				if err != nil {
-					return err
-				}
-				if err := tx.UpdatePrivateKey(ctx, r.ID, blob, r.OwnPass); err != nil {
+			for _, u := range updates {
+				if err := tx.UpdatePrivateKey(ctx, u.row.ID, u.blob, u.row.OwnPass); err != nil {
 					return err
 				}
 			}
-			if rep.OwnPassLegacy == 0 {
+			if rep.ConvertedKeys > 0 && rep.OwnPassLegacy == 0 {
 				return tx.SetSetting(ctx, "legacy-keys-updated", "yes")
 			}
 			return nil
@@ -81,7 +108,6 @@ func (h *Handle) PrepareAfterLogin(ctx context.Context, password []byte) (Prepar
 		if err != nil {
 			return rep, fmt.Errorf("%w (backup: %s)", err, rep.Backup)
 		}
-		rep.ConvertedKeys = len(legacy)
 	}
 	h.changed(ctx)
 	return rep, nil

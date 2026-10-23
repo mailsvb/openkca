@@ -405,7 +405,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if rep.Backup != "" {
 		s.log.Info("database prepared", "db", name, "backup", rep.Backup, "upgraded_from", rep.UpgradedFrom,
-			"converted_keys", rep.ConvertedKeys)
+			"converted_keys", rep.ConvertedKeys, "strengthened_keys", rep.Strengthened)
 	}
 	if rep.OwnPassLegacy > 0 {
 		s.log.Warn("legacy keys with their own password left unconverted", "db", name, "count", rep.OwnPassLegacy)

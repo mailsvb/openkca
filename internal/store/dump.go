@@ -3,13 +3,13 @@ package store
 import (
 	"archive/zip"
 	"context"
-	"errors"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
@@ -18,7 +18,8 @@ import (
 // XCA's "Dump database": folders keys, requests, certificates, crls and
 // templates with one PEM file per item, named after the item
 // (get_dump_filename). Private keys are written encrypted with the
-// database password, as XCA does; keys with their own password keep it.
+// database password, as XCA does but as encrypted PKCS#8; keys with their
+// own password keep it.
 // OpenPGP certificates are written next to their primary keys as armored
 // public keys.
 func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
@@ -98,33 +99,27 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
 	return z.Close()
 }
 
-// dumpKey is pki_evp::writeDefault: traditional PEM encrypted with the
-// database password. Keys go-ca cannot re-encrypt (own password, curves Go
-// does not support) are written as the stored encrypted PKCS#8.
+// dumpKey writes a private key encrypted with the database password, as
+// XCA's pki_evp::writeDefault does, but as encrypted PKCS#8 (PBES2 with
+// pki.PBKDF2Iterations) instead of XCA's traditional PEM: that one derives
+// its key with a single MD5 round, which would make the dump an easy way to
+// guess the database password. A stored key that is already encrypted that
+// way is written as it is, without decrypting it; keys with their own
+// password keep it.
 func (h *Handle) dumpKey(ctx context.Context, k *xdb.Key, dbPass []byte) ([]byte, error) {
-	if !k.HasPrivate {
+	if !k.HasPrivate || k.Token {
 		return codec.PEM(codec.PEMPublicKey, k.Public), nil
-	}
-	if k.Token {
-		return codec.PEM(codec.PEMPublicKey, k.Public), nil
-	}
-	if s, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, nil); err == nil {
-		if t := codec.KeyTypeName(s.Public()); t != "Ed25519" && t != "X25519" {
-			return codec.PrivatePEM(s, dbPass)
-		}
-	} else if !errors.Is(err, ErrNeedKeyPassword) {
-		if _, err := codec.ParsePublic(k.Public); err == nil {
-			return nil, err
-		}
 	}
 	blob, own, err := h.DB.PrivateKey(ctx, k.ID)
 	if err != nil {
 		return nil, err
 	}
-	if own == xdb.PassCommon || own == xdb.PassPrivate {
+	if own == xdb.PassPrivate {
 		return codec.PEM(codec.PEMEncrypted, blob), nil
 	}
-	// "Bogus" keys: re-encrypt with the database password
+	if n, ok := pki.PKCS8Iterations(blob); ok && n >= pki.PBKDF2Iterations && own == xdb.PassCommon {
+		return codec.PEM(codec.PEMEncrypted, blob), nil
+	}
 	der, err := h.privateDER(ctx, k, dbPass, nil)
 	if err != nil {
 		return nil, err

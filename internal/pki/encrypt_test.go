@@ -97,3 +97,36 @@ func TestX25519Key(t *testing.T) {
 		t.Fatal("PKCS#8 round trip changed the key")
 	}
 }
+
+// New keys get the shipped iteration count, which PKCS8Iterations reads
+// back and OpenSSL accepts.
+func TestPBKDF2Iterations(t *testing.T) {
+	if defaultIterations < 600_000 {
+		t.Fatalf("PBKDF2Iterations = %d, want at least 600000", defaultIterations)
+	}
+	PBKDF2Iterations = defaultIterations
+	t.Cleanup(func() { PBKDF2Iterations = 2048 })
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	pw := []byte("pw")
+	blob, err := EncryptPrivateKey(key, pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := PKCS8Iterations(blob); !ok || n != defaultIterations {
+		t.Fatalf("PKCS8Iterations = %d, %v", n, ok)
+	}
+	if _, _, err := DecryptPrivateKey(blob, "", pw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := PKCS8Iterations([]byte("not DER")); ok {
+		t.Fatal("PKCS8Iterations accepted garbage")
+	}
+	if _, err := exec.LookPath("openssl"); err != nil {
+		return
+	}
+	f := filepath.Join(t.TempDir(), "k.der")
+	os.WriteFile(f, blob, 0o600)
+	if out, err := exec.Command("openssl", "pkey", "-inform", "DER", "-in", f, "-passin", "pass:pw", "-noout").CombinedOutput(); err != nil {
+		t.Fatalf("openssl pkey: %v\n%s", err, out)
+	}
+}

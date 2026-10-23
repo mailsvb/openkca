@@ -14,13 +14,15 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// PBKDF2 parameters for new encrypted keys. OpenSSL 3 writes PBES2 with
-// PBKDF2-HMAC-SHA256 and 2048 iterations for i2d_PKCS8PrivateKey_bio with
-// AES-256-CBC, which is what XCA uses; we keep the scheme and the minimum.
-const (
-	PBKDF2Iterations = 2048
-	pbkdf2SaltLen    = 16
-)
+// PBKDF2Iterations is the iteration count for new encrypted keys, both in
+// the database and in encrypted PKCS#8 exports. The scheme is OpenSSL's
+// (PBES2, PBKDF2-HMAC-SHA256, AES-256-CBC), but OpenSSL and XCA write only
+// 2048 iterations, which is far too cheap to guess passwords against today.
+// 600 000 follows OWASP's recommendation for PBKDF2-HMAC-SHA256; OpenSSL,
+// Java and Windows read any count. Tests lower it.
+var PBKDF2Iterations = 600_000
+
+const pbkdf2SaltLen = 16
 
 // MarshalPKCS8 encodes a private key as an unencrypted PrivateKeyInfo,
 // including DSA and X25519 keys.

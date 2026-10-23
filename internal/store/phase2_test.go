@@ -220,3 +220,77 @@ func TestNewerGoCA(t *testing.T) {
 		t.Fatal("opened a newer go-ca database")
 	}
 }
+
+// Keys under the database password with fewer PBKDF2 iterations than
+// pki.PBKDF2Iterations are re-encrypted on login, once; keys with their own
+// password are left alone.
+func TestPrepareStrengthensKeys(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	h, _ := load(t, s, "variants")
+	if _, err := h.PrepareAfterLogin(ctx, []byte("secret")); err != nil {
+		t.Fatal(err)
+	}
+	old := pki.PBKDF2Iterations
+	pki.PBKDF2Iterations = 4096
+	t.Cleanup(func() { pki.PBKDF2Iterations = old })
+
+	snap, _ := h.Snapshot(ctx)
+	want, own := 0, map[int64]int{}
+	for _, k := range snap.Keys {
+		if !k.HasPrivate {
+			continue
+		}
+		blob, ownPass, _ := h.DB.PrivateKey(ctx, k.ID)
+		n, ok := pki.PKCS8Iterations(blob)
+		switch {
+		case !ok || n >= 4096:
+		case ownPass == xdb.PassPrivate:
+			own[k.ID] = n
+		default:
+			want++
+		}
+	}
+	if want == 0 {
+		t.Fatal("fixture has no key to strengthen")
+	}
+	rep, err := h.PrepareAfterLogin(ctx, []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Strengthened != want || rep.ConvertedKeys != 0 || rep.Backup == "" {
+		t.Fatalf("report %+v, want %d strengthened", rep, want)
+	}
+	snap, _ = h.Snapshot(ctx)
+	for _, k := range snap.Keys {
+		if !k.HasPrivate {
+			continue
+		}
+		blob, ownPass, _ := h.DB.PrivateKey(ctx, k.ID)
+		n, _ := pki.PKCS8Iterations(blob)
+		if ownPass == xdb.PassPrivate {
+			if was, ok := own[k.ID]; ok && n != was {
+				t.Errorf("%s: own-password key changed from %d to %d iterations", k.Name, was, n)
+			}
+			continue
+		}
+		if n < 4096 {
+			t.Errorf("%s: %d iterations", k.Name, n)
+		}
+		pw := "secret"
+		if ownPass == xdb.PassBogus {
+			pw = "Bogus"
+		}
+		priv, _, err := pki.DecryptPrivateKey(blob, k.KeyType, []byte(pw))
+		if err != nil {
+			t.Errorf("%s: %v", k.Name, err)
+			continue
+		}
+		if ok, _ := pki.MatchesPublic(priv, k.Public); !ok {
+			t.Errorf("%s: mismatch after re-encryption", k.Name)
+		}
+	}
+	if rep, err := h.PrepareAfterLogin(ctx, []byte("secret")); err != nil || rep.Backup != "" || rep.Strengthened != 0 {
+		t.Fatalf("second run %+v %v", rep, err)
+	}
+}

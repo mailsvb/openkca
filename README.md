@@ -20,6 +20,11 @@ XCA.
 - XCA databases are converted to go-ca's format on first login, after a
   backup (see the table below); private keys in XCA's legacy 3DES format
   are re-encrypted as PKCS#8.
+- Private keys are stored as encrypted PKCS#8 (PBES2, PBKDF2-HMAC-SHA256
+  with 600 000 iterations, AES-256-CBC). XCA writes only 2048 iterations;
+  keys under the database password are re-encrypted with the higher count
+  on login (after a backup), keys with their own password when it is next
+  set.
 
 **Keys, requests and certificates**
 
@@ -86,7 +91,8 @@ XCA.
 - Export in every format XCA offers except the OpenVPN tls-auth key:
   certificates as PEM, PEM chain, PEM with key (plain or PKCS#8), DER,
   PKCS#7 (single, selected, chain), PKCS#12 (with or without chain, using
-  the `pkcs12_enc_algo` option), OpenVPN inline tags, OpenSSL config,
+  the `pkcs12_enc_algo` option: AES-256-CBC by default, PBE-SHA1-3DES and
+  RC2-40 for old Windows and Java), OpenVPN inline tags, OpenSSL config,
   vCalendar reminders, JSON Web Key and the OpenSSL index; keys as PEM
   (public, private, encrypted), DER, PKCS#8, SSH, PVK and JWK; requests,
   CRLs and templates in their formats.

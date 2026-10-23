@@ -61,6 +61,24 @@ func IsEncryptedPKCS8(blob []byte) bool {
 	return err == nil && len(rest) == 0 && len(epki.Algo.Algorithm) > 0
 }
 
+// PKCS8Iterations returns the PBKDF2 iteration count of an
+// EncryptedPrivateKeyInfo; ok is false unless it uses PBES2 with PBKDF2.
+func PKCS8Iterations(blob []byte) (n int, ok bool) {
+	var epki encryptedPrivateKeyInfo
+	if rest, err := asn1.Unmarshal(blob, &epki); err != nil || len(rest) > 0 || !epki.Algo.Algorithm.Equal(oidPBES2) {
+		return 0, false
+	}
+	var p pbes2Params
+	if _, err := asn1.Unmarshal(epki.Algo.Parameters.FullBytes, &p); err != nil || !p.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
+		return 0, false
+	}
+	var kdf pbkdf2Params
+	if _, err := asn1.Unmarshal(p.KeyDerivationFunc.Parameters.FullBytes, &kdf); err != nil {
+		return 0, false
+	}
+	return kdf.IterationCount, true
+}
+
 // DecryptPKCS8 decrypts an EncryptedPrivateKeyInfo as written by OpenSSL's
 // i2d_PKCS8PrivateKey_bio (PBES2 with PBKDF2) and returns the DER
 // PrivateKeyInfo.

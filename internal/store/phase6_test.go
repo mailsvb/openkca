@@ -398,6 +398,9 @@ func TestDump(t *testing.T) {
 			r, _ := f.Open()
 			var b bytes.Buffer
 			b.ReadFrom(r)
+			if !bytes.Contains(b.Bytes(), []byte("BEGIN ENCRYPTED PRIVATE KEY")) || bytes.Contains(b.Bytes(), []byte("DEK-Info")) {
+				t.Fatalf("dumped key is not encrypted PKCS#8:\n%s", b.Bytes())
+			}
 			res := codec.Probe(f.Name, b.Bytes(), codec.ProbeOptions{Password: pw})
 			if len(res.Objects) != 1 || res.Objects[0].Private == nil {
 				t.Fatalf("dumped key: %+v", res)

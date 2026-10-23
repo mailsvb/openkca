@@ -11,19 +11,22 @@ import (
 )
 
 // PKCS12Algorithms are the values of the pkcs12_enc_algo setting
-// (OpenSSL short names, as XCA stores them). The first is XCA's default.
-var PKCS12Algorithms = []string{"PBE-SHA1-3DES", "AES-256-CBC", "PBE-SHA1-RC2-40"}
+// (OpenSSL short names, as XCA stores them). The first is go-ca's default,
+// as in OpenSSL 3; XCA defaults to PBE-SHA1-3DES, which is kept, like
+// RC2-40, only for software that cannot read anything else (Windows before
+// Server 2019 / Windows 10 1709, old Java and macOS versions).
+var PKCS12Algorithms = []string{"AES-256-CBC", "PBE-SHA1-3DES", "PBE-SHA1-RC2-40"}
 
 // PKCS12 writes a key, its certificate and further certificates as a
-// password protected PKCS#12 file. algo is a PKCS12Algorithms value: 3DES
-// for keys and certificates with a SHA-1 MAC; RC2-40 for the certificates
-// with a 3DES key, as XCA combines it; AES-256-CBC with PBKDF2 and a
-// SHA-256 MAC.
+// password protected PKCS#12 file. algo is a PKCS12Algorithms value:
+// AES-256-CBC with PBKDF2 and a SHA-256 MAC; 3DES for keys and certificates
+// with a SHA-1 MAC; RC2-40 for the certificates with a 3DES key, as XCA
+// combines it. An unknown value gets the default.
 func PKCS12(key crypto.Signer, cert *x509.Certificate, chain []*x509.Certificate, password, algo string) ([]byte, error) {
-	enc := pkcs12.LegacyDES
+	enc := pkcs12.Modern2023
 	switch algo {
-	case "AES-256-CBC":
-		enc = pkcs12.Modern2023
+	case "PBE-SHA1-3DES":
+		enc = pkcs12.LegacyDES
 	case "PBE-SHA1-RC2-40":
 		enc = pkcs12.LegacyRC2
 	}
