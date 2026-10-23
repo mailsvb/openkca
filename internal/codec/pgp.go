@@ -667,7 +667,7 @@ func pgpPrivateKey(pk *packet.PublicKey, key crypto.Signer) (*packet.PrivateKey,
 		if !ok {
 			return nil, ErrUnsupportedKey
 		}
-		secret = k
+		secret = pgpPrimeOrder(k)
 	case *dsa.PublicKey:
 		k, ok := key.(pki.DSAKey)
 		if !ok {
@@ -773,6 +773,19 @@ func pgpPrivateKey(pk *packet.PublicKey, key crypto.Signer) (*packet.PrivateKey,
 		return nil, ErrUnsupportedKey
 	}
 	return &packet.PrivateKey{PublicKey: *pk, PrivateKey: secret}, nil
+}
+
+// pgpPrimeOrder returns an RSA key whose primes go-crypto writes in the
+// order OpenPGP requires (RFC 9580, 5.5.5.1: p < q, u = p^-1 mod q).
+// go-crypto writes Primes[1] as p and Primes[0] as q, while Go generates
+// them in either order; GnuPG 2.4.8 makes bad signatures with p > q.
+func pgpPrimeOrder(k *rsa.PrivateKey) *rsa.PrivateKey {
+	if len(k.Primes) != 2 || k.Primes[1].Cmp(k.Primes[0]) < 0 {
+		return k
+	}
+	s := &rsa.PrivateKey{PublicKey: k.PublicKey, D: k.D, Primes: []*big.Int{k.Primes[1], k.Primes[0]}}
+	s.Precompute()
+	return s
 }
 
 // PGPGoPublic converts an OpenPGP key to a Go public key, for the

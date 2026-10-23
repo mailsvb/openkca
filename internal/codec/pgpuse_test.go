@@ -3,7 +3,10 @@ package codec
 import (
 	"bytes"
 	"crypto"
+	"crypto/rsa"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,4 +104,47 @@ func TestPGPUseNewAlgorithms(t *testing.T) {
 	if PGPCompatible(other.Public(), 6, false) {
 		t.Error("a composite without an OpenPGP algorithm is compatible")
 	}
+}
+
+// TestPGPRSAPrimeOrder exports an RSA key whose primes Go holds in the
+// order OpenPGP forbids: the secret key must have p < q, and GnuPG must
+// make good signatures with it.
+func TestPGPRSAPrimeOrder(t *testing.T) {
+	var key *rsa.PrivateKey
+	for key == nil {
+		k := genKey(t, pki.KeySpec{Type: "RSA", Bits: 2048}).(*rsa.PrivateKey)
+		if k.Primes[1].Cmp(k.Primes[0]) > 0 { // written as p > q without the fix
+			key = k
+		}
+	}
+	cert, err := NewPGPCert(key, nil, PGPParams{Version: 4, UIDs: []string{"RSA <rsa@example.org>"}, Created: time.Now().Add(-time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec, err := PGPSecret(cert, []crypto.Signer{key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	el, err := openpgp.ReadKeyRing(bytes.NewReader(sec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// go-crypto reads p into Primes[1] and q into Primes[0]
+	back := el[0].PrivateKey.PrivateKey.(*rsa.PrivateKey)
+	if back.Primes[1].Cmp(back.Primes[0]) >= 0 {
+		t.Fatal("the secret key has p > q")
+	}
+	if !sameKey(back, key) || back.D.Cmp(key.D) != 0 {
+		t.Fatal("the secret key changed")
+	}
+
+	g := newGnuPG(t)
+	g.must(sec, "--import")
+	info, _ := ParsePGPCert(cert)
+	msg := []byte("RSA prime order")
+	sig := g.must(msg, "--local-user", info.Keys[0].Fingerprint, "--detach-sign")
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "msg"), msg, 0o600)
+	os.WriteFile(filepath.Join(dir, "msg.sig"), sig, 0o600)
+	g.must(nil, "--verify", filepath.Join(dir, "msg.sig"), filepath.Join(dir, "msg"))
 }
