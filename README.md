@@ -5,66 +5,78 @@ written in Go. One statically linked binary serves the UI over HTTPS and works
 directly on XCA's SQLite `.xdb` files, so the same file keeps opening in
 desktop XCA.
 
-## Status
+## Features
 
-**All six phases are implemented.** go-ca opens, creates and imports XCA
-databases and shows keys, certificate signing requests,
-certificates (as a tree under their issuers), templates, revocation lists and
-the shared options. You can:
+**Databases**
 
-- generate RSA, ECDSA (P-256/384/521) and Ed25519 keys,
-- create CSRs and certificates in an editor modelled on XCA's: self-signed or
-  signed by a CA, from a CSR, with subject, validity, basic constraints, key
-  identifiers, key usage, extended key usage, alternative names (including
-  `DNS:copycn` and `email:copy`), CRL distribution points, AIA, name
-  constraints, OCSP must-staple and Netscape extensions, with a preview,
-- sign requests, create similar certificates and requests, transform a
+- Lists every `.xdb` file in the data folder; create new databases and
+  upload existing ones from the start page. Several databases can be open
+  at the same time, each with its own password.
+- Shows keys, certificate signing requests, certificates (as a tree under
+  their issuers), templates and revocation lists, with search, a column
+  chooser and expiry colours, plus XCA's shared options.
+- Writes everything the way XCA does (items, hashes, key and issuer links,
+  `stamp`), so a desktop XCA with the same file open picks the changes up,
+  and reloads when desktop XCA changes the file.
+- Older databases are upgraded after a backup (see the table below);
+  private keys in XCA's legacy 3DES format are re-encrypted as PKCS#8.
+
+**Keys, requests and certificates**
+
+- Generate RSA, ECDSA (P-256/384/521) and Ed25519 keys; give keys their own
+  password or reset it; check that a private key matches its public key.
+- Create requests and certificates in an editor modelled on XCA's:
+  self-signed or signed by a CA, from a request, with subject, validity,
+  basic constraints, key identifiers, key usage, extended key usage,
+  alternative names (including `DNS:copycn` and `email:copy`), CRL
+  distribution points, AIA, name constraints, OCSP must-staple and Netscape
+  extensions, with a preview.
+- Further extensions in OpenSSL configuration syntax (XCA's "advanced" tab):
+  certificate policies with qualifiers, policy constraints and mappings,
+  inhibitAnyPolicy, noCheck, dirName and otherName/UPN names, sections and
+  any extension as `DER:` or `ASN1:` value.
+- Sign requests, create similar certificates and requests, turn a
   certificate into a request, extract public keys, mark requests signed,
-- rename, comment and delete items, give keys their own password or reset it,
-  change the database password (after a backup) and edit the shared options,
-- revoke and unrevoke certificates, manage a CA's revocations (also of
-  serials not in the database), set CA properties (CRL interval, default
-  template), generate CRLs with XCA's options and renew certificates
-  (new or same serial, optionally revoking or deleting the old one),
-- create, edit and duplicate templates in XCA's format, apply them (all,
-  subject only or extensions only) when creating certificates and requests,
-  turn certificates and requests into templates; a CA's default template
-  applies when issuing with it,
-- add further extensions in OpenSSL configuration syntax (XCA's "advanced"
-  tab): certificate policies with qualifiers, policy constraints and
-  mappings, inhibitAnyPolicy, noCheck, dirName and otherName/UPN names,
-  sections, and any extension as `DER:` or `ASN1:` value,
-- export items in every format XCA offers (except the OpenVPN tls-auth
-  key): certificates as PEM, PEM chain, PEM with key (plain or PKCS#8),
-  DER, PKCS#7 (single, selected, chain), PKCS#12 (with or without chain,
-  using the `pkcs12_enc_algo` option), OpenVPN inline tags, OpenSSL config,
+  rename, comment and delete items.
+
+**Certificate authorities**
+
+- Revoke and unrevoke certificates, manage a CA's revocations (also of
+  serials not in the database), set the CRL interval and default template,
+  generate CRLs with XCA's options and renew certificates (new or same
+  serial, optionally revoking or deleting the old one).
+- An OpenSSL `ca` style index per CA in
+  `<data-dir>/index/<database>/<CA>/index.txt` (plus `index.txt.attr`),
+  kept current and usable directly with `openssl ocsp -index`.
+
+**Templates**
+
+- Create, edit and duplicate templates in XCA's format, apply them (all,
+  subject only or extensions only), turn certificates and requests into
+  templates; a CA's default template applies when issuing with it.
+
+**Import and export**
+
+- Export in every format XCA offers except the OpenVPN tls-auth key:
+  certificates as PEM, PEM chain, PEM with key (plain or PKCS#8), DER,
+  PKCS#7 (single, selected, chain), PKCS#12 (with or without chain, using
+  the `pkcs12_enc_algo` option), OpenVPN inline tags, OpenSSL config,
   vCalendar reminders, JSON Web Key and the OpenSSL index; keys as PEM
   (public, private, encrypted), DER, PKCS#8, SSH, PVK and JWK; requests,
-  CRLs and templates in their formats. Several items can be selected in the
-  lists, text formats can be shown and copied to the clipboard,
-- import files of any of these kinds (PEM with any number of blocks, DER,
-  PKCS#7, PKCS#8, PKCS#12, SSH keys, PVK, CRLs, XCA templates) or pasted PEM
-  text: everything found is listed for review, with names that can be
-  changed, before anything is stored. As in XCA, existing items are skipped,
-  a private key completes a stored public key and an imported CRL adds its
-  revocations to the CA,
-- download the whole database as a ZIP of PEM files (XCA's "Dump
-  database"),
-- generate Diffie-Hellman parameters in the background,
-- look up object identifiers in the OID resolver.
+  CRLs and templates in their formats. Select several items in a list to
+  export them together; text formats can be shown and copied.
+- Import PEM (any number of blocks), DER, PKCS#7, PKCS#8, PKCS#12, SSH
+  keys, PVK, CRLs and XCA templates, from files or pasted text. Everything
+  found is listed for review, with names that can be changed, before
+  anything is stored. As in XCA, existing items are skipped, a private key
+  completes a stored public key and an imported CRL adds its revocations to
+  the CA.
+- Download a whole database as a ZIP of PEM files (XCA's "Dump database").
 
-For every CA, go-ca keeps an OpenSSL `ca` style index current in
-`<data-dir>/index/<database>/<CA>/index.txt` (plus `index.txt.attr`),
-rewritten after every change and when desktop XCA changes the open
-database, usable directly with `openssl ocsp -index`.
+**Tools**
 
-Everything is written the way XCA writes it (items, hashes, key and issuer
-links, `stamp`), so a desktop XCA with the same file open picks it up.
-
-Opening an older database (schema 5 to 7, written by XCA 2.6 or earlier)
-first saves a backup and then upgrades it to schema 8, as XCA 2.7 and later
-do; XCA 2.6 still opens the upgraded file. Private keys still in XCA's legacy
-3DES format are re-encrypted as PKCS#8 at the same time.
+- Diffie-Hellman parameters (1024 to 4096 bit), generated in the background.
+- An OID resolver.
 
 | XCA database                        | go-ca                                          |
 | ----------------------------------- | ---------------------------------------------- |
@@ -73,20 +85,39 @@ do; XCA 2.6 still opens the upgraded file. Private keys still in XCA's legacy
 | schema below 5, pre-2.0 format      | refused                                        |
 | newer schema                        | refused until supported                        |
 
+XCA 2.6 still opens a database upgraded to schema 8.
+
+## Download
+
+Releases with binaries for Linux (amd64, arm64), Windows (amd64) and macOS
+(amd64, arm64) are on the
+[releases page](https://github.com/mailsvb/go-ca/releases). `go-ca version`
+prints the version of a binary.
+
 ## Build
 
 Requires Go 1.26 or later (the toolchain is downloaded automatically by older
 `go` commands). No C compiler is needed:
 
 ```sh
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o go-ca ./cmd/go-ca
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o go-ca ./cmd/go-ca
 ```
 
-GitHub Actions builds the binaries for Linux (amd64, arm64), Windows (amd64)
-and macOS (amd64, arm64) on every push to `main` (`.github/workflows/build.yml`)
-and attaches them to the workflow run as artifacts; there are no releases yet.
-`.github/workflows/test.yml` checks formatting, runs `go vet` and
-`go test -race` on every push to `main`.
+## Versions and releases
+
+`VERSION` holds the current version (semantic versioning, `X.Y.Z`).
+
+- Every push runs `.github/workflows/build.yml`, which builds all platforms
+  as `<VERSION>-dev-<yyyyMMdd>-<HHmmss>` (UTC) and keeps the archives as
+  artifacts of the workflow run.
+- Running the same workflow manually (Actions → Build → Run workflow, on
+  `main`) makes an official release: enter a version `X.Y.Z`, or leave it
+  empty to increase the fix number of `VERSION` by one. The release is
+  tested, built, tagged `v<version>` and published as a GitHub release with
+  the archives and their SHA-256 checksums; `VERSION` on `main` is then set
+  to the released version.
+- `.github/workflows/test.yml` checks formatting and runs `go vet` and
+  `go test -race` on every push to `main`.
 
 ## Run
 
@@ -96,6 +127,9 @@ and attaches them to the workflow run as artifacts; there are no releases yet.
 
 # serve all *.xdb files in the folder on https://<host>:8443/
 ./go-ca --data-dir /srv/xca
+
+# print the version
+./go-ca version
 ```
 
 | Flag             | Default  | Meaning                                                          |
@@ -126,9 +160,8 @@ will warn about the name until you pass a certificate for the real host name.
 ```
 
 A backup is written before every change that rewrites a whole database
-(schema upgrade, 3DES key conversion and, from phase 3, a database password
-change), using SQLite's `VACUUM INTO`, which copies within one read
-transaction.
+(schema upgrade, 3DES key conversion, database password change), using
+SQLite's `VACUUM INTO`, which copies within one read transaction.
 
 Two go-ca processes cannot open the same database (`flock` on the `.lock`
 file). Desktop XCA can keep the same file open: go-ca polls `MAX(items.stamp)`

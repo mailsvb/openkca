@@ -2,6 +2,7 @@
 //
 //	go-ca set-password --data-dir DIR   set the server password
 //	go-ca [serve] --data-dir DIR [--listen :8443] [--tls-cert F --tls-key F]
+//	go-ca version                       print the version
 package main
 
 import (
@@ -27,10 +28,13 @@ import (
 	"github.com/mailsvb/go-ca/internal/web"
 )
 
+// version is set at build time: -ldflags "-X main.version=0.10.0".
+var version = "dev"
+
 func main() {
 	args := os.Args[1:]
 	cmd := "serve"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	if len(args) > 0 && (!strings.HasPrefix(args[0], "-") || args[0] == "--version" || args[0] == "-version") {
 		cmd, args = args[0], args[1:]
 	}
 	var err error
@@ -39,8 +43,10 @@ func main() {
 		err = serve(args)
 	case "set-password":
 		err = setPassword(args)
+	case "version", "--version", "-version":
+		fmt.Println("go-ca", version)
 	default:
-		err = fmt.Errorf("unknown command %q (use serve or set-password)", cmd)
+		err = fmt.Errorf("unknown command %q (use serve, set-password or version)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "go-ca:", err)
@@ -149,7 +155,7 @@ func serve(args []string) error {
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServeTLS("", "") }()
 	leaf := certs.Leaf()
-	log.Info("go-ca listening", "addr", *listen, "data", st.Dir, "cert", leaf.Subject.CommonName, "expires", leaf.NotAfter.Format(time.DateOnly))
+	log.Info("go-ca listening", "version", version, "addr", *listen, "data", st.Dir, "cert", leaf.Subject.CommonName, "expires", leaf.NotAfter.Format(time.DateOnly))
 	select {
 	case err := <-errc:
 		return err

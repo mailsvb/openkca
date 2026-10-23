@@ -1,15 +1,67 @@
 name: Build
 
+# A push builds <VERSION>-dev-<date>-<time>, kept as artifacts of the run.
+# Running the workflow manually makes an official release: the given version,
+# or VERSION with the fix number increased by 1, tagged v<version> with a
+# GitHub release holding the binaries; VERSION on main is then updated.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version X.Y.Z (empty: current version with the fix number + 1)"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: v
+        env:
+          WANT: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::Releases are made from main, not $GITHUB_REF_NAME"
+              exit 1
+            fi
+            version=$(.github/scripts/version.sh release "$WANT")
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            version=$(.github/scripts/version.sh dev)
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Version::$version"
+
+  # Pushes to main are tested by test.yml; a release is tested here.
+  test:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
   build:
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -17,9 +69,11 @@ jobs:
         include:
           - { goos: linux, goarch: amd64 }
           - { goos: linux, goarch: arm64 }
-          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: amd64 }
           - { goos: darwin, goarch: amd64 }
           - { goos: darwin, goarch: arm64 }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
 
@@ -33,15 +87,65 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          mkdir -p dist
-          go build -trimpath -ldflags "-s -w" -o "dist/go-ca${{ matrix.ext }}" ./cmd/go-ca
-          cp README.md dist/
-          cp internal/web/static/htmx.LICENSE dist/
+          name="go-ca_${VERSION}_${GOOS}_${GOARCH}"
+          ext=""
+          if [ "$GOOS" = windows ]; then ext=.exe; fi
+          mkdir -p "dist/$name" pkg
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/$name/go-ca$ext" ./cmd/go-ca
+          cp README.md "dist/$name/"
+          cp internal/web/static/htmx.LICENSE "dist/$name/"
+          cd dist
+          if [ "$GOOS" = windows ]; then
+            zip -qr "../pkg/$name.zip" "$name"
+          else
+            tar -czf "../pkg/$name.tar.gz" "$name"
+          fi
 
-      # Stored with this workflow run only; there are no releases yet.
       - uses: actions/upload-artifact@v6
         with:
-          name: go-ca-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/
+          name: go-ca_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: pkg/*
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    needs: [version, test, build]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: release
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: pkg
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd pkg && sha256sum * > "go-ca_${VERSION}_checksums.txt" && cat "go-ca_${VERSION}_checksums.txt"
+
+      # The tag marks exactly the commit that was built.
+      - name: Tag and release
+        run: |
+          gh release create "v$VERSION" pkg/* \
+            --target "$GITHUB_SHA" \
+            --title "go-ca $VERSION" \
+            --generate-notes
+
+      - name: Record the version on main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git pull --ff-only origin main
+          echo "$VERSION" > VERSION
+          if git diff --quiet; then exit 0; fi
+          git commit -m "Set version to $VERSION after release v$VERSION" VERSION
+          git push origin main
