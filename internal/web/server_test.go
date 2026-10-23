@@ -412,3 +412,59 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+func TestTemplatePages(t *testing.T) {
+	ts, _ := newTestServer(t)
+	c := client(t, ts)
+	csrf := login(t, ts, c)
+	post := func(path string, v url.Values) *http.Response {
+		t.Helper()
+		v.Set("csrf", csrf)
+		r, err := c.PostForm(ts.URL+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	post("/db/sample/login", url.Values{"password": {"secret"}})
+	r := post("/db/sample/new/template", url.Values{"name": {"web tmpl"}, "dn.O": {"Web Org"}, "ca": {"2"}, "subkey": {"1"},
+		"ku.0": {"1"}, "eku.clientAuth": {"1"}, "san": {"email:copy"}, "validn": {"2"}, "validunit": {"y"},
+		"advext": {"certificatePolicies = 1.2.3.4"}})
+	loc := r.Header.Get("Location")
+	if !strings.Contains(loc, "notice=saved") {
+		t.Fatalf("save template: %d %s", r.StatusCode, loc)
+	}
+	tid := strings.Split(strings.Split(loc, "/item/")[1], "?")[0]
+	// Edit page shows the stored values.
+	r, _ = c.Get(ts.URL + "/db/sample/item/" + tid + "/edit")
+	if b := body(t, r); !strings.Contains(b, `value="Web Org"`) || !strings.Contains(b, "certificatePolicies = 1.2.3.4") {
+		t.Fatal("edit page not filled")
+	}
+	// Applying the template in the certificate editor fills the form.
+	r = post("/db/sample/new/cert", url.Values{"action": {"apply-all"}, "template": {tid}, "dn.CN": {"kept?"}})
+	b := body(t, r)
+	if !strings.Contains(b, `value="Web Org"`) || !strings.Contains(b, `name="eku.clientAuth" value="1" checked`) {
+		t.Fatal("apply-all did not fill the editor")
+	}
+	// The template page links to creating a certificate from it.
+	r, _ = c.Get(ts.URL + "/db/sample/new/cert?template=" + tid)
+	if b := body(t, r); !strings.Contains(b, "certificatePolicies = 1.2.3.4") {
+		t.Fatal("editor from template")
+	}
+	// Transform a certificate into a template, duplicate it.
+	if loc := post("/db/sample/item/7/to-template", url.Values{}).Header.Get("Location"); !strings.Contains(loc, "notice=created") {
+		t.Fatalf("to-template: %s", loc)
+	}
+	if loc := post("/db/sample/item/"+tid+"/duplicate", url.Values{}).Header.Get("Location"); !strings.Contains(loc, "notice=created") {
+		t.Fatalf("duplicate: %s", loc)
+	}
+	// Invalid advanced extensions are reported with their line.
+	r = post("/db/sample/new/template", url.Values{"name": {"bad"}, "advext": {"\nfoo = bar"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body(t, r), "line 2") {
+		t.Fatal("bad adv_ext not reported")
+	}
+	r, _ = c.Get(ts.URL + "/oid?q=2.5.29.17")
+	if b := body(t, r); !strings.Contains(b, "subjectAltName") {
+		t.Fatal("OID resolver")
+	}
+}

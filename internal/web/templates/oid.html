@@ -1,0 +1,20 @@
+{{template "head" .}}
+<h1>{{T "oid.heading"}}</h1>
+<form method="get" action="/oid" class="inline-fields">
+  <label class="sr-only" for="q">{{T "oid.query"}}</label>
+  <input type="search" id="q" name="q" value="{{.Data.Q}}" placeholder="{{T "oid.query"}}" autofocus>
+  <button type="submit">{{T "oid.search"}}</button>
+</form>
+{{if .Data.Searched}}
+<div class="tablewrap">
+<table class="list">
+  <thead><tr><th>{{T "oid.oid"}}</th><th>{{T "oid.short"}}</th><th>{{T "oid.long"}}</th><th>{{T "oid.kind"}}</th></tr></thead>
+  <tbody>
+  {{range .Data.Results}}<tr><td class="mono">{{.OID}}</td><td>{{.Short}}</td><td>{{.Long}}</td><td>{{T (print "oid.kind." .Kind)}}</td></tr>
+  {{else}}<tr><td colspan="4" class="muted">{{T "oid.none"}}</td></tr>{{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+<p class="muted small">{{T "oid.help"}}</p>
+{{template "foot" .}}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -63,6 +64,8 @@ type editorForm struct {
 	NoExpiry   bool
 	Ext        pki.ExtSpec
 	Source     int
+	ID         int64 // template being edited
+	TemplateID int64 // template selected for "apply"
 }
 
 func defaultEditor(kind string, snap *xdb.Snapshot) *editorForm {
@@ -179,7 +182,45 @@ func parseEditor(r *http.Request, kind string, snap *xdb.Snapshot) *editorForm {
 	e.NSComment = g("nscomment")
 	e.NSBaseURL, e.NSRevocationURL, e.NSCARevocationURL = g("nsbaseurl"), g("nsrevurl"), g("nscarevurl")
 	e.NSRenewalURL, e.NSCAPolicyURL, e.NSSSLServerName = g("nsrenewurl"), g("nspolicyurl"), g("nssslname")
+	e.AdvExt = strings.ReplaceAll(g("advext"), "\r\n", "\n")
+	f.ID, _ = strconv.ParseInt(g("id"), 10, 64)
+	f.TemplateID, _ = strconv.ParseInt(g("template"), 10, 64)
 	return f
+}
+
+var unitByIndex = []string{"d", "m", "y"}
+
+// applyTemplate copies a template's subject and/or extensions and validity
+// into the editor (NewX509::subjectFromTemplate / extensionsFromTemplate).
+func (f *editorForm) applyTemplate(d *store.TemplateData, subject, ext bool) {
+	if subject {
+		for i := range f.Explicit {
+			f.Explicit[i].Value = ""
+		}
+		f.Extra = make([]pki.DNAttr, extraRows)
+		f.fillSubject(d.Subject)
+	}
+	if ext {
+		f.Ext = d.Ext
+		f.ValidN = d.Validity.N
+		if d.Validity.Unit >= 0 && d.Validity.Unit < len(unitByIndex) {
+			f.ValidUnit = unitByIndex[d.Validity.Unit]
+		}
+		f.Midnight, f.NoExpiry = d.Validity.Midnight, d.Validity.NoExpiry
+		f.NotAfter = ""
+	}
+}
+
+// templateData converts the form into a template.
+func (f *editorForm) templateData() store.TemplateData {
+	unit := 0
+	for i, u := range unitByIndex {
+		if u == f.ValidUnit {
+			unit = i
+		}
+	}
+	return store.TemplateData{ID: f.ID, Name: f.Name, Comment: f.Comment, Subject: f.subject(), Ext: f.Ext,
+		Validity: tmpl.Validity{N: f.ValidN, Unit: unit, Midnight: f.Midnight, NoExpiry: f.NoExpiry}}
 }
 
 func parseLocal(s string) (time.Time, error) {
@@ -332,7 +373,7 @@ func similar(f *editorForm, snap *xdb.Snapshot, id int64) {
 	var keyType string
 	if c, err := x509.ParseCertificate(der); err == nil {
 		subject = c.RawSubject
-		f.Ext, _ = pki.SpecFromExtensions(c.Extensions)
+		f.Ext = pki.SpecWithAdvanced(c.Extensions)
 		f.Hash = pki.HashName(c.SignatureAlgorithm)
 		days := int(c.NotAfter.Sub(c.NotBefore).Hours()/24 + 0.5)
 		f.ValidN, f.ValidUnit = days, "d"
@@ -343,7 +384,7 @@ func similar(f *editorForm, snap *xdb.Snapshot, id int64) {
 		}
 	} else if r, err := x509.ParseCertificateRequest(der); err == nil {
 		subject = r.RawSubject
-		f.Ext, _ = pki.SpecFromExtensions(r.Extensions)
+		f.Ext = pki.SpecWithAdvanced(r.Extensions)
 		f.Hash = pki.HashName(r.SignatureAlgorithm)
 		keyType = pki.DescribePublicKey(r.RawSubjectPublicKeyInfo).Algorithm
 	}
@@ -360,7 +401,7 @@ func similar(f *editorForm, snap *xdb.Snapshot, id int64) {
 
 func (s *Server) editorPage(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	if kind != "cert" && kind != "request" {
+	if kind != "cert" && kind != "request" && kind != "template" {
 		http.NotFound(w, r)
 		return
 	}
@@ -372,6 +413,28 @@ func (s *Server) editorPage(w http.ResponseWriter, r *http.Request) {
 	}
 	f := defaultEditor(kind, snap)
 	q := r.URL.Query()
+	if kind == "template" {
+		// a new template starts like XCA's: nsComment "xca certificate", 365 days
+		f.Ext = pki.ExtSpec{NSComment: "xca certificate"}
+	}
+	// A CA's default template applies when issuing with it, then an
+	// explicitly chosen template.
+	if sg, err := strconv.ParseInt(q.Get("signer"), 10, 64); err == nil {
+		for _, c := range snap.Certs {
+			if c.ID == sg && c.Authority != nil && c.Authority.TemplateID != 0 {
+				if d, err := ds.Handle.LoadTemplate(r.Context(), c.Authority.TemplateID); err == nil {
+					f.applyTemplate(d, true, true)
+					f.TemplateID = c.Authority.TemplateID
+				}
+			}
+		}
+	}
+	if id, err := strconv.ParseInt(q.Get("template"), 10, 64); err == nil {
+		if d, err := ds.Handle.LoadTemplate(r.Context(), id); err == nil {
+			f.applyTemplate(d, true, true)
+			f.TemplateID = id
+		}
+	}
 	if id, err := strconv.ParseInt(q.Get("similar"), 10, 64); err == nil {
 		similar(f, snap, id)
 	}
@@ -395,16 +458,47 @@ func (s *Server) editorPage(w http.ResponseWriter, r *http.Request) {
 	s.renderEditor(w, r, http.StatusOK, f, snap, "")
 }
 
+// templateEditPage edits an existing template in the editor.
+func (s *Server) templateEditPage(w http.ResponseWriter, r *http.Request) {
+	id, ok := itemID(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ds := dbSession(r)
+	snap, err := ds.Handle.Snapshot(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	d, err := ds.Handle.LoadTemplate(r.Context(), id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f := defaultEditor("template", snap)
+	f.applyTemplate(d, true, true)
+	f.ID, f.Name, f.Comment = id, d.Name, d.Comment
+	s.renderEditor(w, r, http.StatusOK, f, snap, "")
+}
+
 func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int, f *editorForm, snap *xdb.Snapshot, errKey string, errArgs ...any) {
 	title := "editor.title." + f.Kind
 	tab := "certs"
-	if f.Kind == "request" {
+	switch f.Kind {
+	case "request":
 		tab = "requests"
+	case "template":
+		tab = "templates"
+	}
+	var templates []choice
+	for _, t := range snap.Templates {
+		templates = append(templates, choice{ID: t.ID, Label: t.Name})
 	}
 	p := &page{Title: title, Tab: tab, Error: errKey, Data: map[string]any{
 		"F": f, "C": choices(snap), "KeyChoices": keyChoices, "Hashes": pki.Hashes, "ExtraAttrs": extraAttrs,
 		"KU": pki.KeyUsageNames, "EKU": pki.EKUNames, "NS": pki.NSCertTypeNames,
-		"NoNetscape": snap.Settings["disable_netscape"] == "yes", "ErrArgs": errArgs,
+		"NoNetscape": snap.Settings["disable_netscape"] == "yes", "ErrArgs": errArgs, "Templates": templates,
 	}}
 	if len(errArgs) > 0 {
 		p.ErrorArg = fmt.Sprint(errArgs[0])
@@ -429,7 +523,7 @@ func keyPasswords(r *http.Request, snap *xdb.Snapshot) store.KeyPasswords {
 // editorSubmit validates (htmx preview) or creates.
 func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	if kind != "cert" && kind != "request" {
+	if kind != "cert" && kind != "request" && kind != "template" {
 		http.NotFound(w, r)
 		return
 	}
@@ -440,6 +534,27 @@ func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := parseEditor(r, kind, snap)
+	switch action := r.PostFormValue("action"); action {
+	case "apply-all", "apply-subject", "apply-ext":
+		d, err := ds.Handle.LoadTemplate(r.Context(), f.TemplateID)
+		if err != nil {
+			s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.notemplate")
+			return
+		}
+		f.applyTemplate(d, action != "apply-ext", action != "apply-subject")
+		s.renderEditor(w, r, http.StatusOK, f, snap, "")
+		return
+	}
+	if kind == "template" && r.PostFormValue("action") != "validate" {
+		id, err := ds.Handle.SaveTemplate(r.Context(), f.templateData())
+		if err != nil {
+			s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.input", err.Error())
+			return
+		}
+		s.log.Info("template saved", "db", ds.DBName, "id", id)
+		http.Redirect(w, r, dbPath(ds.DBName)+"item/"+strconv.FormatInt(id, 10)+"?notice=saved", http.StatusSeeOther)
+		return
+	}
 	if f.Name == "" && f.FromReq != 0 && kind == "cert" {
 		for _, rq := range snap.Requests {
 			if rq.ID == f.FromReq {
@@ -458,6 +573,14 @@ func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.PostFormValue("action") == "validate" {
 		res := map[string]any{"fragment": "preview"}
 		pg := &page{Data: res}
+		if kind == "template" {
+			p.Request, p.NewKey, p.SignerID = false, &pki.KeySpec{Type: "Ed25519"}, 0
+			p.Subject = f.subject()
+			if len(p.Subject) == 0 {
+				p.Subject = []pki.DNAttr{{Name: "CN", Value: "—"}}
+			}
+			perr = nil
+		}
 		if perr != nil {
 			res["Err"] = perr.Error()
 		} else if exts, subject, err := ds.Handle.Preview(r.Context(), p); err != nil {

@@ -132,7 +132,7 @@
   <table class="kv">
     <tbody>{{range $d.TmplKeys}}<tr><th class="mono">{{.}}</th><td class="pre">{{index $set .}}</td></tr>{{end}}</tbody>
   </table>
-  <p class="muted small">{{T "tmpl.phase5"}}</p>
+
   {{end}}
 </section>
 {{template "subject" $d.Subject}}
@@ -150,11 +150,19 @@
       {{if $d.KeyPrivate}}<form method="post" action="/db/{{$db}}/item/{{$id}}/to-request" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">{{if $d.KeyOwnPass}}<input type="password" name="keypass" placeholder="{{T "editor.keypass"}}" aria-label="{{T "editor.keypass"}}">{{end}}<button type="submit" class="secondary">{{T "actions.torequest"}}</button></form>{{end}}
       {{if not $d.HasKey}}<form method="post" action="/db/{{$db}}/item/{{$id}}/extract-key" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.extractkey"}}</button></form>{{end}}
       {{if $d.CanRenew}}<a class="button secondary" href="/db/{{$db}}/item/{{$id}}/renew">{{T "actions.renew"}}</a>{{end}}
+      <form method="post" action="/db/{{$db}}/item/{{$id}}/to-template" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.totemplate"}}</button></form>
       {{if and $d.HasIssuer $d.Status.Revoked}}<form method="post" action="/db/{{$db}}/item/{{$id}}/unrevoke" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.unrevoke"}}</button></form>{{end}}
+    {{end}}
+    {{if eq $d.Kind "template"}}
+      <a class="button" href="/db/{{$db}}/item/{{$id}}/edit">{{T "actions.edit"}}</a>
+      <a class="button secondary" href="/db/{{$db}}/new/cert?template={{$id}}">{{T "actions.fromtemplate.cert"}}</a>
+      <a class="button secondary" href="/db/{{$db}}/new/request?template={{$id}}">{{T "actions.fromtemplate.request"}}</a>
+      <form method="post" action="/db/{{$db}}/item/{{$id}}/duplicate" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.duplicate"}}</button></form>
     {{end}}
     {{if eq $d.Kind "request"}}
       <a class="button secondary" href="/db/{{$db}}/new/cert?req={{$id}}">{{T "actions.sign"}}</a>
       <a class="button secondary" href="/db/{{$db}}/new/request?similar={{$id}}">{{T "actions.similar.request"}}</a>
+      <form method="post" action="/db/{{$db}}/item/{{$id}}/to-template" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.totemplate"}}</button></form>
       <form method="post" action="/db/{{$db}}/item/{{$id}}/signed" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">
         {{if $d.Request.Signed}}<input type="hidden" name="signed" value="0"><button type="submit" class="secondary">{{T "actions.unmarksigned"}}</button>
         {{else}}<input type="hidden" name="signed" value="1"><button type="submit" class="secondary">{{T "actions.marksigned"}}</button>{{end}}</form>

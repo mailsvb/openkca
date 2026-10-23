@@ -55,3 +55,33 @@ func TestDecodeFixtureBlob(t *testing.T) {
 		t.Fatalf("settings %v", tp.Settings)
 	}
 }
+
+func TestEncodeRoundTrip(t *testing.T) {
+	data, _ := os.ReadFile("testdata/ca-template.b64")
+	blob, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+	tp, err := Decode(blob, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// XCA's own blob is reproduced byte for byte
+	if !bytes.Equal(Encode(tp), blob) {
+		t.Fatal("Encode differs from XCA's encoding")
+	}
+	spec := tp.Spec()
+	if spec.CA != 1 || !spec.BCCritical || spec.KeyUse != 96 || spec.NSCertType != 112 || !spec.SubKey || spec.AuthKey {
+		t.Fatalf("spec %+v", spec)
+	}
+	n := New(tp.Subject, spec, tp.Validity())
+	back, err := Decode(Encode(n), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"ca", "bcCritical", "keyUse", "nsCertType", "validN", "validM", "subKey", "nsComment"} {
+		if back.Settings[k] != tp.Settings[k] {
+			t.Errorf("%s: %q, XCA %q", k, back.Settings[k], tp.Settings[k])
+		}
+	}
+	if n, u := ValidityFromDates(3650); n != 10 || u != 2 {
+		t.Fatalf("validity %d %d", n, u)
+	}
+}

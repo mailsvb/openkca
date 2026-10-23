@@ -256,3 +256,39 @@ func contains(list []string, v string) bool {
 	}
 	return false
 }
+
+func (s *Server) duplicateTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := itemID(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	nid, err := dbSession(r).Handle.DuplicateTemplate(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.toItem(w, r, nid, "notice=created")
+}
+
+func (s *Server) toTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := itemID(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	tid, err := dbSession(r).Handle.TemplateFromItem(r.Context(), id)
+	if err != nil {
+		s.log.Warn("transform to template failed", "id", id, "err", err)
+		s.toItem(w, r, id, "error=item.error.totemplate")
+		return
+	}
+	s.toItem(w, r, tid, "notice=created")
+}
+
+// oidPage is XCA's OID resolver.
+func (s *Server) oidPage(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	s.render(w, r, http.StatusOK, "oid", &page{Title: "oid.title", Data: map[string]any{"Q": q, "Results": pki.ResolveOID(q),
+		"Searched": q != ""}})
+}

@@ -328,6 +328,21 @@ func generalName(gn asn1.RawValue) string {
 			return "RID:" + oid.String()
 		}
 	case 0:
+		var on struct {
+			ID    asn1.ObjectIdentifier
+			Value asn1.RawValue `asn1:"explicit,tag:0"`
+		}
+		if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err == nil {
+			if on.Value.Tag == asn1.TagUTF8String {
+				if on.ID.String() == "1.3.6.1.4.1.311.20.2.3" {
+					return "UPN:" + string(on.Value.Bytes)
+				}
+				return "otherName:" + on.ID.String() + ";UTF8:" + string(on.Value.Bytes)
+			}
+			if on.Value.Tag == asn1.TagIA5String {
+				return "otherName:" + on.ID.String() + ";IA5:" + string(on.Value.Bytes)
+			}
+		}
 		return "otherName:" + hexDump(gn.Bytes)
 	}
 	return hexDump(gn.FullBytes)

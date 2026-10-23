@@ -7,7 +7,7 @@ desktop XCA.
 
 ## Status
 
-**Phase 4 of 6: CA operations.** go-ca opens, creates and
+**Phase 5 of 6: templates and advanced extensions.** go-ca opens, creates and
 imports XCA databases and shows keys, certificate signing requests,
 certificates (as a tree under their issuers), templates, revocation lists and
 the shared options. You can:
@@ -25,7 +25,16 @@ the shared options. You can:
 - revoke and unrevoke certificates, manage a CA's revocations (also of
   serials not in the database), set CA properties (CRL interval, default
   template), generate CRLs with XCA's options and renew certificates
-  (new or same serial, optionally revoking or deleting the old one).
+  (new or same serial, optionally revoking or deleting the old one),
+- create, edit and duplicate templates in XCA's format, apply them (all,
+  subject only or extensions only) when creating certificates and requests,
+  turn certificates and requests into templates; a CA's default template
+  applies when issuing with it,
+- add further extensions in OpenSSL configuration syntax (XCA's "advanced"
+  tab): certificate policies with qualifiers, policy constraints and
+  mappings, inhibitAnyPolicy, noCheck, dirName and otherName/UPN names,
+  sections, and any extension as `DER:` or `ASN1:` value,
+- look up object identifiers in the OID resolver.
 
 For every CA, go-ca keeps an OpenSSL `ca` style index current in
 `<data-dir>/index/<database>/<CA>/index.txt` (plus `index.txt.attr`),
@@ -40,7 +49,7 @@ first saves a backup and then upgrades it to schema 8, as XCA 2.7 and later
 do; XCA 2.6 still opens the upgraded file. Private keys still in XCA's legacy
 3DES format are re-encrypted as PKCS#8 at the same time.
 
-Later phases add templates and every import and export format.
+The last phase adds every import and export format.
 
 | XCA database                        | go-ca                                          |
 | ----------------------------------- | ---------------------------------------------- |

@@ -141,7 +141,7 @@ func HashName(alg x509.SignatureAlgorithm) string {
 
 // SpecFromExtensions reads editor choices back from existing extensions
 // (for "Similar certificate" and "Similar request"). Extensions it cannot
-// express are returned separately.
+// express are returned separately; SpecWithAdvanced puts them into AdvExt.
 func SpecFromExtensions(exts []pkix.Extension) (ExtSpec, []pkix.Extension) {
 	var s ExtSpec
 	var rest []pkix.Extension
@@ -195,16 +195,30 @@ func SpecFromExtensions(exts []pkix.Extension) (ExtSpec, []pkix.Extension) {
 							name = n
 						}
 					}
+					if name == o.String() {
+						for _, x := range oidRegistry {
+							if x.OID == name && x.Kind == "eku" && x.Short != "" {
+								name = x.Short
+							}
+						}
+					}
 					s.EKU = append(s.EKU, name)
 				}
 				s.EKUCrit = e.Critical
 			}
-		case e.Id.Equal(oidSAN):
-			l, _ := generalNames(e.Value)
-			s.SubAltName = strings.Join(l, ", ")
-		case e.Id.Equal(oidIAN):
-			l, _ := generalNames(e.Value)
-			s.IssAltName = strings.Join(l, ", ")
+		case e.Id.Equal(oidSAN), e.Id.Equal(oidIAN):
+			l, err := generalNames(e.Value)
+			joined := strings.Join(l, ", ")
+			// names the one-line field cannot express go to adv_ext
+			if err != nil || e.Critical || strings.Contains(joined, "dirName:") || strings.Contains(joined, "otherName:") && !strings.Contains(joined, ";") {
+				ok = false
+				break
+			}
+			if e.Id.Equal(oidSAN) {
+				s.SubAltName = joined
+			} else {
+				s.IssAltName = joined
+			}
 		case e.Id.Equal(oidCRLDP):
 			l, _ := decodeExt("2.5.29.31", e.Value)
 			s.CRLDist = strings.Join(l, ", ")
@@ -252,4 +266,13 @@ func SpecFromExtensions(exts []pkix.Extension) (ExtSpec, []pkix.Extension) {
 		}
 	}
 	return s, rest
+}
+
+// SpecWithAdvanced is SpecFromExtensions with the remaining extensions
+// written to AdvExt, as XCA does when it turns a certificate into a
+// template.
+func SpecWithAdvanced(exts []pkix.Extension) ExtSpec {
+	s, rest := SpecFromExtensions(exts)
+	s.AdvExt = GenConf(rest)
+	return s
 }

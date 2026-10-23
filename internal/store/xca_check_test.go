@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/tmpl"
 )
 
 // TestWriteForXCA writes a database populated by go-ca for inspection with
@@ -63,6 +64,14 @@ func TestWriteForXCA(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.Rename(ctx, k, "spare key (renamed)", "comment from go-ca"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.SaveTemplate(ctx, TemplateData{Name: "go-ca template", Subject: []pki.DNAttr{{Name: "O", Value: "GoCA"}},
+		Ext: pki.ExtSpec{CA: 2, SubKey: true, KeyUse: 1, EKU: []string{"serverAuth"}, SubAltName: "DNS:copycn",
+			AdvExt: "certificatePolicies = 1.2.3.4\n"}, Validity: tmpl.Validity{N: 1, Unit: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.TemplateFromItem(ctx, sub); err != nil {
 		t.Fatal(err)
 	}
 }

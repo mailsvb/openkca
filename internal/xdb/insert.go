@@ -529,3 +529,28 @@ func (t *Tx) hasTable(ctx context.Context, name string) bool {
 	t.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&n)
 	return n > 0
 }
+
+// TemplateVersion is the template format written (TMPL_VERSION).
+const TemplateVersion = 10
+
+// InsertTemplate stores a template (pki_temp::insertSqlData).
+func (t *Tx) InsertTemplate(ctx context.Context, name, comment string, source int, blob []byte) (int64, error) {
+	id, err := t.insertItem(ctx, name, TypeTemplate, source, comment)
+	if err != nil {
+		return 0, err
+	}
+	_, err = t.ExecContext(ctx, "INSERT INTO templates (item, version, template) VALUES (?, ?, ?)", id, TemplateVersion, b64enc(blob))
+	return id, err
+}
+
+// UpdateTemplate replaces a template's content, name and comment.
+func (t *Tx) UpdateTemplate(ctx context.Context, id int64, name, comment string, blob []byte) error {
+	res, err := t.ExecContext(ctx, "UPDATE templates SET version=?, template=? WHERE item=?", TemplateVersion, b64enc(blob), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return sql.ErrNoRows
+	}
+	return t.Rename(ctx, id, name, comment)
+}

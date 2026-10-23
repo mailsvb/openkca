@@ -4,6 +4,22 @@
 <form method="post" action="/db/{{$db}}/new/{{$f.Kind}}" class="editor" id="editor">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <input type="hidden" name="source" value="{{$f.Source}}">
+<input type="hidden" name="id" value="{{$f.ID}}">
+
+{{if ne $f.Kind "template"}}
+<section class="card">
+  <h2>{{T "editor.template"}}</h2>
+  <div class="inline-fields">
+    <select name="template" aria-label="{{T "editor.template"}}">
+      <option value="0"></option>
+      {{range .Data.Templates}}<option value="{{.ID}}"{{if eq $f.TemplateID .ID}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <button type="submit" name="action" value="apply-all" class="secondary">{{T "editor.apply.all"}}</button>
+    <button type="submit" name="action" value="apply-subject" class="secondary">{{T "editor.apply.subject"}}</button>
+    <button type="submit" name="action" value="apply-ext" class="secondary">{{T "editor.apply.ext"}}</button>
+  </div>
+</section>
+{{end}}
 
 {{if eq $f.Kind "cert"}}
 <section class="card">
@@ -47,8 +63,10 @@
     {{end}}
   </div>
   {{if eq $f.Kind "cert"}}<p class="muted small">{{T "editor.subjecthelp"}}</p>{{end}}
+  {{if eq $f.Kind "template"}}<p class="muted small">{{T "editor.templatesubject"}}</p>{{end}}
 </section>
 
+{{if ne $f.Kind "template"}}
 <section class="card">
   <h2>{{T "editor.key"}}</h2>
   <div class="grid-form">
@@ -71,13 +89,16 @@
   </div>
   <p class="muted small">{{T "editor.keyhelp"}}</p>
 </section>
+{{end}}
 
-{{if eq $f.Kind "cert"}}
+{{if ne $f.Kind "request"}}
 <section class="card">
   <h2>{{T "editor.validity"}}</h2>
   <div class="grid-form">
+    {{if eq $f.Kind "cert"}}
     <label for="notbefore">{{T "cert.notbefore"}}</label>
     <input type="datetime-local" id="notbefore" name="notbefore" value="{{$f.NotBefore}}">
+    {{end}}
     <label for="validn">{{T "editor.period"}}</label>
     <div class="inline-fields">
       <input type="number" id="validn" name="validn" value="{{$f.ValidN}}" min="1" max="100000">
@@ -87,8 +108,10 @@
         <option value="y"{{if eq $f.ValidUnit "y"}} selected{{end}}>{{T "unit.years"}}</option>
       </select>
     </div>
+    {{if eq $f.Kind "cert"}}
     <label for="notafter">{{T "editor.notafter"}}</label>
     <input type="datetime-local" id="notafter" name="notafter" value="{{$f.NotAfter}}">
+    {{end}}
     <span></span>
     <div class="checks">
       <label><input type="checkbox" name="midnight" value="1"{{if $f.Midnight}} checked{{end}}> {{T "editor.midnight"}}</label>
@@ -115,11 +138,11 @@
     <span>{{T "editor.keyids"}}</span>
     <div class="checks">
       <label><input type="checkbox" name="subkey" value="1"{{if $e.SubKey}} checked{{end}}> {{T "editor.ski"}}</label>
-      {{if eq $f.Kind "cert"}}<label><input type="checkbox" name="authkey" value="1"{{if $e.AuthKey}} checked{{end}}> {{T "editor.aki"}}</label>{{end}}
+      {{if ne $f.Kind "request"}}<label><input type="checkbox" name="authkey" value="1"{{if $e.AuthKey}} checked{{end}}> {{T "editor.aki"}}</label>{{end}}
     </div>
     <label for="san">{{T "editor.san"}}</label>
     <input type="text" id="san" name="san" value="{{$e.SubAltName}}" placeholder="{{T "editor.ph.san"}}">
-    {{if eq $f.Kind "cert"}}
+    {{if ne $f.Kind "request"}}
     <label for="ian">{{T "editor.ian"}}</label>
     <input type="text" id="ian" name="ian" value="{{$e.IssAltName}}" placeholder="{{T "editor.ph.ian"}}">
     {{end}}
@@ -175,9 +198,14 @@
 {{end}}
 
 <section class="card">
+  <h2>{{T "editor.advanced"}}</h2>
+  <textarea name="advext" rows="6" class="mono" aria-label="{{T "editor.advanced"}}" placeholder="{{T "editor.ph.advanced"}}">{{$e.AdvExt}}</textarea>
+  <p class="muted small">{{T "editor.advancedhelp"}}</p>
+</section>
+
+<section class="card">
   <h2>{{T "item.comment"}}</h2>
   <textarea name="comment" rows="3" aria-label="{{T "item.comment"}}">{{$f.Comment}}</textarea>
-  <p class="muted small">{{T "editor.advancedlater"}}</p>
 </section>
 
 <div class="actions">

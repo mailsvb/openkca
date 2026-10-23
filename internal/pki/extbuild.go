@@ -34,6 +34,7 @@ type ExtSpec struct {
 	NSCertType                                                                                  int    // bit i = NSCertTypeNames[i] ("nsCertType")
 	NSComment                                                                                   string // "nsComment"
 	NSBaseURL, NSRevocationURL, NSCARevocationURL, NSRenewalURL, NSCAPolicyURL, NSSSLServerName string
+	AdvExt                                                                                      string // "adv_ext": further extensions in OpenSSL config syntax
 }
 
 // KeyUsageNames in XCA's (and RFC 5280's bit) order.
@@ -164,10 +165,32 @@ func parseGeneralName(item string, nc bool) (asn1.RawValue, error) {
 			ip = v4
 		}
 		return ctxTag(7, ip), nil
-	case "dirname", "othername":
-		return asn1.RawValue{}, fmt.Errorf("%q: %s needs a config section; use the advanced extensions (phase 5)", item, typ)
+	case "upn": // XCA's short form of otherName:msUPN;UTF8:…
+		return otherName(asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 20, 2, 3}, "UTF8:"+val)
+	case "othername": // OID;TYPE:value
+		o, v, ok := strings.Cut(val, ";")
+		if !ok {
+			return asn1.RawValue{}, fmt.Errorf("%q: expected otherName:OID;TYPE:value", item)
+		}
+		oid, err := lookupOID(o)
+		if err != nil {
+			return asn1.RawValue{}, err
+		}
+		return otherName(oid, v)
+	case "dirname":
+		return asn1.RawValue{}, fmt.Errorf("%q: dirName needs a config section; use the advanced extensions", item)
 	}
 	return asn1.RawValue{}, fmt.Errorf("%q: unknown name type %q", item, typ)
+}
+
+func otherName(oid asn1.ObjectIdentifier, typedValue string) (asn1.RawValue, error) {
+	v, err := asn1Value(typedValue, 0)
+	if err != nil {
+		return asn1.RawValue{}, err
+	}
+	oidDER, _ := asn1.Marshal(oid)
+	inner, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: v})
+	return asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: append(oidDER, inner...)}, nil
 }
 
 func nameValues(der []byte, oid asn1.ObjectIdentifier) []string {
@@ -334,12 +357,9 @@ func BuildExtensions(spec ExtSpec, ctx ExtContext) ([]pkix.Extension, error) {
 	if len(spec.EKU) > 0 {
 		var oids []asn1.ObjectIdentifier
 		for _, n := range spec.EKU {
-			o, ok := ekuOIDs[n]
-			if !ok {
-				var err error
-				if o, err = parseOID(n); err != nil {
-					return nil, fmt.Errorf("unknown extended key usage %q", n)
-				}
+			o, err := lookupOID(n)
+			if err != nil {
+				return nil, fmt.Errorf("unknown extended key usage %q", n)
 			}
 			oids = append(oids, o)
 		}
@@ -440,6 +460,11 @@ func BuildExtensions(spec ExtSpec, ctx ExtContext) ([]pkix.Extension, error) {
 			return nil, err
 		}
 	}
+	adv, err := BuildAdvanced(spec.AdvExt, ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, adv...)
 	if !ctx.NoNetscape {
 		if spec.NSCertType != 0 {
 			var bits []int
@@ -467,6 +492,17 @@ func BuildExtensions(spec ExtSpec, ctx ExtContext) ([]pkix.Extension, error) {
 				return nil, err
 			}
 		}
+	}
+	seen := map[string]bool{}
+	for _, e := range out {
+		if seen[e.Id.String()] {
+			name := extNames[e.Id.String()]
+			if name == "" {
+				name = e.Id.String()
+			}
+			return nil, fmt.Errorf("the extension %s is defined twice", name)
+		}
+		seen[e.Id.String()] = true
 	}
 	return out, nil
 }
