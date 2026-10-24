@@ -20,8 +20,8 @@ func moveDB(t *testing.T, s *Store, name, sub string) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(dir, name+ExtGCA)
-	if err := os.Rename(filepath.Join(s.Dir, name+ExtGCA), p); err != nil {
+	p := filepath.Join(dir, name+ExtOKCA)
+	if err := os.Rename(filepath.Join(s.Dir, name+ExtOKCA), p); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -41,7 +41,7 @@ func TestConfigure(t *testing.T) {
 	sub := moveDB(t, s, "lab", "cas")
 	names, err := s.Configure(ctx, []Configured{
 		{Label: "Home Lab CA", Path: sub, Background: true},
-		{Label: "Zeta", Path: filepath.Join(s.Dir, "zeta.gca")},
+		{Label: "Zeta", Path: filepath.Join(s.Dir, "zeta.okca")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestConfigureUploadAvoidsConfiguredName(t *testing.T) {
 	if _, err := s.Configure(ctx, []Configured{{Label: "Lab", Path: sub}}); err != nil {
 		t.Fatal(err)
 	}
-	name, err := s.Upload(ctx, "lab.gca", strings.NewReader(string(src)), 1<<20)
+	name, err := s.Upload(ctx, "lab.okca", strings.NewReader(string(src)), 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestConfigureErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	sub := moveDB(t, s, "lab", "cas")
-	os.WriteFile(filepath.Join(s.Dir, "junk.gca"), []byte("not a database"), 0o600)
+	os.WriteFile(filepath.Join(s.Dir, "junk.okca"), []byte("not a database"), 0o600)
 	clash := moveDB(t, s, "dup", "x")
 	if err := s.Create(ctx, "dup", testPassword, testKDF); err != nil {
 		t.Fatal(err)
@@ -125,12 +125,12 @@ func TestConfigureErrors(t *testing.T) {
 		c    []Configured
 		want string
 	}{
-		{[]Configured{{Label: "A", Path: filepath.Join(filepath.Dir(s.Dir), "out.gca")}}, "not inside"},
-		{[]Configured{{Label: "A", Path: filepath.Join(s.Dir, "bad name.gca")}}, "not a valid"},
-		{[]Configured{{Label: "A", Path: sub}, {Label: "B", Path: filepath.Join(s.Dir, "LAB.gca")}}, "used twice"},
+		{[]Configured{{Label: "A", Path: filepath.Join(filepath.Dir(s.Dir), "out.okca")}}, "not inside"},
+		{[]Configured{{Label: "A", Path: filepath.Join(s.Dir, "bad name.okca")}}, "not a valid"},
+		{[]Configured{{Label: "A", Path: sub}, {Label: "B", Path: filepath.Join(s.Dir, "LAB.okca")}}, "used twice"},
 		{[]Configured{{Label: "A", Path: clash}}, "same name"},
-		{[]Configured{{Label: "A", Path: filepath.Join(s.Dir, "missing.gca")}}, "no such file"},
-		{[]Configured{{Label: "A", Path: filepath.Join(s.Dir, "junk.gca")}}, "cannot be opened"},
+		{[]Configured{{Label: "A", Path: filepath.Join(s.Dir, "missing.okca")}}, "no such file"},
+		{[]Configured{{Label: "A", Path: filepath.Join(s.Dir, "junk.okca")}}, "cannot be opened"},
 	} {
 		_, err := s.Configure(ctx, tc.c)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {

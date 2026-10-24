@@ -82,7 +82,7 @@ func TestTrash(t *testing.T) {
 	if link != nil {
 		t.Fatalf("certificate still links the purged key: %v", link)
 	}
-	file, _ := os.ReadFile(filepath.Join(s.Dir, "trash.gca"))
+	file, _ := os.ReadFile(filepath.Join(s.Dir, "trash.okca"))
 	if bytes.Contains(file, keyBlob[20:60]) {
 		t.Fatal("the purged key's ciphertext is still in the file")
 	}

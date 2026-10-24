@@ -7,7 +7,7 @@ export XCA_NO_GUI=1 QT_QPA_PLATFORM=offscreen
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 cd "$(dirname "$0")/../.."
-GOCA_XCA_DIR="$dir" go test -count=1 -run 'TestExportForXCA' ./internal/store/ >/dev/null
+OPENKCA_XCA_DIR="$dir" go test -count=1 -run 'TestExportForXCA' ./internal/store/ >/dev/null
 db="$dir/imported.xdb"
 strip() { sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r'; }
 # a key first, so that the database password is set before the imports

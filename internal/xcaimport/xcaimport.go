@@ -37,9 +37,6 @@ import (
 const (
 	MinSchema = 5
 	MaxSchema = 8
-	// formerGoCA is the "schema" setting of go-ca's former XCA based
-	// format, which is not imported.
-	formerGoCA = 1000
 )
 
 // XCA's item types and password types.
@@ -141,8 +138,6 @@ func Inspect(ctx context.Context, path string, deep bool) (Info, error) {
 		return info, errors.New("invalid schema setting")
 	}
 	switch {
-	case info.Schema == formerGoCA:
-		return info, errors.New("a database of go-ca's former format, which is not imported")
 	case info.Schema > MaxSchema:
 		info.Kind = KindNewer
 	case info.Schema < MinSchema:

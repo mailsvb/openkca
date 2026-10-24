@@ -137,9 +137,6 @@ func serve(args []string) error {
 	}
 	if g.PasswordHash == "" {
 		msg := "general.password_hash is missing; run \"go-ca set-password\" and put its output into " + cfg.File
-		if legacy := auth.LegacyPasswordPath(g.DataDir); fileExists(legacy) {
-			msg += " (or copy the hash from " + legacy + ")"
-		}
 		return errors.New(msg)
 	}
 	if !auth.ValidHash(g.PasswordHash) {
@@ -248,9 +245,4 @@ func serve(args []string) error {
 	<-bgDone
 	// the background databases close on return
 	return err
-}
-
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }

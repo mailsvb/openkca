@@ -20,13 +20,13 @@ var Keys = []string{"nameCons", "subAltName", "issAltName", "crlDist", "authInfA
 // whether a certificate made from the template gets the issuer's published
 // CRL (CDP) and certificate (AIA caIssuers).
 const (
-	KeyPubCDP = "goca.pubCDP"
-	KeyPubAIA = "goca.pubAIA"
+	KeyPubCDP = "okca.pubCDP"
+	KeyPubAIA = "okca.pubAIA"
 )
 
-// IsGoCAKey reports whether a settings key is go-ca's own (XCA knows no
+// IsOwnKey reports whether a settings key is go-ca's own (XCA knows no
 // equivalent; Encode leaves such keys out).
-func IsGoCAKey(k string) bool { return strings.HasPrefix(k, "goca.") }
+func IsOwnKey(k string) bool { return strings.HasPrefix(k, "okca.") }
 
 func putQString(b []byte, s string) []byte {
 	u := utf16.Encode([]rune(s))
@@ -47,7 +47,7 @@ func Encode(t *Template) []byte {
 	}
 	keys := make([]string, 0, len(t.Settings))
 	for k := range t.Settings {
-		if !IsGoCAKey(k) {
+		if !IsOwnKey(k) {
 			keys = append(keys, k)
 		}
 	}

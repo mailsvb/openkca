@@ -240,11 +240,11 @@ type DB struct {
 
 // Open wraps an already opened *sql.DB of a current go-ca database.
 func Open(ctx context.Context, db *sql.DB) (*DB, error) {
-	s, gca, err := ReadSchema(ctx, db)
+	s, own, err := ReadSchema(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	if !gca || s != Schema {
+	if !own || s != Schema {
 		return nil, fmt.Errorf("db: not a go-ca database of schema %d", Schema)
 	}
 	return &DB{SQL: db}, nil

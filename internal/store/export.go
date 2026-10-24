@@ -374,7 +374,7 @@ func (h *Handle) Export(ctx context.Context, req ExportRequest) (*ExportResult, 
 	return &ExportResult{Filename: name + "." + f.Ext, ContentType: contentType(f), Data: e.out.Bytes(), Text: f.Text()}, nil
 }
 
-func (e *exporter) dbName() string { return e.h.Name + ExtGCA }
+func (e *exporter) dbName() string { return e.h.Name + ExtOKCA }
 
 func (e *exporter) certVEvent(c *db.Cert) []string {
 	info := pki.DescribeCert(c.DER)
@@ -404,7 +404,7 @@ func (e *exporter) alarm() string {
 }
 
 func (e *exporter) vcal(events []string) {
-	e.out.Write(codec.VCalendar(events, "go-ca//go-ca"))
+	e.out.Write(codec.VCalendar(events, "OpenKCA//OpenKCA"))
 }
 
 func (e *exporter) certs() error {

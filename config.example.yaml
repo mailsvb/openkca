@@ -4,12 +4,12 @@
 # database passwords.
 
 general:
-  # Folder with the .gca and .xdb databases (required).
+  # Folder with the .okca and .xdb databases (required).
   data_dir: data
   # Address to listen on (HTTPS); all interfaces by default.
   listen: ":8443"
   # PEM certificate and key for HTTPS. Empty: a self-issued certificate in
-  # <data_dir>/.go-ca/ is created and renewed automatically.
+  # <data_dir>/.openkca/ is created and renewed automatically.
   tls_cert: ""
   tls_key: ""
   # Idle timeout of server and database sessions (Go duration, at least 1m).
@@ -34,7 +34,7 @@ crl:
     - http://pki.example.org
     - http://pki.lan:8080
 
-# Databases go-ca knows by name. Other .gca and .xdb files directly in
+# Databases go-ca knows by name. Other .okca and .xdb files directly in
 # data_dir are still listed and can be opened in the web UI.
 databases:
   # A database with a password is opened when go-ca starts and stays open,
@@ -43,10 +43,10 @@ databases:
   # in there still needs it.
   - name: Home Lab CA          # shown in the web UI
     type: file                 # the only type: a go-ca database file
-    path: homelab.gca          # relative to data_dir, may be in a subfolder
+    path: homelab.okca          # relative to data_dir, may be in a subfolder
     password: "change-me"
 
   # Without a password the database is only listed under its name.
   - name: Old Archive
     type: file
-    path: archive/old.gca
+    path: archive/old.okca

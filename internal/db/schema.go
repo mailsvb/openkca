@@ -1,4 +1,4 @@
-// Package db reads and writes go-ca's database files (.gca): SQLite
+// Package db reads and writes go-ca's database files (.okca): SQLite
 // with go-ca's own schema. It is the only package that issues SQL against
 // a go-ca database; reading XCA's files is package xcaimport's job.
 //
@@ -29,8 +29,8 @@ import (
 	"strconv"
 )
 
-// ApplicationID is SQLite's application_id of a go-ca database ("gca1").
-const ApplicationID = 0x67636131
+// ApplicationID is SQLite's application_id of a go-ca database ("okc1").
+const ApplicationID = 0x6f6b6331
 
 // Schema is the version this package writes (the "schema" setting). A
 // database of an older schema is upgraded by Migrate when it is opened.
@@ -231,11 +231,11 @@ func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step,
 	if MinMigratable+len(steps) != target {
 		return false, fmt.Errorf("db: %d migration steps do not lead from schema %d to %d", len(steps), MinMigratable, target)
 	}
-	s, gca, err := ReadSchema(ctx, db)
+	s, own, err := ReadSchema(ctx, db)
 	if err != nil {
 		return false, err
 	}
-	if !gca {
+	if !own {
 		return false, errors.New("db: not a go-ca database")
 	}
 	switch {
@@ -266,7 +266,7 @@ func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step,
 
 // ReadSchema returns the "schema" setting and whether the file carries
 // go-ca's application ID.
-func ReadSchema(ctx context.Context, db *sql.DB) (schema int, gca bool, err error) {
+func ReadSchema(ctx context.Context, db *sql.DB) (schema int, own bool, err error) {
 	var app int64
 	if err := db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&app); err != nil {
 		return 0, false, err

@@ -12,7 +12,7 @@ import (
 
 func newDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "t.gca"))
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "t.okca"))
 	if err != nil {
 		t.Fatal(err)
 	}

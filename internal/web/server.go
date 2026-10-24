@@ -34,8 +34,8 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 const (
-	authCookie = "gca_auth"
-	dbCookie   = "gca_sess"
+	authCookie = "okca_auth"
+	dbCookie   = "okca_sess"
 )
 
 // Config configures a Server.

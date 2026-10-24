@@ -1,7 +1,7 @@
 // Column chooser: remembers hidden columns per list in this browser only.
 (function () {
   "use strict";
-  function storeKey(table) { return "go-ca.hidden." + table; }
+  function storeKey(table) { return "openkca.hidden." + table; }
   function load(table) {
     try { return JSON.parse(localStorage.getItem(storeKey(table)) || "[]"); } catch (e) { return []; }
   }

@@ -234,11 +234,11 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 		return fail(fmt.Errorf("verifying the imported database: %w", err))
 	}
 	base := strings.TrimSuffix(info.Name, ExtXCA)
-	if rep.Target, err = s.placeUnique(tmp, base, ExtGCA, info.Path); err != nil {
+	if rep.Target, err = s.placeUnique(tmp, base, ExtOKCA, info.Path); err != nil {
 		return fail(err)
 	}
 	// A first backup of the new database, before the original goes.
-	if err := s.backupFile(ctx, filepath.Join(s.Dir, rep.Target+ExtGCA), rep.Target); err != nil {
+	if err := s.backupFile(ctx, filepath.Join(s.Dir, rep.Target+ExtOKCA), rep.Target); err != nil {
 		slog.Error("backup of the imported database failed", "db", rep.Target, "err", err)
 	}
 	// The new database is in place and verified: the XCA file goes.

@@ -34,7 +34,7 @@ import (
 type Status string
 
 const (
-	Supported  Status = "supported"  // a go-ca database (.gca) of the current schema
+	Supported  Status = "supported"  // a go-ca database (.okca) of the current schema
 	Upgradable Status = "upgradable" // an XCA database (.xdb): imported after login
 	Outdated   Status = "outdated"   // XCA schema below 5: refused
 	Newer      Status = "newer"      // a newer XCA or go-ca schema: refused
@@ -48,15 +48,15 @@ func (s Status) Openable() bool { return s == Supported || s == Upgradable }
 // File extensions: go-ca databases, and XCA databases waiting to be
 // imported.
 const (
-	ExtGCA = ".gca"
-	ExtXCA = ".xdb"
+	ExtOKCA = ".okca"
+	ExtXCA  = ".xdb"
 )
 
 var sqliteMagic = []byte("SQLite format 3\x00")
 
 // Info describes one database file in the data folder.
 type Info struct {
-	Name    string // a go-ca database's name (file name without .gca), or an XCA file's name with .xdb
+	Name    string // a go-ca database's name (file name without .okca), or an XCA file's name with .xdb
 	Path    string
 	Size    int64
 	ModTime time.Time
@@ -99,7 +99,7 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 	n, _ := io.ReadFull(f, head)
 	f.Close()
 	if bytes.Equal(head[:n], sqliteMagic) {
-		if st, v, detail, ok := classifyGCA(ctx, path, deep); ok {
+		if st, v, detail, ok := classifyOKCA(ctx, path, deep); ok {
 			return st, false, v, detail
 		}
 	}
@@ -121,16 +121,16 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 	return Invalid, true, v, "unknown format"
 }
 
-// classifyGCA classifies a go-ca database; ok is false when the file is
+// classifyOKCA classifies a go-ca database; ok is false when the file is
 // not one.
-func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Version, detail string, ok bool) {
+func classifyOKCA(ctx context.Context, path string, deep bool) (st Status, v Version, detail string, ok bool) {
 	sqldb, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		return Invalid, v, err.Error(), false
 	}
 	defer sqldb.Close()
-	schema, gca, err := db.ReadSchema(ctx, sqldb)
-	if !gca {
+	schema, own, err := db.ReadSchema(ctx, sqldb)
+	if !own {
 		return Invalid, v, "", false
 	}
 	v.Schema = schema
@@ -189,12 +189,12 @@ type Store struct {
 // Configured is a database listed in the configuration file.
 type Configured struct {
 	Label      string // the name shown in the UI
-	Path       string // the .gca file, inside the data folder (possibly in a subfolder)
+	Path       string // the .okca file, inside the data folder (possibly in a subfolder)
 	Background bool   // go-ca keeps it open on its own
 }
 
 // Configure registers the databases of the configuration file. Their name
-// in URLs and folders is the file name without .gca; a database in a
+// in URLs and folders is the file name without .okca; a database in a
 // subfolder must not share it with a file directly in the data folder.
 // Each file must exist and be a go-ca database of the current schema. It
 // returns the names in the order given.
@@ -206,9 +206,9 @@ func (s *Store) Configure(ctx context.Context, dbs []Configured) ([]string, erro
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 			return nil, fmt.Errorf("%s: %s is not inside the data folder %s", c.Label, c.Path, s.Dir)
 		}
-		name, ok := strings.CutSuffix(filepath.Base(c.Path), ExtGCA)
+		name, ok := strings.CutSuffix(filepath.Base(c.Path), ExtOKCA)
 		if !ok || !ValidName(name) {
-			return nil, fmt.Errorf("%s: %s is not a valid database file name (letters, digits, '.', '_', '-', ending in .gca)", c.Label, filepath.Base(c.Path))
+			return nil, fmt.Errorf("%s: %s is not a valid database file name (letters, digits, '.', '_', '-', ending in .okca)", c.Label, filepath.Base(c.Path))
 		}
 		for other := range conf {
 			if strings.EqualFold(other, name) {
@@ -216,7 +216,7 @@ func (s *Store) Configure(ctx context.Context, dbs []Configured) ([]string, erro
 			}
 		}
 		if filepath.Dir(c.Path) != s.Dir {
-			for _, ext := range []string{ExtGCA, ExtXCA} {
+			for _, ext := range []string{ExtOKCA, ExtXCA} {
 				if _, err := os.Lstat(filepath.Join(s.Dir, name+ext)); err == nil {
 					return nil, fmt.Errorf("%s: %s in the data folder has the same name as %s", c.Label, name+ext, rel)
 				}
@@ -280,11 +280,11 @@ func New(dir string) (*Store, error) {
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // ValidName reports whether name is an acceptable go-ca database name
-// (without .gca).
+// (without .okca).
 func ValidName(name string) bool {
 	lower := strings.ToLower(name)
 	return nameRE.MatchString(name) && !strings.HasPrefix(name, ".") &&
-		!strings.HasSuffix(lower, ExtGCA) && !strings.HasSuffix(lower, ExtXCA)
+		!strings.HasSuffix(lower, ExtOKCA) && !strings.HasSuffix(lower, ExtXCA)
 }
 
 // IsXCAName reports whether name addresses an .xdb file ("ca.xdb").
@@ -302,12 +302,12 @@ func (s *Store) path(name string) string {
 	case IsXCAName(name):
 		return filepath.Join(s.Dir, name)
 	case ValidName(name):
-		return filepath.Join(s.Dir, name+ExtGCA)
+		return filepath.Join(s.Dir, name+ExtOKCA)
 	}
 	return ""
 }
 
-// Scan lists the .gca and .xdb files directly in the data folder and the
+// Scan lists the .okca and .xdb files directly in the data folder and the
 // configured databases. Symlinks, subfolders and hidden files are ignored,
 // except for configured databases in subfolders. Configured databases come
 // first, in the order of the configuration.
@@ -327,7 +327,7 @@ func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 	}
 	for _, e := range entries {
 		var name string
-		if base, ok := strings.CutSuffix(e.Name(), ExtGCA); ok && ValidName(base) {
+		if base, ok := strings.CutSuffix(e.Name(), ExtOKCA); ok && ValidName(base) {
 			name = base
 		} else if IsXCAName(e.Name()) {
 			name = e.Name()

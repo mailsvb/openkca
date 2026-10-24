@@ -21,7 +21,7 @@ func openDst(t *testing.T) *sql.DB {
 	t.Helper()
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
-	sqldb, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "dst.gca")+"?"+q.Encode())
+	sqldb, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "dst.okca")+"?"+q.Encode())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func TestCreate(t *testing.T) {
 	if err := s.Create(ctx, "sample", testPassword, vault.Default); !errors.Is(err, ErrExists) {
 		t.Fatalf("name of an .xdb file: %v", err)
 	}
-	for _, bad := range []string{"", ".hidden", "a/b", "ä", "x.xdb", "y.GCA", string(bytes.Repeat([]byte("x"), 65))} {
+	for _, bad := range []string{"", ".hidden", "a/b", "ä", "x.xdb", "y.OKCA", string(bytes.Repeat([]byte("x"), 65))} {
 		if err := s.Create(ctx, bad, testPassword, vault.Default); !errors.Is(err, ErrBadName) {
 			t.Errorf("name %q: %v", bad, err)
 		}
@@ -41,7 +40,7 @@ func TestCreate(t *testing.T) {
 	}
 	info, err := s.Lookup(ctx, "new-ca")
 	if err != nil || info.Status != Supported || info.XCA || info.Schema != db.Schema ||
-		filepath.Base(info.Path) != "new-ca.gca" {
+		filepath.Base(info.Path) != "new-ca.okca" {
 		t.Fatalf("lookup: %+v %v", info, err)
 	}
 	h, snap := load(t, s, "new-ca")
@@ -99,8 +98,8 @@ func TestUpload(t *testing.T) {
 	if err := s.Create(ctx, "native", testPassword, testKDF); err != nil {
 		t.Fatal(err)
 	}
-	gca, _ := os.ReadFile(filepath.Join(s.Dir, "native.gca"))
-	if name, err := s.Upload(ctx, "copy.xdb", bytes.NewReader(gca), 1<<20); err != nil || name != "copy" {
+	own, _ := os.ReadFile(filepath.Join(s.Dir, "native.okca"))
+	if name, err := s.Upload(ctx, "copy.xdb", bytes.NewReader(own), 1<<20); err != nil || name != "copy" {
 		t.Fatalf("go-ca upload: %q %v", name, err)
 	}
 	if got := SanitizeName("../../etc/passwd"); got != "passwd" {
@@ -109,7 +108,7 @@ func TestUpload(t *testing.T) {
 	if got := SanitizeName("...."); got != "imported" {
 		t.Errorf("sanitize dots: %q", got)
 	}
-	if got := SanitizeName("a.xdb.gca"); got != "a" {
+	if got := SanitizeName("a.xdb.okca.xdb"); got != "a" {
 		t.Errorf("sanitize extensions: %q", got)
 	}
 }
@@ -148,7 +147,7 @@ func TestBackupRetention(t *testing.T) {
 	// age: backups older than backup_days go, the newest always stays
 	old := time.Now().AddDate(0, 0, -40).UTC().Format("20060102150405")
 	for i, p := range all {
-		os.Rename(p, filepath.Join(s.BackupDir(), "bk."+old+"-"+strconv.Itoa(i)+".gca"))
+		os.Rename(p, filepath.Join(s.BackupDir(), "bk."+old+"-"+strconv.Itoa(i)+".okca"))
 	}
 	if err := h.SetSettings(ctx, map[string]string{"backup_days": "30"}); err != nil {
 		t.Fatal(err)
@@ -336,41 +335,14 @@ func TestImportFixtures(t *testing.T) {
 	}
 }
 
-// A database from go-ca's former XCA based format is not imported.
-func TestFormerGoCARefused(t *testing.T) {
-	s := copyFixtures(t)
-	ctx := context.Background()
-	path := filepath.Join(s.Dir, "sample.xdb")
-	sqldb, err := sql.Open("sqlite", dsn(path, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, q := range []string{
-		"UPDATE settings SET value='1000' WHERE key_='schema'",
-		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '2')",
-	} {
-		if _, err := sqldb.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sqldb.Close()
-	info, _ := s.Lookup(ctx, "sample.xdb")
-	if info.Status != Invalid || !strings.Contains(info.Detail, "former") {
-		t.Fatalf("lookup %+v", info)
-	}
-	if _, _, err := s.Import(ctx, "sample.xdb", fixturePassword, testKDF); err == nil {
-		t.Fatal("imported go-ca's former format")
-	}
-}
-
 // A database from a newer go-ca is refused.
-func TestNewerGoCA(t *testing.T) {
+func TestNewerOKCA(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
 	if err := s.Create(ctx, "next", testPassword, testKDF); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(s.Dir, "next.gca")
+	path := filepath.Join(s.Dir, "next.okca")
 	sqldb, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		t.Fatal(err)

@@ -6,9 +6,9 @@ import (
 	"github.com/mailsvb/openkca/internal/pki"
 )
 
-// TestGoCAKeys: the CDP/AIA flags round-trip through go-ca's settings but
+// TestOwnKeys: the CDP/AIA flags round-trip through go-ca's settings but
 // are left out of XCA's export form.
-func TestGoCAKeys(t *testing.T) {
+func TestOwnKeys(t *testing.T) {
 	tp := New(nil, pki.ExtSpec{PubCDP: true}, Validity{N: 1, Unit: 2})
 	if spec := tp.Spec(); !spec.PubCDP || spec.PubAIA {
 		t.Fatalf("flags %v %v", spec.PubCDP, spec.PubAIA)
@@ -18,7 +18,7 @@ func TestGoCAKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for k := range back.Settings {
-		if IsGoCAKey(k) {
+		if IsOwnKey(k) {
 			t.Fatalf("XCA form carries %s", k)
 		}
 	}

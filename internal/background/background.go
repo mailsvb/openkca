@@ -22,7 +22,7 @@ import (
 
 // Database is one database held open in the background.
 type Database struct {
-	Name   string // the store name (file name without .gca)
+	Name   string // the store name (file name without .okca)
 	Label  string // the configured name
 	Handle *store.Handle
 
