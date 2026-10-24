@@ -151,7 +151,7 @@
     {{if $d.PGP}}<a class="button secondary" href="/db/{{$db}}/item/{{$id}}/pgp">{{T "actions.pgpkey"}}</a>{{end}}
     {{if eq $d.Kind "cert"}}
       <a class="button secondary" href="/db/{{$db}}/new/cert?similar={{$id}}">{{T "actions.similar.cert"}}</a>
-      {{if and $d.Cert.CA $d.KeyPrivate}}<a class="button secondary" href="/db/{{$db}}/new/cert?signer={{$id}}">{{T "actions.issue"}}</a>{{end}}
+      {{if and $d.Cert.CA $d.KeyPrivate}}<a class="button secondary" href="/db/{{$db}}/new?signer={{$id}}">{{T "actions.issue"}}</a>{{end}}
       {{if $d.KeyPrivate}}<form method="post" action="/db/{{$db}}/item/{{$id}}/to-request" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">{{if $d.KeyOwnPass}}<input type="password" name="keypass" placeholder="{{T "editor.keypass"}}" aria-label="{{T "editor.keypass"}}">{{end}}<button type="submit" class="secondary">{{T "actions.torequest"}}</button></form>{{end}}
       {{if not $d.HasKey}}<form method="post" action="/db/{{$db}}/item/{{$id}}/extract-key" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.extractkey"}}</button></form>{{end}}
       {{if $d.CanRenew}}<a class="button secondary" href="/db/{{$db}}/item/{{$id}}/renew">{{T "actions.renew"}}</a>{{end}}
@@ -165,7 +165,7 @@
       <form method="post" action="/db/{{$db}}/item/{{$id}}/duplicate" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.duplicate"}}</button></form>
     {{end}}
     {{if eq $d.Kind "request"}}
-      <a class="button secondary" href="/db/{{$db}}/new/cert?req={{$id}}">{{T "actions.sign"}}</a>
+      <a class="button secondary" href="/db/{{$db}}/new?req={{$id}}">{{T "actions.sign"}}</a>
       <a class="button secondary" href="/db/{{$db}}/new/request?similar={{$id}}">{{T "actions.similar.request"}}</a>
       <form method="post" action="/db/{{$db}}/item/{{$id}}/to-template" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "actions.totemplate"}}</button></form>
       <form method="post" action="/db/{{$db}}/item/{{$id}}/signed" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}">

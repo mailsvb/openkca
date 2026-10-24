@@ -259,6 +259,13 @@ func b64(s sql.NullString) ([]byte, error) {
 var dropSettings = map[string]bool{"schema": true, "pwhash": true, "gca_schema": true, "legacy-keys-updated": true,
 	"kdf": true, "dek": true}
 
+// upgradeDefaults maps options still at XCA's default to go-ca's:
+// {XCA default, go-ca default}.
+var upgradeDefaults = map[string][2]string{
+	"default_hash": {"sha256", "auto"},
+	"serial_len":   {"64", "128"},
+}
+
 // Import writes the source's content into dst, an empty database, with
 // password (already checked with Unlock), the keyring Unlock returned (nil
 // for a new one, with cost p) and settings added to the copied options.
@@ -297,6 +304,12 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, kr *v
 		}
 	}
 	rows.Close()
+	// XCA's defaults give way to go-ca's; deliberate other values stay.
+	for k, xcaDefault := range upgradeDefaults {
+		if settings[k] == xcaDefault[0] {
+			settings[k] = xcaDefault[1]
+		}
+	}
 	for k, v := range extra {
 		settings[k] = v
 	}

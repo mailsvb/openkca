@@ -638,7 +638,7 @@ type optionRow struct {
 // hashLabels are the message keys of the hash choices.
 var hashLabels = func() map[string]string {
 	m := map[string]string{}
-	for _, h := range pki.Hashes {
+	for _, h := range pki.HashChoices {
 		m[h] = "hash." + h
 	}
 	return m
@@ -651,12 +651,13 @@ var optionKeys = []struct {
 	choices               []string
 	units                 string
 }{
-	{"default_hash", "opt.default_hash", "sha256", "select", pki.Hashes, ""},
+	{"expert", "opt.expert", "no", "bool", nil, ""},
+	{"default_hash", "opt.default_hash", store.DefaultHash, "select", pki.HashChoices, ""},
 	{"mandatory_dn", "opt.mandatory_dn", "", "text", nil, ""},
 	{"explicit_dn", "opt.explicit_dn", "C,ST,L,O,OU,CN,emailAddress", "text", nil, ""},
 	{"adapt_explicit_subj", "opt.adapt_explicit_subj", "no", "bool", nil, ""},
 	{"string_opt", "opt.string_opt", "MASK:0x2002", "select", []string{"MASK:0x2002", "utf8only", "pkix", "nombstr", "default"}, ""},
-	{"serial_len", "opt.serial_len", "64", "select", serialLens, ""},
+	{"serial_len", "opt.serial_len", strconv.Itoa(store.DefaultSerialLen), "select", serialLens, ""},
 	{"cert_expiry", "opt.cert_expiry", "80%", "expiry", nil, "%DW"},
 	{"ical_expiry", "opt.ical_expiry", "1W", "expiry", nil, "DW"},
 	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", codec.PKCS12Algorithms[0], "select", codec.PKCS12Algorithms, ""},

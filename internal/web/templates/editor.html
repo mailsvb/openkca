@@ -1,25 +1,36 @@
 {{template "head" .}}
-{{$f := .Data.F}}{{$c := .Data.C}}{{$db := .DB.Name}}{{$e := $f.Ext}}
+{{$f := .Data.F}}{{$c := .Data.C}}{{$db := .DB.Name}}{{$e := $f.Ext}}{{$sum := .Data.Sum}}{{$open := .Data.Expert}}
 <h1>{{T (print "editor.heading." $f.Kind)}}</h1>
 <form method="post" action="/db/{{$db}}/new/{{$f.Kind}}" class="editor" id="editor">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <input type="hidden" name="source" value="{{$f.Source}}">
 <input type="hidden" name="id" value="{{$f.ID}}">
 
-{{if ne $f.Kind "template"}}
 <section class="card">
-  <h2>{{T "editor.template"}}</h2>
+  <h2>{{T "editor.start"}}</h2>
   <div class="inline-fields">
-    <select name="template" aria-label="{{T "editor.template"}}">
+    <select name="template" aria-label="{{T "editor.start"}}">
       <option value="0"></option>
-      {{range .Data.Templates}}<option value="{{.ID}}"{{if eq $f.TemplateID .ID}} selected{{end}}>{{.Label}}</option>{{end}}
+      <optgroup label="{{T "editor.profiles"}}">
+        {{range .Data.Profiles}}<option value="p:{{.}}"{{if eq $f.Profile .}} selected{{end}}>{{T (print "profile." .)}}</option>{{end}}
+      </optgroup>
+      {{if .Data.Templates}}<optgroup label="{{T "editor.templates"}}">
+        {{range .Data.Templates}}<option value="{{.ID}}"{{if and (not $f.Profile) (eq $f.TemplateID .ID)}} selected{{end}}>{{.Label}}</option>{{end}}
+      </optgroup>{{end}}
     </select>
     <button type="submit" name="action" value="apply-all" class="secondary">{{T "editor.apply.all"}}</button>
     <button type="submit" name="action" value="apply-subject" class="secondary">{{T "editor.apply.subject"}}</button>
     <button type="submit" name="action" value="apply-ext" class="secondary">{{T "editor.apply.ext"}}</button>
   </div>
+  <p class="muted small">{{T "editor.start.help"}}</p>
+  {{with .Data.Diff}}
+  <div class="diff">
+    <strong>{{T "editor.diff" (T (print "profile." $f.Profile))}}</strong>
+    <ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
+    <button type="submit" name="action" value="apply-ext" class="secondary">{{T "editor.diff.reset"}}</button>
+  </div>
+  {{end}}
 </section>
-{{end}}
 
 {{if eq $f.Kind "cert"}}
 <section class="card">
@@ -61,39 +72,39 @@
     </select>
     <input type="text" name="xval.{{$i}}" value="{{$x.Value}}" aria-label="{{T "editor.value"}}">
     {{end}}
+    <label for="san">{{T "editor.san"}}</label>
+    <input type="text" id="san" name="san" value="{{$e.SubAltName}}" placeholder="{{T "editor.ph.san"}}">
   </div>
   {{if eq $f.Kind "cert"}}<p class="muted small">{{T "editor.subjecthelp"}}</p>{{end}}
   {{if eq $f.Kind "template"}}<p class="muted small">{{T "editor.templatesubject"}}</p>{{end}}
 </section>
 
 {{if ne $f.Kind "template"}}
-<section class="card">
-  <h2>{{T "editor.key"}}</h2>
+<details class="card fold"{{if $open}} open{{end}}>
+  <summary><h2 class="inline-h">{{T "editor.key"}}</h2> <span class="foldsum">{{$sum.Key}}</span></summary>
   <div class="grid-form">
     <span>{{T "editor.keysource"}}</span>
     <div class="checks">
       <label><input type="radio" name="keymode" value="new"{{if ne $f.KeyMode "existing"}} checked{{end}}> {{T "editor.newkey"}}</label>
       <label><input type="radio" name="keymode" value="existing"{{if eq $f.KeyMode "existing"}} checked{{end}}> {{T "editor.existingkey"}}</label>
     </div>
-    <label for="newkey">{{T "editor.newkeytype"}}</label>
-    <select id="newkey" name="newkey">{{range .Data.KeyGroups}}<optgroup label="{{T .Label}}">{{range .Choices}}<option value="{{.Value}}"{{if eq .Value $f.NewKey}} selected{{end}}>{{.Label}}</option>{{end}}</optgroup>{{end}}</select>
+    <span>{{T "editor.newkeytype"}}</span>
+    {{template "keypicker" .Data.Picker}}
     <label for="keyid">{{T "editor.existingkey"}}</label>
     <select id="keyid" name="keyid">
       <option value="0"></option>
       {{range $c.Keys}}<option value="{{.ID}}"{{if eq $f.KeyID .ID}} selected{{end}}>{{.Label}} · {{.Note}}</option>{{end}}
     </select>
-    <label for="hash">{{T "editor.hash"}}</label>
-    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $f.Hash}} selected{{end}}>{{T (print "hash." .)}}</option>{{end}}</select>
     <label for="keypass">{{T "editor.keypass"}}</label>
     <input type="password" id="keypass" name="keypass" autocomplete="off">
   </div>
   <p class="muted small">{{T "editor.keyhelp"}}</p>
-</section>
+</details>
 {{end}}
 
 {{if ne $f.Kind "request"}}
-<section class="card">
-  <h2>{{T "editor.validity"}}</h2>
+<details class="card fold"{{if $open}} open{{end}}>
+  <summary><h2 class="inline-h">{{T "editor.validity"}}</h2> <span class="foldsum">{{$sum.Validity}}</span></summary>
   <div class="grid-form">
     {{if eq $f.Kind "cert"}}
     <label for="notbefore">{{T "cert.notbefore"}}</label>
@@ -119,11 +130,11 @@
     </div>
   </div>
   <p class="muted small">{{T "editor.utc"}}</p>
-</section>
+</details>
 {{end}}
 
-<section class="card">
-  <h2>{{T "editor.extensions"}}</h2>
+<details class="card fold"{{if $open}} open{{end}}>
+  <summary><h2 class="inline-h">{{T "editor.extensions"}}</h2> <span class="foldsum">{{$sum.Ext}}</span></summary>
   <div class="grid-form">
     <label for="ca">{{T "editor.bc"}}</label>
     <div class="inline-fields">
@@ -140,27 +151,12 @@
       <label><input type="checkbox" name="subkey" value="1"{{if $e.SubKey}} checked{{end}}> {{T "editor.ski"}}</label>
       {{if ne $f.Kind "request"}}<label><input type="checkbox" name="authkey" value="1"{{if $e.AuthKey}} checked{{end}}> {{T "editor.aki"}}</label>{{end}}
     </div>
-    <label for="san">{{T "editor.san"}}</label>
-    <input type="text" id="san" name="san" value="{{$e.SubAltName}}" placeholder="{{T "editor.ph.san"}}">
-    {{if ne $f.Kind "request"}}
-    <label for="ian">{{T "editor.ian"}}</label>
-    <input type="text" id="ian" name="ian" value="{{$e.IssAltName}}" placeholder="{{T "editor.ph.ian"}}">
-    {{end}}
     <label for="crldist">{{T "editor.crldist"}}</label>
     <input type="text" id="crldist" name="crldist" value="{{$e.CRLDist}}" placeholder="{{T "editor.ph.crldist"}}">
     <label for="aia">{{T "editor.aia"}}</label>
     <input type="text" id="aia" name="aia" value="{{$e.AuthInfAcc}}" placeholder="{{T "editor.ph.aia"}}">
-    <label for="namecons">{{T "editor.namecons"}}</label>
-    <input type="text" id="namecons" name="namecons" value="{{$e.NameCons}}" placeholder="{{T "editor.ph.namecons"}}">
-    <span></span>
-    <label><input type="checkbox" name="ocspstaple" value="1"{{if $e.OCSPStaple}} checked{{end}}> {{T "editor.ocspstaple"}}</label>
   </div>
-  <p class="muted small">{{T "editor.syntaxhelp"}}</p>
-</section>
-
-<section class="card">
-  <h2>{{T "editor.keyusage"}}</h2>
-  <div class="cols2">
+  <div class="cols2 kugrid">
     <fieldset>
       <legend>{{T "ext.ku"}}</legend>
       {{range $i, $n := .Data.KU}}<label><input type="checkbox" name="ku.{{$i}}" value="1"{{if bit $e.KeyUse $i}} checked{{end}}> {{$n}}</label>{{end}}
@@ -174,34 +170,51 @@
       <label class="crit"><input type="checkbox" name="ekucritical" value="1"{{if $e.EKUCrit}} checked{{end}}> {{T "ext.critical"}}</label>
     </fieldset>
   </div>
-</section>
-
-{{if not .Data.NoNetscape}}
-<details class="card">
-  <summary><h2 class="inline-h">{{T "editor.netscape"}}</h2></summary>
-  <div class="cols2">
-    <fieldset>
-      <legend>{{T "editor.nstype"}}</legend>
-      {{range $i, $n := .Data.NS}}<label><input type="checkbox" name="ns.{{$i}}" value="1"{{if bit $e.NSCertType $i}} checked{{end}}> {{$n}}</label>{{end}}
-    </fieldset>
-    <div class="grid-form">
-      <label for="nscomment">{{T "editor.nscomment"}}</label><input type="text" id="nscomment" name="nscomment" value="{{$e.NSComment}}">
-      <label for="nsbaseurl">{{T "editor.nsbaseurl"}}</label><input type="text" id="nsbaseurl" name="nsbaseurl" value="{{$e.NSBaseURL}}">
-      <label for="nsrevurl">{{T "editor.nsrevurl"}}</label><input type="text" id="nsrevurl" name="nsrevurl" value="{{$e.NSRevocationURL}}">
-      <label for="nscarevurl">{{T "editor.nscarevurl"}}</label><input type="text" id="nscarevurl" name="nscarevurl" value="{{$e.NSCARevocationURL}}">
-      <label for="nsrenewurl">{{T "editor.nsrenewurl"}}</label><input type="text" id="nsrenewurl" name="nsrenewurl" value="{{$e.NSRenewalURL}}">
-      <label for="nspolicyurl">{{T "editor.nspolicyurl"}}</label><input type="text" id="nspolicyurl" name="nspolicyurl" value="{{$e.NSCAPolicyURL}}">
-      <label for="nssslname">{{T "editor.nssslname"}}</label><input type="text" id="nssslname" name="nssslname" value="{{$e.NSSSLServerName}}">
-    </div>
-  </div>
+  <p class="muted small">{{T "editor.syntaxhelp"}}</p>
 </details>
-{{end}}
 
-<section class="card">
-  <h2>{{T "editor.advanced"}}</h2>
-  <textarea name="advext" rows="6" class="mono" aria-label="{{T "editor.advanced"}}" placeholder="{{T "editor.ph.advanced"}}">{{$e.AdvExt}}</textarea>
+<section class="card expert"{{if not .Data.Expert}} hidden{{end}}>
+  <h2>{{T "editor.expert"}}</h2>
+  <div class="grid-form">
+    {{if ne $f.Kind "template"}}
+    <label for="hash">{{T "editor.hash"}}</label>
+    <select id="hash" name="hash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $f.Hash}} selected{{end}}>{{T (print "hash." .)}}</option>{{end}}</select>
+    {{end}}
+    {{if ne $f.Kind "request"}}
+    <label for="ian">{{T "editor.ian"}}</label>
+    <input type="text" id="ian" name="ian" value="{{$e.IssAltName}}" placeholder="{{T "editor.ph.ian"}}">
+    {{end}}
+    <label for="namecons">{{T "editor.namecons"}}</label>
+    <input type="text" id="namecons" name="namecons" value="{{$e.NameCons}}" placeholder="{{T "editor.ph.namecons"}}">
+    <span></span>
+    <label><input type="checkbox" name="ocspstaple" value="1"{{if $e.OCSPStaple}} checked{{end}}> {{T "editor.ocspstaple"}}</label>
+  </div>
+  <h3>{{T "editor.advanced"}}</h3>
+  <textarea name="advext" rows="5" class="mono" aria-label="{{T "editor.advanced"}}" placeholder="{{T "editor.ph.advanced"}}">{{$e.AdvExt}}</textarea>
   <p class="muted small">{{T "editor.advancedhelp"}}</p>
+  {{if not .Data.NoNetscape}}
+  <details>
+    <summary>{{T "editor.netscape"}} <span class="badge">{{T "editor.obsolete"}}</span></summary>
+    <p class="muted small">{{T "editor.netscape.help"}}</p>
+    <div class="cols2">
+      <fieldset>
+        <legend>{{T "editor.nstype"}}</legend>
+        {{range $i, $n := .Data.NS}}<label><input type="checkbox" name="ns.{{$i}}" value="1"{{if bit $e.NSCertType $i}} checked{{end}}> {{$n}}</label>{{end}}
+      </fieldset>
+      <div class="grid-form">
+        <label for="nscomment">{{T "editor.nscomment"}}</label><input type="text" id="nscomment" name="nscomment" value="{{$e.NSComment}}">
+        <label for="nsbaseurl">{{T "editor.nsbaseurl"}}</label><input type="text" id="nsbaseurl" name="nsbaseurl" value="{{$e.NSBaseURL}}">
+        <label for="nsrevurl">{{T "editor.nsrevurl"}}</label><input type="text" id="nsrevurl" name="nsrevurl" value="{{$e.NSRevocationURL}}">
+        <label for="nscarevurl">{{T "editor.nscarevurl"}}</label><input type="text" id="nscarevurl" name="nscarevurl" value="{{$e.NSCARevocationURL}}">
+        <label for="nsrenewurl">{{T "editor.nsrenewurl"}}</label><input type="text" id="nsrenewurl" name="nsrenewurl" value="{{$e.NSRenewalURL}}">
+        <label for="nspolicyurl">{{T "editor.nspolicyurl"}}</label><input type="text" id="nspolicyurl" name="nspolicyurl" value="{{$e.NSCAPolicyURL}}">
+        <label for="nssslname">{{T "editor.nssslname"}}</label><input type="text" id="nssslname" name="nssslname" value="{{$e.NSSSLServerName}}">
+      </div>
+    </div>
+  </details>
+  {{end}}
 </section>
+{{if not .Data.Expert}}{{with .Data.ExpertUsed}}<p class="warn small">{{T "editor.expert.used" .}}</p>{{end}}{{end}}
 
 <section class="card">
   <h2>{{T "item.comment"}}</h2>
@@ -209,6 +222,9 @@
 </section>
 
 <div class="actions">
+  {{if .Data.Expert}}<button type="submit" name="action" value="expert-off" class="link">{{T "expert.off"}}</button>
+  {{else}}<button type="submit" name="action" value="expert-on" class="link">{{T "expert.on"}}</button>{{end}}
+  <span class="right"></span>
   <button type="submit" name="action" value="validate" class="secondary" hx-post="/db/{{$db}}/new/{{$f.Kind}}" hx-target="#preview" hx-vals='{"action":"validate"}'>{{T "editor.validate"}}</button>
   <button type="submit" name="action" value="create">{{T (print "editor.create." $f.Kind)}}</button>
 </div>

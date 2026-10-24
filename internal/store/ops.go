@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/gcadb"
@@ -319,7 +318,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 		if p.NoExpiry {
 			cr.NotAfter = pki.NoExpiry
 		}
-		serialLen, _ := strconv.Atoi(snap.Settings["serial_len"])
+		serialLen := SerialLen(snap)
 		used := map[string]bool{}
 		if ca != nil {
 			used = usedSerials(snap, ca)

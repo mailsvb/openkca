@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -138,5 +139,50 @@ func TestImportRefusesOld(t *testing.T) {
 	}
 	if _, err := Open(context.Background(), filepath.Join(fixtures, "nonexistent.xdb")); err == nil {
 		t.Fatal("missing file opened")
+	}
+}
+
+// TestImportUpgradesDefaults checks that options left at XCA's defaults
+// get go-ca's, and that other values stay.
+func TestImportUpgradesDefaults(t *testing.T) {
+	ctx := context.Background()
+	b, err := os.ReadFile(filepath.Join(fixtures, "sample.xdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "sample.xdb")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{"default_hash": "sha256", "serial_len": "96"} {
+		raw.Exec("DELETE FROM settings WHERE key_=?", k)
+		if _, err := raw.Exec("INSERT INTO settings (key_, value) VALUES (?, ?)", k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw.Close()
+	src, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	dst := openDst(t)
+	if _, _, err := src.Import(ctx, dst, []byte("secret"), nil, cheap, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := gcadb.Open(ctx, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := db.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Settings["default_hash"] != "auto" || snap.Settings["serial_len"] != "96" {
+		t.Errorf("settings %q %q", snap.Settings["default_hash"], snap.Settings["serial_len"])
 	}
 }

@@ -17,7 +17,7 @@
     <a class="button secondary" href="/db/{{.DB.Name}}/import?tab={{.Tab}}">{{T "list.import"}}</a>
     {{if eq .Tab "keys"}}<a class="button" href="/db/{{.DB.Name}}/new/key">{{T "newkey.button"}}</a> <a class="button secondary" href="/db/{{.DB.Name}}/new/sshkey">{{T "newsshkey.button"}}</a> <a class="button secondary" href="/db/{{.DB.Name}}/new/pgpkey">{{T "newpgpkey.button"}}</a>{{end}}
     {{if eq .Tab "requests"}}<a class="button" href="/db/{{.DB.Name}}/new/request">{{T "editor.button.request"}}</a>{{end}}
-    {{if eq .Tab "certs"}}<a class="button" href="/db/{{.DB.Name}}/new/cert">{{T "editor.button.cert"}}</a>{{end}}
+    {{if eq .Tab "certs"}}<a class="button" href="/db/{{.DB.Name}}/new">{{T "editor.button.cert"}}</a> <a class="button secondary" href="/db/{{.DB.Name}}/new/cert">{{T "purpose.editor"}}</a>{{end}}
     {{if eq .Tab "templates"}}<a class="button" href="/db/{{.DB.Name}}/new/template">{{T "editor.button.template"}}</a>{{end}}
   </div>
   <details class="columns">

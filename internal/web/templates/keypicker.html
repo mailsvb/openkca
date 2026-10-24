@@ -1,0 +1,43 @@
+{{define "keypicker"}}
+<div class="keypick" data-keypick>
+  <fieldset class="keyrec">
+    <legend>{{T "keypick.recommended"}}</legend>
+    {{range .Recommended}}
+    <label class="keycard">
+      <input type="radio" name="{{$.Name}}" value="{{.Value}}"{{if eq .Value $.Value}} checked{{end}}>
+      <span><strong>{{.Label}}</strong>
+        <span class="muted small">{{T .Note}}</span>
+        <span class="muted small">{{T "keypick.works" (T .Works)}}</span></span>
+    </label>
+    {{end}}
+  </fieldset>
+  <div class="keymore">
+    <div class="toolbar">
+      <span class="keymore-title">{{T "keypick.more"}}</span>
+      <label class="keyfilter" hidden>{{T "keypick.filter"}} <input type="search" data-keyfilter placeholder="{{T "keypick.filter.placeholder"}}"></label>
+    </div>
+    {{range .Groups}}
+    <details class="keyfam"{{if .Open}} open{{end}}>
+      <summary><strong>{{T .Label}}</strong>{{if .Expert}} <span class="badge">{{T "keypick.expert"}}</span>{{end}}{{if .Draft}} <span class="badge badge-draft">{{T "keypick.draft"}}</span>{{end}}
+        <span class="muted small mono">{{.Summary}}</span></summary>
+      {{if .Draft}}<p class="warn small">{{T "keypick.draft.warn"}}</p>{{end}}
+      <div class="keychips">
+        {{range .Choices}}<label class="keychip"><input type="radio" name="{{$.Name}}" value="{{.Value}}"{{if eq .Value $.Value}} checked{{end}}> {{.Label}}</label>{{end}}
+      </div>
+    </details>
+    {{end}}
+    {{if .Hidden}}<p class="muted small">{{T "keypick.hidden" .Hidden}} <a href="/db/{{.DB}}/options#opt-expert">{{T "keypick.hidden.link"}}</a></p>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "expertswitch"}}
+<form method="post" action="/db/{{.DB.Name}}/expert" class="expertswitch">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="back" value="{{.Data.Back}}">
+  {{if .Data.Expert}}<input type="hidden" name="expert" value="no">
+  <button type="submit" class="link">{{T "expert.off"}}</button>
+  {{else}}<input type="hidden" name="expert" value="yes">
+  <button type="submit" class="link">{{T "expert.on"}}</button>{{end}}
+</form>
+{{end}}

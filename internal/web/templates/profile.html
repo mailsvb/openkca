@@ -1,0 +1,111 @@
+{{template "head" .}}
+{{$q := .Data.Q}}{{$c := .Data.C}}{{$db := .DB.Name}}{{$id := $q.Profile.ID}}
+<p class="crumbs small"><a href="/db/{{$db}}/new">{{T "purpose.heading"}}</a> › {{T (print "profile." $id)}}</p>
+<h1>{{T (print "profile." $id ".heading")}}</h1>
+<p class="muted">{{T "profile.intro"}}</p>
+<div class="quicklayout">
+<form method="post" action="/db/{{$db}}/create/{{$id}}" class="card quick" id="quick">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{if .Data.Hosts}}
+  <div class="field">
+    <label for="hosts">{{T "profile.hosts"}}</label>
+    <textarea id="hosts" name="hosts" rows="3" class="mono" required>{{$q.Hosts}}</textarea>
+    <span class="muted small">{{T "profile.hosts.help"}}</span>
+  </div>
+  {{end}}
+  {{if .Data.Email}}
+  <div class="field">
+    <label for="email">{{T "profile.email"}}</label>
+    <input type="email" id="email" name="email" value="{{$q.Email}}"{{if eq $id "smime"}} required{{end}}>
+    <span class="muted small">{{T (print "profile.email.help." $id)}}</span>
+  </div>
+  {{end}}
+  {{if .Data.CN}}
+  <div class="field">
+    <label for="cn">{{T (print "profile.cn." $id)}}</label>
+    <input type="text" id="cn" name="cn" value="{{$q.CN}}"{{if ne $id "smime"}}{{if ne $id "tls-client"}} required{{end}}{{end}}>
+  </div>
+  {{end}}
+  {{if .Data.Org}}
+  <div class="fieldrow">
+    <div class="field">
+      <label for="org">{{T "profile.org"}}</label>
+      <input type="text" id="org" name="org" value="{{$q.Org}}">
+    </div>
+    <div class="field narrowfield">
+      <label for="country">{{T "profile.country"}}</label>
+      <input type="text" id="country" name="country" value="{{$q.Country}}" maxlength="2" size="3">
+    </div>
+  </div>
+  {{end}}
+  <div class="fieldrow">
+    {{if not .Data.SelfOnly}}
+    <div class="field">
+      <label for="issuer">{{T "profile.issuer"}}</label>
+      <select id="issuer" name="issuer">
+        {{if not .Data.CAOnly}}<option value="self"{{if eq $q.Issuer "self"}} selected{{end}}>{{T "editor.selfsigned"}}</option>{{end}}
+        {{range $c.Signers}}<option value="{{.ID}}"{{if eq $q.Issuer (print .ID)}} selected{{end}}>{{.Label}}{{if .Note}} · {{.Note}}{{end}}</option>{{end}}
+      </select>
+      {{if and .Data.CAOnly (not $c.Signers)}}<span class="warn small">{{T "profile.noca"}} <a href="/db/{{$db}}/create/root-ca">{{T "profile.root-ca"}}</a></span>{{end}}
+    </div>
+    {{end}}
+    <div class="field">
+      <label for="validity">{{T "profile.validity"}}</label>
+      <select id="validity" name="validity">{{range .Data.Validities}}<option value="{{.Value}}"{{if eq .Value $q.Validity}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+    </div>
+  </div>
+  <fieldset class="keymode">
+    <legend>{{T "profile.key"}}</legend>
+    <label><input type="radio" name="keymode" value="new"{{if eq $q.KeyMode "new"}} checked{{end}}> {{T "profile.key.new"}}</label>
+    <label><input type="radio" name="keymode" value="existing"{{if eq $q.KeyMode "existing"}} checked{{end}}> {{T "profile.key.existing"}}</label>
+    <select name="keyid" aria-label="{{T "editor.existingkey"}}">
+      <option value="0"></option>
+      {{range $c.Keys}}<option value="{{.ID}}"{{if eq $q.KeyID .ID}} selected{{end}}>{{.Label}} · {{.Note}}</option>{{end}}
+    </select>
+    {{if not .Data.SelfOnly}}
+    <label><input type="radio" name="keymode" value="request"{{if eq $q.KeyMode "request"}} checked{{end}}> {{T "profile.key.request"}}</label>
+    <select name="fromreq" aria-label="{{T "editor.fromreq"}}">
+      <option value="0"></option>
+      {{range $c.Requests}}<option value="{{.ID}}"{{if eq $q.FromReq .ID}} selected{{end}}>{{.Label}}{{if .Note}} · {{T "editor.reqsigned"}}{{end}}</option>{{end}}
+    </select>
+    {{end}}
+  </fieldset>
+  <details class="advanced"{{if $q.NeedPass}} open{{end}}>
+    <summary>{{T "profile.advanced"}}</summary>
+    <div class="field">
+      <span>{{T "profile.keytype"}}</span>
+      {{template "keypicker" .Data.Picker}}
+    </div>
+    <div class="field">
+      <label for="keypass">{{T "editor.keypass"}}</label>
+      <input type="password" id="keypass" name="keypass" autocomplete="off">
+      <span class="muted small">{{T "profile.keypass.help"}}</span>
+    </div>
+    <p class="small">{{T "profile.editor.help"}}</p>
+  </details>
+  <div class="actions spread">
+    <a class="button secondary" href="/db/{{$db}}/new">{{T "profile.back"}}</a>
+    <span class="actions">
+      <button type="submit" name="action" value="editor" class="secondary">{{T "profile.editor"}}</button>
+      <button type="submit" name="action" value="create">{{T "profile.create"}}</button>
+    </span>
+  </div>
+</form>
+<aside class="card summary" aria-labelledby="sum-h">
+  <h2 id="sum-h">{{T "summary.heading"}}</h2>
+  <div id="summary" aria-live="polite" hx-post="/db/{{$db}}/create/{{$id}}" hx-trigger="change from:#quick, keyup changed delay:800ms from:#quick" hx-include="#quick" hx-vals='{"action":"summary"}'>
+  {{template "summary" .}}
+  </div>
+</aside>
+</div>
+{{template "foot" .}}
+
+{{define "summary"}}{{$s := .Data.Summary}}
+{{if $s.Err}}<p class="error small">{{$s.Err}}</p>{{else}}
+<dl class="props">
+  {{range $s.Rows}}<dt>{{T .Label}}</dt><dd>{{.Value}}</dd>{{end}}
+  {{range $s.Exts}}<dt>{{.Name}}{{if .Critical}} <span class="badge">{{T "ext.critical"}}</span>{{end}}</dt><dd>{{range .Lines}}<div class="mono small">{{.}}</div>{{end}}</dd>{{end}}
+</dl>
+{{range $s.Warnings}}<p class="warn small" role="status">{{.}}</p>{{end}}
+{{end}}
+{{end}}

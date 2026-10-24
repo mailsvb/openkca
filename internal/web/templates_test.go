@@ -102,7 +102,7 @@ func TestMessageKeys(t *testing.T) {
 		keys = append(keys, "reason."+r)
 	}
 	keys = append(keys, "val.yes", "val.no")
-	for _, h := range pki.Hashes {
+	for _, h := range pki.HashChoices {
 		keys = append(keys, "hash."+h)
 	}
 	for _, k := range []string{"attribute", "extension", "eku", "signature", "curve", "policy", "other"} {

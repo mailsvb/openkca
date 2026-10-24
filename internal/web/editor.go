@@ -43,17 +43,15 @@ type editorForm struct {
 	NoExpiry   bool
 	Ext        pki.ExtSpec
 	Source     int
-	ID         int64 // template being edited
-	TemplateID int64 // template selected for "apply"
+	ID         int64  // template being edited
+	TemplateID int64  // template selected for "apply"
+	Profile    string // built-in profile the form started from
 }
 
 func defaultEditor(kind string, snap *gcadb.Snapshot) *editorForm {
-	f := &editorForm{Kind: kind, KeyMode: "new", NewKey: "EC:P-256", Signer: "self", Hash: snap.Settings["default_hash"],
+	f := &editorForm{Kind: kind, KeyMode: "new", NewKey: "EC:P-256", Signer: "self", Hash: store.Hash(snap),
 		NotBefore: time.Now().UTC().Format("2006-01-02T15:04"), ValidN: 365, ValidUnit: "d",
 		ReqSubject: true, CopyReqExt: true, Ext: pki.ExtSpec{SubKey: true, AuthKey: true}}
-	if !contains(pki.Hashes, f.Hash) {
-		f.Hash = "sha256"
-	}
 	explicit := snap.Settings["explicit_dn"]
 	if explicit == "" {
 		explicit = "C,ST,L,O,OU,CN,emailAddress"
@@ -163,7 +161,13 @@ func parseEditor(r *http.Request, kind string, snap *gcadb.Snapshot) *editorForm
 	e.NSRenewalURL, e.NSCAPolicyURL, e.NSSSLServerName = g("nsrenewurl"), g("nspolicyurl"), g("nssslname")
 	e.AdvExt = strings.ReplaceAll(g("advext"), "\r\n", "\n")
 	f.ID, _ = strconv.ParseInt(g("id"), 10, 64)
-	f.TemplateID, _ = strconv.ParseInt(g("template"), 10, 64)
+	if id, ok := strings.CutPrefix(g("template"), "p:"); ok {
+		if p := profileByID(id); p != nil && p.Link == "" {
+			f.Profile = id
+		}
+	} else {
+		f.TemplateID, _ = strconv.ParseInt(g("template"), 10, 64)
+	}
 	return f
 }
 
@@ -318,7 +322,11 @@ func choices(snap *gcadb.Snapshot) editorChoices {
 		if !info.NoExpiry && info.NotAfter.Before(now) {
 			continue
 		}
-		ch.Signers = append(ch.Signers, choice{ID: c.ID, Label: c.Name, Note: info.CommonName})
+		note := info.CommonName
+		if note == c.Name {
+			note = ""
+		}
+		ch.Signers = append(ch.Signers, choice{ID: c.ID, Label: c.Name, Note: note})
 	}
 	for _, r := range snap.Requests {
 		note := ""
@@ -395,9 +403,8 @@ func (s *Server) editorPage(w http.ResponseWriter, r *http.Request) {
 	}
 	f := defaultEditor(kind, snap)
 	q := r.URL.Query()
-	if kind == "template" {
-		// a new template starts like XCA's: nsComment "xca certificate", 365 days
-		f.Ext = pki.ExtSpec{NSComment: "xca certificate"}
+	if p := profileByID(q.Get("profile")); p != nil && p.Link == "" {
+		f.applyProfile(p, snap)
 	}
 	// A CA's default template applies when issuing with it, then an
 	// explicitly chosen template.
@@ -477,10 +484,20 @@ func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int
 	for _, t := range snap.Templates {
 		templates = append(templates, choice{ID: t.ID, Label: t.Name})
 	}
+	var profileIDs []string
+	for _, p := range profiles {
+		if p.Link == "" {
+			profileIDs = append(profileIDs, p.ID)
+		}
+	}
+	pr := s.printer(r)
+	expert := store.Expert(snap)
 	p := &page{Title: title, Tab: tab, Error: errKey, Data: map[string]any{
-		"F": f, "C": choices(snap), "KeyGroups": keyGroups, "Hashes": pki.Hashes, "ExtraAttrs": extraAttrs,
+		"F": f, "C": choices(snap), "Hashes": pki.HashChoices, "ExtraAttrs": extraAttrs,
 		"KU": pki.KeyUsageNames, "EKU": pki.EKUNames, "NS": pki.NSCertTypeNames,
 		"NoNetscape": snap.Settings["disable_netscape"] == "yes", "ErrArgs": errArgs, "Templates": templates,
+		"Profiles": profileIDs, "Expert": expert, "Picker": newKeyPicker("newkey", f.NewKey, dbSession(r).DBName, expert),
+		"Sum": f.summaries(pr.T, snap), "Diff": f.profileDiff(pr.T, snap), "ExpertUsed": f.expertUsed(pr.T, snap),
 	}}
 	if len(errArgs) > 0 {
 		p.ErrorArg = fmt.Sprint(errArgs[0])
@@ -517,7 +534,29 @@ func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	f := parseEditor(r, kind, snap)
 	switch action := r.PostFormValue("action"); action {
+	case "expert-on", "expert-off":
+		v := map[string]string{"expert": "no"}
+		if action == "expert-on" {
+			v["expert"] = "yes"
+		}
+		if err := ds.Handle.SetSettings(r.Context(), v); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if snap, err = ds.Handle.Snapshot(r.Context()); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.renderEditor(w, r, http.StatusOK, f, snap, "")
+		return
 	case "apply-all", "apply-subject", "apply-ext":
+		if p := profileByID(f.Profile); p != nil {
+			if action != "apply-subject" {
+				f.applyProfile(p, snap)
+			}
+			s.renderEditor(w, r, http.StatusOK, f, snap, "")
+			return
+		}
 		d, err := ds.Handle.LoadTemplate(r.Context(), f.TemplateID)
 		if err != nil {
 			s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.notemplate")
@@ -574,39 +613,65 @@ func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusOK, "editor", pg)
 		return
 	}
-	if perr != nil {
-		s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.input", perr.Error())
+	s.issue(w, r, snap, f, func(errKey string, args ...any) {
+		s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, errKey, args...)
+	})
+}
+
+// issue creates the certificate or request of a form and redirects to it;
+// on failure it calls fail with a message key and its arguments.
+func (s *Server) issue(w http.ResponseWriter, r *http.Request, snap *gcadb.Snapshot, f *editorForm, fail func(errKey string, args ...any)) {
+	ds := dbSession(r)
+	p, err := f.params()
+	if err != nil {
+		fail("editor.error.input", err.Error())
 		return
 	}
 	p.KeyPass = keyPasswords(r, snap)
-	kr := ds.Keyring()
-	id, err := ds.Handle.Issue(r.Context(), p, kr)
+	id, err := ds.Handle.Issue(r.Context(), p, ds.Keyring())
 	var miss *store.MissingAttrError
 	switch {
 	case errors.Is(err, store.ErrNeedKeyPassword):
-		s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.keypass")
+		fail("editor.error.keypass")
 		return
 	case errors.As(err, &miss):
-		s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.mandatory", miss.Attr)
+		fail("editor.error.mandatory", miss.Attr)
 		return
 	case err != nil:
-		s.renderEditor(w, r, http.StatusUnprocessableEntity, f, snap, "editor.error.input", err.Error())
+		fail("editor.error.input", err.Error())
 		return
 	}
-	s.log.Info("created", "db", ds.DBName, "kind", kind, "id", id, "name", p.Name)
+	s.log.Info("created", "db", ds.DBName, "kind", f.Kind, "id", id, "name", p.Name, "profile", f.Profile)
 	http.Redirect(w, r, dbPath(ds.DBName)+"item/"+strconv.FormatInt(id, 10)+"?notice=created", http.StatusSeeOther)
 }
 
 func (s *Server) newKeyPage(w http.ResponseWriter, r *http.Request) {
+	ds := dbSession(r)
+	snap, err := ds.Handle.Snapshot(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	typ := "EC:P-256"
+	if t := r.URL.Query().Get("type"); offeredKey(t) {
+		typ = t
+	}
 	s.render(w, r, http.StatusOK, "newkey", &page{Title: "newkey.title", Tab: "keys",
-		Data: map[string]any{"KeyGroups": keyGroups, "Type": "EC:P-256"}})
+		Data: map[string]any{"Picker": newKeyPicker("type", typ, ds.DBName, store.Expert(snap)),
+			"Expert": store.Expert(snap), "Back": r.URL.RequestURI()}})
 }
 
 func (s *Server) newKey(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	typ := r.PostFormValue("type")
-	data := map[string]any{"KeyGroups": keyGroups, "Type": typ, "Name": name}
+	snap, err := ds.Handle.Snapshot(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	data := map[string]any{"Picker": newKeyPicker("type", typ, ds.DBName, store.Expert(snap)), "Name": name,
+		"Expert": store.Expert(snap), "Back": dbPath(ds.DBName) + "new/key"}
 	spec, err := parseKeyChoice(typ)
 	if err != nil || !offeredKey(typ) || name == "" {
 		s.render(w, r, http.StatusUnprocessableEntity, "newkey", &page{Title: "newkey.title", Tab: "keys",
