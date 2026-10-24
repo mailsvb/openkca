@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 // RawItem is a complete item with its ID and links, as an importer writes
@@ -127,7 +127,7 @@ func (t *Tx) PutRaw(ctx context.Context, r RawItem) error {
 		}
 		_, err = t.ExecContext(ctx, "INSERT INTO templates (item, data) VALUES (?, ?)", r.ID, j)
 	default:
-		return errors.New("gcadb: raw item without its content")
+		return errors.New("db: raw item without its content")
 	}
 	if err != nil {
 		return fmt.Errorf("item %d: %w", r.ID, err)

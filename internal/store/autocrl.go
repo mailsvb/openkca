@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/publish"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/publish"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
-// AutoCRL says whether and why go-ca signs a CA's CRL on its own.
+// AutoCRL says whether and why OpenKCA signs a CA's CRL on its own.
 type AutoCRL string
 
 const (
@@ -25,14 +25,14 @@ const (
 	AutoCRLNoKey   AutoCRL = "nokey"   // no private key in the database (or on a token)
 )
 
-// AutoCRLState reports whether go-ca can sign a CA's CRL with the
+// AutoCRLState reports whether OpenKCA can sign a CA's CRL with the
 // database keyring alone.
-func AutoCRLState(snap *gcadb.Snapshot, ca *gcadb.Cert) AutoCRL {
+func AutoCRLState(snap *db.Snapshot, ca *db.Cert) AutoCRL {
 	k := findKey(snap, ca.KeyID)
 	switch {
 	case k == nil || !k.HasPrivate || k.Token:
 		return AutoCRLNoKey
-	case k.Protection != gcadb.ProtDEK:
+	case k.Protection != db.ProtDEK:
 		return AutoCRLOwnPass
 	}
 	return AutoCRLOn
@@ -42,7 +42,7 @@ func AutoCRLState(snap *gcadb.Snapshot, ca *gcadb.Cert) AutoCRL {
 // yet; half of the newest CRL's validity has passed; or the entries the CA
 // publishes (revocations added, edited or removed, or aged out) differ
 // from those on it.
-func CRLDue(snap *gcadb.Snapshot, ca *gcadb.Cert, newest *gcadb.CRL, now time.Time) (bool, string) {
+func CRLDue(snap *db.Snapshot, ca *db.Cert, newest *db.CRL, now time.Time) (bool, string) {
 	if newest == nil {
 		return true, "no CRL yet"
 	}
@@ -109,7 +109,7 @@ func (h *Handle) SignDueCRLs(ctx context.Context, kr *vault.Keyring, now time.Ti
 		return nil, err
 	}
 	newest := publish.NewestCRLs(snap)
-	var cas []*gcadb.Cert
+	var cas []*db.Cert
 	for _, c := range snap.Certs {
 		if c.CA && c.Authority != nil && AutoCRLState(snap, c) == AutoCRLOn {
 			cas = append(cas, c)
@@ -181,7 +181,7 @@ func (h *Handle) notify() {
 // PublishedURLs returns where a CA's CRL and certificate are published,
 // nil when no base URLs are configured or ca is not a CA with an
 // authority ID.
-func (s *Store) PublishedURLs(ca *gcadb.Cert) (crl, cert []string) {
+func (s *Store) PublishedURLs(ca *db.Cert) (crl, cert []string) {
 	if ca == nil || !ca.CA || ca.Authority == nil || len(s.BaseURLs) == 0 {
 		return nil, nil
 	}
@@ -193,7 +193,7 @@ func (s *Store) PublishedURLs(ca *gcadb.Cert) (crl, cert []string) {
 // CRLMirrors and CAIssuers. Free-text entries naming the same URLs are
 // dropped, so a certificate copied into the editor does not list them
 // twice.
-func (s *Store) withPublished(spec pki.ExtSpec, ca *gcadb.Cert) pki.ExtSpec {
+func (s *Store) withPublished(spec pki.ExtSpec, ca *db.Cert) pki.ExtSpec {
 	crl, cert := s.PublishedURLs(ca)
 	if spec.PubCDP && len(crl) > 0 {
 		spec.CRLMirrors = crl

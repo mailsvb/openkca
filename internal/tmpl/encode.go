@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // Keys are pki_temp::tmpl_keys: every template carries all of them.
@@ -16,17 +16,17 @@ var Keys = []string{"nameCons", "subAltName", "issAltName", "crlDist", "authInfA
 	"ca", "bcCritical", "ekuCritical", "kuCritical", "subKey", "authKey", "basicPath", "validN", "validM",
 	"validMidn", "keyUse", "eKeyUse", "adv_ext", "noWellDefinedExpDate", "OCSPstaple"}
 
-// go-ca's own keys, kept in its database but not in XCA's export form:
+// OpenKCA's own keys, kept in its database but not in XCA's export form:
 // whether a certificate made from the template gets the issuer's published
 // CRL (CDP) and certificate (AIA caIssuers).
 const (
-	KeyPubCDP = "goca.pubCDP"
-	KeyPubAIA = "goca.pubAIA"
+	KeyPubCDP = "okca.pubCDP"
+	KeyPubAIA = "okca.pubAIA"
 )
 
-// IsGoCAKey reports whether a settings key is go-ca's own (XCA knows no
+// IsOwnKey reports whether a settings key is OpenKCA's own (XCA knows no
 // equivalent; Encode leaves such keys out).
-func IsGoCAKey(k string) bool { return strings.HasPrefix(k, "goca.") }
+func IsOwnKey(k string) bool { return strings.HasPrefix(k, "okca.") }
 
 func putQString(b []byte, s string) []byte {
 	u := utf16.Encode([]rune(s))
@@ -38,7 +38,7 @@ func putQString(b []byte, s string) []byte {
 }
 
 // Encode writes a version 10 template: DER subject, then the settings
-// (without go-ca's own keys) as a QDataStream QMap<QString,QString>. Entries are written in descending key
+// (without OpenKCA's own keys) as a QDataStream QMap<QString,QString>. Entries are written in descending key
 // order, as Qt 5's QDataStream (and thus XCA) writes a QMap.
 func Encode(t *Template) []byte {
 	subject := t.Subject
@@ -47,7 +47,7 @@ func Encode(t *Template) []byte {
 	}
 	keys := make([]string, 0, len(t.Settings))
 	for k := range t.Settings {
-		if !IsGoCAKey(k) {
+		if !IsOwnKey(k) {
 			keys = append(keys, k)
 		}
 	}

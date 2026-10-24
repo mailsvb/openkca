@@ -19,7 +19,7 @@ import (
 
 // Self-issued certificate parameters (Agreed decisions).
 const (
-	SelfCN       = "go-ca"
+	SelfCN       = "OpenKCA"
 	SelfValidity = 365 * 24 * time.Hour
 )
 

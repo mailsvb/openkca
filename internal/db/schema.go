@@ -1,13 +1,13 @@
-// Package gcadb reads and writes go-ca's database files (.gca): SQLite
-// with go-ca's own schema. It is the only package that issues SQL against
-// a go-ca database; reading XCA's files is package xcaimport's job.
+// Package db reads and writes OpenKCA's database files (.okca): SQLite
+// with OpenKCA's own schema. It is the only package that issues SQL against
+// an OpenKCA database; reading XCA's files is package xcaimport's job.
 //
 // Every item has a UUID (items.uuid) next to its integer row ID. The row
 // ID links rows inside one database; the UUID is the item's identity
 // outside of it and never changes.
 //
 // A CA certificate's authority row has an authority ID (authorities.uuid)
-// naming the CA's folder for its OpenSSL index and other files go-ca keeps
+// naming the CA's folder for its OpenSSL index and other files OpenKCA keeps
 // on disk. A new CA gets its certificate's UUID; a renewal with the same
 // subject and key that takes over the issued certificates takes over the
 // authority ID as well. At most one live CA holds an authority ID: a CA in
@@ -19,7 +19,7 @@
 // items in a trash until they are purged, protects private keys with
 // package vault, stores templates as JSON and records changes in an
 // append-only audit table.
-package gcadb
+package db
 
 import (
 	"context"
@@ -29,12 +29,12 @@ import (
 	"strconv"
 )
 
-// ApplicationID is SQLite's application_id of a go-ca database ("gca1").
-const ApplicationID = 0x67636131
+// ApplicationID is SQLite's application_id of an OpenKCA database ("okc1").
+const ApplicationID = 0x6f6b6331
 
 // Schema is the version this package writes (the "schema" setting). A
 // database of an older schema is upgraded by Migrate when it is opened.
-// The schema was reset to 1 during development; go-ca databases from
+// The schema was reset to 1 during development; OpenKCA databases from
 // before the reset are not supported.
 const Schema = 1
 
@@ -166,7 +166,7 @@ func Create(ctx context.Context, db *sql.DB, settings map[string]string, fn func
 	defer sqlTx.Rollback()
 	for _, stmt := range ddl {
 		if _, err := sqlTx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("gcadb: create: %w", err)
+			return fmt.Errorf("db: create: %w", err)
 		}
 	}
 	if _, err := sqlTx.ExecContext(ctx, fmt.Sprintf("PRAGMA application_id = %d", ApplicationID)); err != nil {
@@ -217,10 +217,10 @@ type step func(ctx context.Context, t *Tx) error
 // the first release empties the list again.
 var steps = []step{}
 
-// MinMigratable is the oldest go-ca schema Migrate upgrades.
+// MinMigratable is the oldest OpenKCA schema Migrate upgrades.
 const MinMigratable = 1
 
-// Migrate upgrades a go-ca database of an older schema to Schema, running
+// Migrate upgrades an OpenKCA database of an older schema to Schema, running
 // every step in one transaction. It reports whether anything changed;
 // before it changes anything, backup is called.
 func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error) {
@@ -229,23 +229,23 @@ func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error)
 
 func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step, target int) (bool, error) {
 	if MinMigratable+len(steps) != target {
-		return false, fmt.Errorf("gcadb: %d migration steps do not lead from schema %d to %d", len(steps), MinMigratable, target)
+		return false, fmt.Errorf("db: %d migration steps do not lead from schema %d to %d", len(steps), MinMigratable, target)
 	}
-	s, gca, err := ReadSchema(ctx, db)
+	s, own, err := ReadSchema(ctx, db)
 	if err != nil {
 		return false, err
 	}
-	if !gca {
-		return false, errors.New("gcadb: not a go-ca database")
+	if !own {
+		return false, errors.New("db: not an OpenKCA database")
 	}
 	switch {
 	case s == target:
 		return false, nil
 	case s < MinMigratable || s > target:
-		return false, fmt.Errorf("gcadb: schema %d cannot be migrated", s)
+		return false, fmt.Errorf("db: schema %d cannot be migrated", s)
 	}
 	if err := backup(); err != nil {
-		return false, fmt.Errorf("gcadb: backup before migration: %w", err)
+		return false, fmt.Errorf("db: backup before migration: %w", err)
 	}
 	sqlTx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -255,7 +255,7 @@ func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step,
 	tx := &Tx{Tx: sqlTx}
 	for v := s; v < target; v++ {
 		if err := steps[v-MinMigratable](ctx, tx); err != nil {
-			return false, fmt.Errorf("gcadb: migrate schema %d to %d: %w", v, v+1, err)
+			return false, fmt.Errorf("db: migrate schema %d to %d: %w", v, v+1, err)
 		}
 	}
 	if _, err := sqlTx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(target)); err != nil {
@@ -265,8 +265,8 @@ func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step,
 }
 
 // ReadSchema returns the "schema" setting and whether the file carries
-// go-ca's application ID.
-func ReadSchema(ctx context.Context, db *sql.DB) (schema int, gca bool, err error) {
+// OpenKCA's application ID.
+func ReadSchema(ctx context.Context, db *sql.DB) (schema int, own bool, err error) {
 	var app int64
 	if err := db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&app); err != nil {
 		return 0, false, err
@@ -280,7 +280,7 @@ func ReadSchema(ctx context.Context, db *sql.DB) (schema int, gca bool, err erro
 	}
 	s, err := strconv.Atoi(v)
 	if err != nil {
-		return 0, true, fmt.Errorf("gcadb: invalid schema %q", v)
+		return 0, true, fmt.Errorf("db: invalid schema %q", v)
 	}
 	return s, true, nil
 }

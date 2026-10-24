@@ -74,7 +74,7 @@ type DSAKey struct{ *dsa.PrivateKey }
 func (k DSAKey) Public() crypto.PublicKey { return &k.PublicKey }
 
 func (k DSAKey) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
-	return nil, errors.New("DSA keys cannot sign in go-ca")
+	return nil, errors.New("DSA keys cannot sign in OpenKCA")
 }
 
 // X25519Key wraps an X25519 key (an OpenPGP encryption subkey) so it
@@ -87,7 +87,7 @@ func (k X25519Key) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, err
 	return nil, errors.New("X25519 keys cannot sign")
 }
 
-// CanSign reports whether a key can make signatures in go-ca.
+// CanSign reports whether a key can make signatures in OpenKCA.
 func CanSign(k crypto.Signer) bool {
 	switch k.(type) {
 	case DSAKey, X25519Key, X448Key, MLKEMKey, CompositeKEMKey:

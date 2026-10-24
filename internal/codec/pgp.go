@@ -39,7 +39,7 @@ import (
 	gcx448 "github.com/ProtonMail/go-crypto/openpgp/x448"
 	"github.com/cloudflare/circl/sign/ed448"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // Armor block types of OpenPGP keys.
@@ -78,8 +78,8 @@ const (
 )
 
 // ErrPGPArgon2Limit means an imported key asks for more Argon2 work than
-// go-ca allows.
-var ErrPGPArgon2Limit = errors.New("openpgp: the key's Argon2 parameters exceed go-ca's limits")
+// OpenKCA allows.
+var ErrPGPArgon2Limit = errors.New("openpgp: the key's Argon2 parameters exceed OpenKCA's limits")
 
 // PGPParams describe a new OpenPGP certificate.
 type PGPParams struct {
@@ -105,7 +105,7 @@ type PGPKeyInfo struct {
 	Expires     time.Time // zero: does not expire
 	Usage       string    // e.g. "SC", "E"
 	Revoked     bool
-	Public      crypto.PublicKey // nil for algorithms go-ca cannot store
+	Public      crypto.PublicKey // nil for algorithms OpenKCA cannot store
 }
 
 // Usages lists the key's usages, one letter each.
@@ -161,9 +161,9 @@ func ValidPGPUserID(s string) bool {
 	return true
 }
 
-// PGPCompatible reports whether go-ca can make a key an OpenPGP key of the
+// PGPCompatible reports whether OpenKCA can make a key an OpenPGP key of the
 // version: a primary key or signing subkey (encrypt false) or an
-// encryption subkey (encrypt true). DSA keys, which go-ca cannot sign
+// encryption subkey (encrypt true). DSA keys, which OpenKCA cannot sign
 // with, only come in with imported keys.
 func PGPCompatible(pub crypto.PublicKey, version int, encrypt bool) bool {
 	if _, ok := pub.(*dsa.PublicKey); ok {
@@ -789,7 +789,7 @@ func pgpPrimeOrder(k *rsa.PrivateKey) *rsa.PrivateKey {
 }
 
 // PGPGoPublic converts an OpenPGP key to a Go public key, for the
-// algorithms go-ca can store.
+// algorithms OpenKCA can store.
 func PGPGoPublic(pk *packet.PublicKey) (crypto.PublicKey, error) {
 	switch pub := pk.PublicKey.(type) {
 	case *rsa.PublicKey:
@@ -1498,7 +1498,7 @@ func (r *pgpReader) entity(e *openpgp.Entity) (PGPEntity, bool) {
 }
 
 // pgpCheckS2K refuses encrypted secret keys whose Argon2 parameters would
-// cost more than go-ca allows. go-crypto keeps the parameters private, so
+// cost more than OpenKCA allows. go-crypto keeps the parameters private, so
 // they are read from the packet as it serializes.
 func pgpCheckS2K(sk *packet.PrivateKey) error {
 	var full, pub bytes.Buffer

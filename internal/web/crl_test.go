@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pubserve"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/pubserve"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 var itemIDRE = regexp.MustCompile(`/item/(\d+)`)

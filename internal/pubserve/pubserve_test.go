@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/publish"
+	"github.com/mailsvb/openkca/internal/publish"
 )
 
 const id1 = "1111aaaa-2222-4333-8444-55555555bbbb"

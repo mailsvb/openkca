@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 var cheap = vault.Params{MemoryKiB: 64, Time: 1, Threads: 1}

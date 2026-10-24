@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 func backTo(w http.ResponseWriter, r *http.Request, query string) {

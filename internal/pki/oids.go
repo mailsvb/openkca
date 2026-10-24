@@ -14,7 +14,7 @@ type OIDInfo struct {
 	Kind  string // attribute, extension, eku, signature, curve, policy, other
 }
 
-// The registry combines OpenSSL's names for what go-ca displays with XCA's
+// The registry combines OpenSSL's names for what OpenKCA displays with XCA's
 // own additions from misc/oids.txt.
 var oidRegistry = func() []OIDInfo {
 	var list []OIDInfo

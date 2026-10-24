@@ -23,51 +23,51 @@ import (
 	"github.com/gofrs/flock"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/index"
-	"github.com/mailsvb/go-ca/internal/publish"
-	"github.com/mailsvb/go-ca/internal/xcaimport"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/index"
+	"github.com/mailsvb/openkca/internal/publish"
+	"github.com/mailsvb/openkca/internal/xcaimport"
 )
 
 // Status is the classifier's verdict for one file.
 type Status string
 
 const (
-	Supported  Status = "supported"  // a go-ca database (.gca) of the current schema
+	Supported  Status = "supported"  // an OpenKCA database (.okca) of the current schema
 	Upgradable Status = "upgradable" // an XCA database (.xdb): imported after login
 	Outdated   Status = "outdated"   // XCA schema below 5: refused
-	Newer      Status = "newer"      // a newer XCA or go-ca schema: refused
+	Newer      Status = "newer"      // a newer XCA or OpenKCA schema: refused
 	Legacy     Status = "legacy"     // pre-2.0 XCA binary format: refused
-	Invalid    Status = "invalid"    // not an XCA or go-ca database
+	Invalid    Status = "invalid"    // not an XCA or OpenKCA database
 )
 
 // Openable reports whether a database with this status can be logged into.
 func (s Status) Openable() bool { return s == Supported || s == Upgradable }
 
-// File extensions: go-ca databases, and XCA databases waiting to be
+// File extensions: OpenKCA databases, and XCA databases waiting to be
 // imported.
 const (
-	ExtGCA = ".gca"
-	ExtXCA = ".xdb"
+	ExtOKCA = ".okca"
+	ExtXCA  = ".xdb"
 )
 
 var sqliteMagic = []byte("SQLite format 3\x00")
 
 // Info describes one database file in the data folder.
 type Info struct {
-	Name    string // a go-ca database's name (file name without .gca), or an XCA file's name with .xdb
+	Name    string // an OpenKCA database's name (file name without .okca), or an XCA file's name with .xdb
 	Path    string
 	Size    int64
 	ModTime time.Time
 	Status  Status
 	XCA     bool   // an .xdb file to import
-	Schema  int    // go-ca's schema, or XCA's for an .xdb file
+	Schema  int    // OpenKCA's schema, or XCA's for an .xdb file
 	Detail  string // why a file is invalid
 
 	Label      string // the name shown in the UI: the configured name, else Name
 	Configured bool   // listed in the configuration file
-	Background bool   // go-ca keeps it open on its own (configured with a password)
+	Background bool   // OpenKCA keeps it open on its own (configured with a password)
 }
 
 // Version is the schema setting of a database file.
@@ -87,7 +87,7 @@ func dsn(path string, readOnly bool) string {
 	return "file:" + (&url.URL{Path: path}).EscapedPath() + "?" + q.Encode()
 }
 
-// Classify inspects one file by its content: a go-ca database, or a file
+// Classify inspects one file by its content: an OpenKCA database, or a file
 // xcaimport reads. deep selects PRAGMA integrity_check (uploads) instead
 // of quick_check (scans).
 func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool, v Version, detail string) {
@@ -99,7 +99,7 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 	n, _ := io.ReadFull(f, head)
 	f.Close()
 	if bytes.Equal(head[:n], sqliteMagic) {
-		if st, v, detail, ok := classifyGCA(ctx, path, deep); ok {
+		if st, v, detail, ok := classifyOKCA(ctx, path, deep); ok {
 			return st, false, v, detail
 		}
 	}
@@ -121,16 +121,16 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 	return Invalid, true, v, "unknown format"
 }
 
-// classifyGCA classifies a go-ca database; ok is false when the file is
+// classifyOKCA classifies an OpenKCA database; ok is false when the file is
 // not one.
-func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Version, detail string, ok bool) {
-	db, err := sql.Open("sqlite", dsn(path, true))
+func classifyOKCA(ctx context.Context, path string, deep bool) (st Status, v Version, detail string, ok bool) {
+	sqldb, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		return Invalid, v, err.Error(), false
 	}
-	defer db.Close()
-	schema, gca, err := gcadb.ReadSchema(ctx, db)
-	if !gca {
+	defer sqldb.Close()
+	schema, own, err := db.ReadSchema(ctx, sqldb)
+	if !own {
 		return Invalid, v, "", false
 	}
 	v.Schema = schema
@@ -142,23 +142,23 @@ func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Vers
 		check = "PRAGMA integrity_check"
 	}
 	var res string
-	if err := db.QueryRowContext(ctx, check).Scan(&res); err != nil {
+	if err := sqldb.QueryRowContext(ctx, check).Scan(&res); err != nil {
 		return Invalid, v, err.Error(), true
 	}
 	if res != "ok" {
 		return Invalid, v, "integrity check: " + res, true
 	}
-	if schema > gcadb.Schema {
+	if schema > db.Schema {
 		return Newer, v, "", true
 	}
-	if schema < gcadb.MinMigratable {
-		return Invalid, v, "unknown go-ca schema", true
+	if schema < db.MinMigratable {
+		return Invalid, v, "unknown OpenKCA schema", true
 	}
 	// An older schema from MinMigratable on is upgraded in place when the
 	// database is opened (Acquire).
 	for _, k := range []string{"kdf", "dek"} {
 		var val string
-		if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
+		if err := sqldb.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
 			return Invalid, v, "no key encryption settings", true
 		}
 	}
@@ -189,14 +189,14 @@ type Store struct {
 // Configured is a database listed in the configuration file.
 type Configured struct {
 	Label      string // the name shown in the UI
-	Path       string // the .gca file, inside the data folder (possibly in a subfolder)
-	Background bool   // go-ca keeps it open on its own
+	Path       string // the .okca file, inside the data folder (possibly in a subfolder)
+	Background bool   // OpenKCA keeps it open on its own
 }
 
 // Configure registers the databases of the configuration file. Their name
-// in URLs and folders is the file name without .gca; a database in a
+// in URLs and folders is the file name without .okca; a database in a
 // subfolder must not share it with a file directly in the data folder.
-// Each file must exist and be a go-ca database of the current schema. It
+// Each file must exist and be an OpenKCA database of the current schema. It
 // returns the names in the order given.
 func (s *Store) Configure(ctx context.Context, dbs []Configured) ([]string, error) {
 	conf := map[string]Configured{}
@@ -206,9 +206,9 @@ func (s *Store) Configure(ctx context.Context, dbs []Configured) ([]string, erro
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 			return nil, fmt.Errorf("%s: %s is not inside the data folder %s", c.Label, c.Path, s.Dir)
 		}
-		name, ok := strings.CutSuffix(filepath.Base(c.Path), ExtGCA)
+		name, ok := strings.CutSuffix(filepath.Base(c.Path), ExtOKCA)
 		if !ok || !ValidName(name) {
-			return nil, fmt.Errorf("%s: %s is not a valid database file name (letters, digits, '.', '_', '-', ending in .gca)", c.Label, filepath.Base(c.Path))
+			return nil, fmt.Errorf("%s: %s is not a valid database file name (letters, digits, '.', '_', '-', ending in .okca)", c.Label, filepath.Base(c.Path))
 		}
 		for other := range conf {
 			if strings.EqualFold(other, name) {
@@ -216,7 +216,7 @@ func (s *Store) Configure(ctx context.Context, dbs []Configured) ([]string, erro
 			}
 		}
 		if filepath.Dir(c.Path) != s.Dir {
-			for _, ext := range []string{ExtGCA, ExtXCA} {
+			for _, ext := range []string{ExtOKCA, ExtXCA} {
 				if _, err := os.Lstat(filepath.Join(s.Dir, name+ext)); err == nil {
 					return nil, fmt.Errorf("%s: %s in the data folder has the same name as %s", c.Label, name+ext, rel)
 				}
@@ -279,12 +279,12 @@ func New(dir string) (*Store, error) {
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-// ValidName reports whether name is an acceptable go-ca database name
-// (without .gca).
+// ValidName reports whether name is an acceptable OpenKCA database name
+// (without .okca).
 func ValidName(name string) bool {
 	lower := strings.ToLower(name)
 	return nameRE.MatchString(name) && !strings.HasPrefix(name, ".") &&
-		!strings.HasSuffix(lower, ExtGCA) && !strings.HasSuffix(lower, ExtXCA)
+		!strings.HasSuffix(lower, ExtOKCA) && !strings.HasSuffix(lower, ExtXCA)
 }
 
 // IsXCAName reports whether name addresses an .xdb file ("ca.xdb").
@@ -302,12 +302,12 @@ func (s *Store) path(name string) string {
 	case IsXCAName(name):
 		return filepath.Join(s.Dir, name)
 	case ValidName(name):
-		return filepath.Join(s.Dir, name+ExtGCA)
+		return filepath.Join(s.Dir, name+ExtOKCA)
 	}
 	return ""
 }
 
-// Scan lists the .gca and .xdb files directly in the data folder and the
+// Scan lists the .okca and .xdb files directly in the data folder and the
 // configured databases. Symlinks, subfolders and hidden files are ignored,
 // except for configured databases in subfolders. Configured databases come
 // first, in the order of the configuration.
@@ -327,7 +327,7 @@ func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 	}
 	for _, e := range entries {
 		var name string
-		if base, ok := strings.CutSuffix(e.Name(), ExtGCA); ok && ValidName(base) {
+		if base, ok := strings.CutSuffix(e.Name(), ExtOKCA); ok && ValidName(base) {
 			name = base
 		} else if IsXCAName(e.Name()) {
 			name = e.Name()
@@ -363,7 +363,7 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 	}
 	st, xca, v, detail := Classify(ctx, path, false)
 	if xca != IsXCAName(name) && st.Openable() {
-		// a go-ca database named .xdb or the reverse: not opened by name
+		// an OpenKCA database named .xdb or the reverse: not opened by name
 		st, detail = Invalid, "file extension does not match the content"
 	}
 	info := Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, XCA: xca,
@@ -374,20 +374,20 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 	return info, nil
 }
 
-// ErrLocked means another go-ca process serves the database.
-var ErrLocked = errors.New("database is in use by another go-ca process")
+// ErrLocked means another OpenKCA process serves the database.
+var ErrLocked = errors.New("database is in use by another OpenKCA process")
 
 // Handle is a shared, reference counted open database.
 type Handle struct {
 	Name string
-	DB   *gcadb.DB
+	DB   *db.DB
 
 	store *Store
 	lock  *flock.Flock
 	refs  int
 
 	mu       sync.Mutex
-	snap     *gcadb.Snapshot
+	snap     *db.Snapshot
 	watchers []chan struct{}
 
 	crlMu sync.Mutex // CRLs signed with the CA's defaults, one at a time
@@ -423,16 +423,16 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(1) // serialises writes
-	migrated, err := gcadb.Migrate(ctx, sqlDB, func() error { return s.backupFile(ctx, info.Path, name) })
+	migrated, err := db.Migrate(ctx, sqlDB, func() error { return s.backupFile(ctx, info.Path, name) })
 	if err != nil {
 		sqlDB.Close()
 		lk.Unlock()
 		return nil, err
 	}
 	if migrated {
-		slog.Info("database upgraded", "db", name, "from", info.Schema, "to", gcadb.Schema)
+		slog.Info("database upgraded", "db", name, "from", info.Schema, "to", db.Schema)
 	}
-	d, err := gcadb.Open(ctx, sqlDB)
+	d, err := db.Open(ctx, sqlDB)
 	if err != nil {
 		sqlDB.Close()
 		lk.Unlock()
@@ -464,7 +464,7 @@ func (h *Handle) Release() {
 
 // Snapshot returns the cached objects, reloading them when MAX(stamp)
 // changed.
-func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
+func (h *Handle) Snapshot(ctx context.Context) (*db.Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	stamp, err := h.DB.MaxStamp(ctx)
@@ -492,8 +492,8 @@ func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 }
 
 // CADir returns the folder of a CA of this database by its authority ID
-// (gcadb.Authority.UUID): <data-dir>/ca/<database>/<authority ID>/. It
-// holds the CA's index files and is the place for any other file go-ca
+// (db.Authority.UUID): <data-dir>/ca/<database>/<authority ID>/. It
+// holds the CA's index files and is the place for any other file OpenKCA
 // keeps per CA; a renewal with the same key keeps it. The folder is not
 // created.
 func (h *Handle) CADir(authorityID string) (string, error) {

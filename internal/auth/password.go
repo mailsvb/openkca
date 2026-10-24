@@ -15,9 +15,7 @@ import (
 )
 
 // StateDir is the folder inside the data folder that holds server state.
-const StateDir = ".go-ca"
-
-const passwordFile = "server-password"
+const StateDir = ".openkca"
 
 // argon2id parameters (RFC 9106 second recommended option, 64 MiB).
 const (
@@ -85,12 +83,6 @@ func CheckPassword(encoded string, pw []byte) bool {
 	}
 	got := argon2.IDKey(pw, h.salt, h.t, h.m, h.p, uint32(len(h.key)))
 	return subtle.ConstantTimeCompare(got, h.key) == 1
-}
-
-// LegacyPasswordPath is where go-ca kept the server password hash before
-// it moved into the configuration file (general.password_hash).
-func LegacyPasswordPath(dataDir string) string {
-	return filepath.Join(dataDir, StateDir, passwordFile)
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

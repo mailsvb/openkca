@@ -26,7 +26,7 @@ import (
 var Hashes = []string{"sha256", "sha384", "sha512", "sha256-pss", "sha384-pss", "sha512-pss"}
 
 // HashAuto is the hash choice that follows the signing key's strength:
-// see AutoHash. It is go-ca's default.
+// see AutoHash. It is OpenKCA's default.
 const HashAuto = "auto"
 
 // HashChoices are the choices offered in forms and options: HashAuto,
@@ -197,7 +197,7 @@ func signatureScheme(key crypto.Signer, hash string) (sigScheme, error) {
 	case CompositeKey:
 		return sigScheme{id: pkix.AlgorithmIdentifier{Algorithm: k.Alg.OID}}, nil
 	case DSAKey:
-		return sigScheme{}, errors.New("DSA keys cannot sign in go-ca")
+		return sigScheme{}, errors.New("DSA keys cannot sign in OpenKCA")
 	}
 	if !CanSign(key) {
 		return sigScheme{}, fmt.Errorf("%s keys cannot sign", KeyAlgorithm(key))
@@ -218,8 +218,8 @@ func (s sigScheme) sign(key crypto.Signer, msg []byte) ([]byte, error) {
 }
 
 // VerifySignature checks a signature made with the algorithm algo over
-// msg by pub, for every algorithm go-ca reads: RSA (PKCS#1 v1.5 and PSS
-// with any parameters), DSA, ECDSA on every curve go-ca knows, Ed25519,
+// msg by pub, for every algorithm OpenKCA reads: RSA (PKCS#1 v1.5 and PSS
+// with any parameters), DSA, ECDSA on every curve OpenKCA knows, Ed25519,
 // Ed448, ML-DSA, SLH-DSA and Composite ML-DSA.
 func VerifySignature(pub crypto.PublicKey, algo pkix.AlgorithmIdentifier, msg, sig []byte) error {
 	oid := algo.Algorithm

@@ -1,6 +1,6 @@
 // Package pkcs12 reads and writes PKCS#12 files (RFC 7292). It moves keys
 // as PKCS#8 PrivateKeyInfo and certificates as DER and leaves parsing them
-// to the caller, so it takes every key type go-ca knows, including those
+// to the caller, so it takes every key type OpenKCA knows, including those
 // crypto/x509 cannot read.
 package pkcs12
 
@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"unicode/utf16"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 var (

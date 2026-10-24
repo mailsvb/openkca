@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // openssl ca knows these reasons in the revocation field (apps/ca.c).
@@ -53,7 +53,7 @@ func oneline(der []byte) string {
 }
 
 // Entry renders one index line for a certificate.
-func Entry(c *gcadb.Cert, rev *gcadb.Revocation, now time.Time) string {
+func Entry(c *db.Cert, rev *db.Revocation, now time.Time) string {
 	info := pki.DescribeCert(c.DER)
 	status, revField := "V", ""
 	switch {
@@ -70,7 +70,7 @@ func Entry(c *gcadb.Cert, rev *gcadb.Revocation, now time.Time) string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s\tunknown\t%s\n", status, indexTime(info.NotAfter), revField, c.Serial, subject)
 }
 
-func subjectOf(c *gcadb.Cert) []byte {
+func subjectOf(c *db.Cert) []byte {
 	if raw, err := pki.RawSubject(c.DER); err == nil {
 		return raw
 	}
@@ -93,16 +93,16 @@ func isIndexFile(name string) bool {
 // CA folder (package cadir). Folders of CAs that are no longer live (in the
 // trash or purged) are removed if they hold nothing but index files;
 // other files there are left alone.
-func Write(dir, db string, snap *gcadb.Snapshot) error {
-	base := cadir.Base(dir, db)
+func Write(dir, dbName string, snap *db.Snapshot) error {
+	base := cadir.Base(dir, dbName)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return err
 	}
-	revs := map[string]*gcadb.Revocation{}
+	revs := map[string]*db.Revocation{}
 	for _, r := range snap.Revocations {
 		revs[fmt.Sprint(r.CAID, "/", r.Serial)] = r
 	}
-	var cas []*gcadb.Cert
+	var cas []*db.Cert
 	for _, c := range snap.Certs {
 		if c.CA && c.Authority != nil {
 			cas = append(cas, c)
@@ -112,7 +112,7 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 	live := map[string]bool{}
 	now := time.Now()
 	for _, ca := range cas {
-		folder, err := cadir.Path(dir, db, ca.Authority.UUID)
+		folder, err := cadir.Path(dir, dbName, ca.Authority.UUID)
 		if err != nil {
 			return err
 		}

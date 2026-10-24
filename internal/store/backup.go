@@ -25,12 +25,12 @@ const (
 )
 
 // BackupDir is where backups are written, inside the state folder.
-func (s *Store) BackupDir() string { return filepath.Join(s.Dir, ".go-ca", "backup") }
+func (s *Store) BackupDir() string { return filepath.Join(s.Dir, ".openkca", "backup") }
 
-var backupSuffix = regexp.MustCompile(`^\.(\d{14})(-\d+)?(\.gca|\.xdb)$`)
+var backupSuffix = regexp.MustCompile(`^\.(\d{14})(-\d+)?(\.okca|\.xdb)$`)
 
 // Backup writes a consistent copy of the open database to
-// .go-ca/backup/<name>.<yyyyMMddHHmmss>.gca (SQLite's VACUUM INTO, which
+// .openkca/backup/<name>.<yyyyMMddHHmmss>.okca (SQLite's VACUUM INTO, which
 // reads inside one transaction) and applies the retention options. It
 // returns the backup's path.
 func (h *Handle) Backup(ctx context.Context) (string, error) {
@@ -41,7 +41,7 @@ func (h *Handle) Backup(ctx context.Context) (string, error) {
 	stamp := time.Now().UTC().Format("20060102150405")
 	// Within one second, number further backups after the highest number
 	// in use, so that names never repeat and order stays intact.
-	path := filepath.Join(dir, h.Name+"."+stamp+ExtGCA)
+	path := filepath.Join(dir, h.Name+"."+stamp+ExtOKCA)
 	existing, err := h.store.Backups(h.Name)
 	if err != nil {
 		return "", err
@@ -58,7 +58,7 @@ func (h *Handle) Backup(ctx context.Context) (string, error) {
 		}
 	}
 	if next >= 0 {
-		path = filepath.Join(dir, fmt.Sprintf("%s.%s-%d%s", h.Name, stamp, next+1, ExtGCA))
+		path = filepath.Join(dir, fmt.Sprintf("%s.%s-%d%s", h.Name, stamp, next+1, ExtOKCA))
 	}
 	if _, err := h.DB.SQL.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
 		return "", fmt.Errorf("backup: %w", err)
@@ -81,7 +81,7 @@ func (s *Store) backupFile(ctx context.Context, path, name string) error {
 		return err
 	}
 	defer db.Close()
-	dst := filepath.Join(dir, name+"."+time.Now().UTC().Format("20060102150405")+ExtGCA)
+	dst := filepath.Join(dir, name+"."+time.Now().UTC().Format("20060102150405")+ExtOKCA)
 	if _, err := db.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
 		return err
 	}
@@ -104,8 +104,8 @@ func (h *Handle) retention(ctx context.Context) (keep, days int) {
 	return keep, days
 }
 
-// Backups lists the backup files of one go-ca database, newest first.
-func (s *Store) Backups(name string) ([]string, error) { return s.backupsWithExt(name, ExtGCA) }
+// Backups lists the backup files of one OpenKCA database, newest first.
+func (s *Store) Backups(name string) ([]string, error) { return s.backupsWithExt(name, ExtOKCA) }
 
 func (s *Store) backupsWithExt(name, ext string) ([]string, error) {
 	entries, err := os.ReadDir(s.BackupDir())

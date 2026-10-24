@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 func sshTestKeys(t *testing.T) map[string]crypto.Signer {
@@ -113,7 +113,7 @@ func TestSSHFormatsRoundTrip(t *testing.T) {
 		probeOne(t, name+" rfc4716", pub, "", k, comment, false)
 		line, _ := SSHPublic(k.Public(), comment)
 		probeOne(t, name+" authorized_keys", line, "", k, comment, false)
-		// x/crypto's own reader takes go-ca's OpenSSH files
+		// x/crypto's own reader takes OpenKCA's OpenSSH files
 		if _, ok := k.(pki.DSAKey); !ok {
 			enc, _ := OpenSSHPrivate(k, comment, []byte("secret"))
 			if _, err := ssh.ParseRawPrivateKeyWithPassphrase(enc, []byte("secret")); err != nil {
@@ -209,11 +209,11 @@ func TestSSHKeygenFiles(t *testing.T) {
 			t.Fatalf("%s.pub: %+v", f, pr)
 		}
 	}
-	// go-ca's files read by ssh-keygen; one with the default bcrypt rounds
+	// OpenKCA's files read by ssh-keygen; one with the default bcrypt rounds
 	_, edKey, _ := ed25519.GenerateKey(rand.Reader)
 	b, _ := OpenSSHPrivate(edKey, "c", []byte("secret"))
-	os.WriteFile(filepath.Join(dir, "goca-default"), b, 0o600)
-	run(t, dir, "ssh-keygen", "-y", "-P", "secret", "-f", "goca-default")
+	os.WriteFile(filepath.Join(dir, "okca-default"), b, 0o600)
+	run(t, dir, "ssh-keygen", "-y", "-P", "secret", "-f", "okca-default")
 	fastBcrypt(t)
 	// OpenSSH 10 removed DSA; older builds may also leave it out
 	noDSA := exec.Command("ssh-keygen", "-q", "-t", "dsa", "-N", "", "-f", filepath.Join(dir, "dsa-probe")).Run() != nil
@@ -224,7 +224,7 @@ func TestSSHKeygenFiles(t *testing.T) {
 		want, _ := SSHPublic(k.Public(), "")
 		for _, pw := range []string{"", "secret"} {
 			b, _ := OpenSSHPrivate(k, "c", []byte(pw))
-			f := filepath.Join(dir, "goca-"+name+pw)
+			f := filepath.Join(dir, "okca-"+name+pw)
 			os.WriteFile(f, b, 0o600)
 			got := run(t, dir, "ssh-keygen", "-y", "-P", pw, "-f", f)
 			if strings.Fields(got)[1] != strings.Fields(string(want))[1] {
@@ -232,7 +232,7 @@ func TestSSHKeygenFiles(t *testing.T) {
 			}
 		}
 		rfc, _ := RFC4716Public(k.Public(), "a comment")
-		f := filepath.Join(dir, "goca-"+name+".rfc")
+		f := filepath.Join(dir, "okca-"+name+".rfc")
 		os.WriteFile(f, rfc, 0o600)
 		if got := run(t, dir, "ssh-keygen", "-i", "-m", "RFC4716", "-f", f); strings.Fields(got)[1] != strings.Fields(string(want))[1] {
 			t.Fatalf("%s: ssh-keygen -i\n%s", name, got)
@@ -275,13 +275,13 @@ func TestPuTTYgenFiles(t *testing.T) {
 			}
 		}
 	}
-	// go-ca's files read by puttygen
+	// OpenKCA's files read by puttygen
 	for name, k := range sshTestKeys(t) {
 		want, _ := SSHPublic(k.Public(), "")
 		for _, v := range []int{2, 3} {
 			for _, pw := range []string{"", "secret"} {
 				b, _ := PuTTYPrivate(k, "c", v, []byte(pw))
-				f := filepath.Join(dir, "goca-"+name+pw+".ppk")
+				f := filepath.Join(dir, "okca-"+name+pw+".ppk")
 				os.WriteFile(f, b, 0o600)
 				pass := emptyFile
 				if pw != "" {
@@ -294,7 +294,7 @@ func TestPuTTYgenFiles(t *testing.T) {
 			}
 		}
 		rfc, _ := RFC4716Public(k.Public(), "c")
-		f := filepath.Join(dir, "goca-"+name+".pub")
+		f := filepath.Join(dir, "okca-"+name+".pub")
 		os.WriteFile(f, rfc, 0o600)
 		if got := run(t, dir, "puttygen", f, "-O", "public-openssh"); strings.Fields(got)[1] != strings.Fields(string(want))[1] {
 			t.Fatalf("%s: puttygen public\n%s", name, got)

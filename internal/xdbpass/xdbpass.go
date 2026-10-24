@@ -1,5 +1,5 @@
 // Package xdbpass verifies the database password hash that XCA stores in
-// settings.pwhash. go-ca checks it once, before converting an XCA database,
+// settings.pwhash. OpenKCA checks it once, before converting an XCA database,
 // whose conversion drops the hash.
 //
 // Three forms exist (lib/pki_evp.cpp, lib/database_model.cpp):

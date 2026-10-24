@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/db"
 )
 
 // allUUIDs maps every item, trash included, to its UUID.
@@ -230,7 +230,7 @@ func TestAuthorityRenewal(t *testing.T) {
 	if authOf(r2) != auth || authOf(r1) != auth {
 		t.Fatalf("authority IDs %s %s, want %s", authOf(r2), authOf(r1), auth)
 	}
-	if err := h.Restore(ctx, r1); !errors.Is(err, gcadb.ErrAuthorityInUse) {
+	if err := h.Restore(ctx, r1); !errors.Is(err, db.ErrAuthorityInUse) {
 		t.Fatalf("restore of a CA whose authority ID is in use: %v", err)
 	}
 	if err := h.Restore(ctx, p.leaf); err == nil {
@@ -246,7 +246,7 @@ func TestAuthorityRenewal(t *testing.T) {
 	if authOf(r1) != auth {
 		t.Fatal("restored CA lost its authority ID")
 	}
-	if err := h.Restore(ctx, r2); !errors.Is(err, gcadb.ErrAuthorityInUse) {
+	if err := h.Restore(ctx, r2); !errors.Is(err, db.ErrAuthorityInUse) {
 		t.Fatalf("restore of the renewal: %v", err)
 	}
 	if _, err := os.Stat(extra); err != nil {

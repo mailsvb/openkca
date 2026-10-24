@@ -1,5 +1,5 @@
-// Package config reads go-ca's YAML configuration file: the server's
-// settings (formerly command line options) and the databases go-ca keeps
+// Package config reads OpenKCA's YAML configuration file: the server's
+// settings (formerly command line options) and the databases OpenKCA keeps
 // open.
 //
 //	general:
@@ -9,7 +9,7 @@
 //	  tls_key: ""
 //	  idle_timeout: 30m
 //	  max_upload_mb: 256
-//	  password_hash: "$argon2id$…"  # from "go-ca set-password"
+//	  password_hash: "$argon2id$…"  # from "openkca set-password"
 //	crl:
 //	  listen: ":8080"               # plain HTTP for CRLs and CA certificates; "" = off
 //	  base_urls:                    # offered as CDP/AIA in new certificates
@@ -17,11 +17,11 @@
 //	databases:
 //	  - name: Home Lab CA           # shown in the web UI
 //	    type: file
-//	    path: homelab.gca           # relative to data_dir
+//	    path: homelab.okca           # relative to data_dir
 //	    password: "…"               # optional: open in the background
 //
-// A database with a password is opened when go-ca starts and stays open
-// with its keys unlocked, so that go-ca can do CA work on its own. Users
+// A database with a password is opened when OpenKCA starts and stays open
+// with its keys unlocked, so that OpenKCA can do CA work on its own. Users
 // still log into it with the database password in the web UI. A database
 // without a password is only listed under its name.
 package config
@@ -50,7 +50,7 @@ const (
 	DefaultMaxUploadMB = 256
 )
 
-// TypeFile is the only database type: a .gca file in the data folder.
+// TypeFile is the only database type: a .okca file in the data folder.
 const TypeFile = "file"
 
 // DefaultCRLListen is the address of the plain HTTP publication server.
@@ -93,7 +93,7 @@ type Database struct {
 	Password string `yaml:"password"`
 }
 
-// Background reports whether go-ca keeps the database open on its own.
+// Background reports whether OpenKCA keeps the database open on its own.
 func (d Database) Background() bool { return d.Password != "" }
 
 // Config is a parsed and checked configuration. Paths are absolute.
@@ -212,7 +212,7 @@ func (c *Config) check(base string) error {
 			return fmt.Errorf("%s: %w", where, err)
 		}
 		d.Path = p
-		// The file name without .gca is the database's name in URLs and
+		// The file name without .okca is the database's name in URLs and
 		// folders, so it must be unique too.
 		stem := strings.ToLower(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)))
 		if j, dup := files[stem]; dup {
@@ -252,7 +252,7 @@ func (c *CRL) check() error {
 }
 
 // dataPath checks a database path from the configuration: relative to the
-// data folder, inside it, and a .gca file.
+// data folder, inside it, and a .okca file.
 func dataPath(dataDir, p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
@@ -271,14 +271,14 @@ func dataPath(dataDir, p string) (string, error) {
 		}
 	}
 	switch strings.ToLower(filepath.Ext(clean)) {
-	case ".gca":
-		if filepath.Ext(clean) != ".gca" {
-			return "", errors.New("the file extension must be .gca in lower case")
+	case ".okca":
+		if filepath.Ext(clean) != ".okca" {
+			return "", errors.New("the file extension must be .okca in lower case")
 		}
 	case ".xdb":
-		return "", errors.New("an XCA database (.xdb) cannot be configured: open it once in the web UI to convert it, then configure the .gca file")
+		return "", errors.New("an XCA database (.xdb) cannot be configured: open it once in the web UI to convert it, then configure the .okca file")
 	default:
-		return "", errors.New("path must name a go-ca database (.gca)")
+		return "", errors.New("path must name an OpenKCA database (.okca)")
 	}
 	return filepath.Join(dataDir, clean), nil
 }

@@ -1,5 +1,5 @@
 // Package background keeps the databases configured with a password open
-// for as long as go-ca runs, with their keyring unlocked, so that go-ca can
+// for as long as OpenKCA runs, with their keyring unlocked, so that OpenKCA can
 // do CA work (such as signing revocation lists) without anyone logged in.
 //
 // Web sessions on the same database share its open handle (store.Acquire
@@ -15,14 +15,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // Database is one database held open in the background.
 type Database struct {
-	Name   string // the store name (file name without .gca)
+	Name   string // the store name (file name without .okca)
 	Label  string // the configured name
 	Handle *store.Handle
 

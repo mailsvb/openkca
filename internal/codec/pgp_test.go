@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 type pgpCase struct {
@@ -254,7 +254,7 @@ func colonFingerprints(out []byte) []string {
 	return fprs
 }
 
-// TestPGPWithGnuPG has gpg import go-ca's v4 keys and use them: verify
+// TestPGPWithGnuPG has gpg import OpenKCA's v4 keys and use them: verify
 // fingerprints, sign and verify, encrypt and decrypt, import the
 // revocation certificate.
 func TestPGPWithGnuPG(t *testing.T) {
@@ -276,10 +276,10 @@ func TestPGPWithGnuPG(t *testing.T) {
 			g.must(pub, "--import")
 			got := colonFingerprints(g.must(nil, "--with-colons", "--list-keys"))
 			if len(got) != 2 || got[0] != info.Keys[0].Fingerprint || got[1] != info.Keys[1].Fingerprint {
-				t.Fatalf("gpg fingerprints %v, go-ca %s %s", got, info.Keys[0].Fingerprint, info.Keys[1].Fingerprint)
+				t.Fatalf("gpg fingerprints %v, OpenKCA %s %s", got, info.Keys[0].Fingerprint, info.Keys[1].Fingerprint)
 			}
-			// gpg encrypts to the public key; go-ca's secret, imported, decrypts
-			msg := []byte("hello from go-ca")
+			// gpg encrypts to the public key; OpenKCA's secret, imported, decrypts
+			msg := []byte("hello from OpenKCA")
 			enc := g.must(msg, "--trust-model", "always", "--armor", "--recipient", info.Keys[0].Fingerprint, "--encrypt")
 			sec, err := PGPSecret(cert, []crypto.Signer{primary, sub}, []byte("pw"))
 			if err != nil {
@@ -349,7 +349,7 @@ func TestPGPFromGnuPG(t *testing.T) {
 					t.Fatalf("%v: info %+v", exp.args, e.Info)
 				}
 				if exp.primary {
-					// go-ca writes the secret back; gpg accepts it as the same key
+					// OpenKCA writes the secret back; gpg accepts it as the same key
 					sec, err := PGPSecret(e.Cert, e.Private, []byte("again"))
 					if err != nil {
 						t.Fatal(err)

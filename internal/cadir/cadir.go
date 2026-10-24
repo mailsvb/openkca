@@ -1,9 +1,9 @@
-// Package cadir lays out the folders in which go-ca keeps a CA's files on
+// Package cadir lays out the folders in which OpenKCA keeps a CA's files on
 // disk (its OpenSSL index and any other per-CA data):
 //
 //	<data-dir>/ca/<database>/<authority ID>/
 //
-// The folder is named after the CA's authority ID (package gcadb): the
+// The folder is named after the CA's authority ID (package db): the
 // UUID of the CA certificate, kept by a renewal with the same subject and
 // key. Renaming or renewing a CA keeps its folder, and a CA taken out of
 // the trash finds its files again.
@@ -23,7 +23,7 @@ const Root = "ca"
 func Base(dataDir, db string) string { return filepath.Join(dataDir, Root, db) }
 
 // Path returns the folder of one CA by its authority ID. The ID must be a
-// UUID in canonical form (lower case with hyphens, as gcadb stores it), so
+// UUID in canonical form (lower case with hyphens, as db stores it), so
 // that it is always one plain path element.
 func Path(dataDir, db, authorityID string) (string, error) {
 	if !IsUUID(authorityID) {

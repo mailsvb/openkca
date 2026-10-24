@@ -11,7 +11,7 @@ func TestCatalog(t *testing.T) {
 	if p.Tag.String() != "en" {
 		t.Fatalf("fallback language %s", p.Tag)
 	}
-	if got := p.T("app.name"); got != "go-ca" {
+	if got := p.T("app.name"); got != "OpenKCA" {
 		t.Fatalf("app.name = %q", got)
 	}
 	if got := p.T("databases.schema", 7); got != "XCA schema 7" {

@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // SSHCompatible reports whether a public key has an OpenSSH encoding.

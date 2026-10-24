@@ -17,10 +17,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/auth"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/i18n"
-	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/openkca/internal/auth"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/i18n"
+	"github.com/mailsvb/openkca/internal/store"
 )
 
 const serverPassword = "serverpass1"
@@ -160,7 +160,7 @@ func TestServerLoginFlow(t *testing.T) {
 	if loc := r2.Header.Get("Location"); loc != "/db/sample.xdb/converting" {
 		t.Fatalf("before the import has been picked up: %q", loc)
 	}
-	// The import ends in a session on the new go-ca database.
+	// The import ends in a session on the new OpenKCA database.
 	if loc := finishConversion(t, ts, c, "sample.xdb"); loc != "/db/sample/keys?notice=converted&name=sample.xdb" {
 		t.Fatalf("after the import: %q", loc)
 	}
@@ -178,12 +178,12 @@ func TestServerLoginFlow(t *testing.T) {
 	if loc := finishConversion(t, ts, c, "variants.xdb"); loc != "/db/variants/keys?notice=converted.ownpass&n=1" {
 		t.Fatalf("variants conversion: %q", loc)
 	}
-	for _, db := range []string{"sample", "variants"} {
+	for _, dbName := range []string{"sample", "variants"} {
 		for _, tab := range append(tabs, "options") {
-			r, _ = c.Get(ts.URL + "/db/" + db + "/" + tab)
+			r, _ = c.Get(ts.URL + "/db/" + dbName + "/" + tab)
 			b := body(t, r)
 			if r.StatusCode != http.StatusOK || strings.Contains(b, "[") && regexp.MustCompile(`\[[a-z]+\.[a-z.]+\]`).MatchString(b) {
-				t.Errorf("%s/%s: status %d or untranslated key", db, tab, r.StatusCode)
+				t.Errorf("%s/%s: status %d or untranslated key", dbName, tab, r.StatusCode)
 			}
 		}
 	}
@@ -297,7 +297,7 @@ func TestCreateImportUpgrade(t *testing.T) {
 	}
 	finishConversion(t, ts, c, "uploaded.xdb")
 	info, _ := srv.store.Lookup(context.Background(), "uploaded")
-	if info.Status != store.Supported || info.Schema != gcadb.Schema || info.XCA {
+	if info.Status != store.Supported || info.Schema != db.Schema || info.XCA {
 		t.Fatalf("after login: %+v", info)
 	}
 	if _, err := srv.store.Lookup(context.Background(), "uploaded.xdb"); err == nil {

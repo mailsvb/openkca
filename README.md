@@ -1,16 +1,18 @@
-# go-ca
+# OpenKCA
+
+**Open Key and Certificate Authority** (formerly go-ca).
 
 A web based certificate authority with SSH and OpenPGP keys, written in Go.
 One statically linked binary serves the UI over HTTPS. It started as a web
 UI for [XCA](https://github.com/chris2511/xca) databases and still takes
-them over: an XCA `.xdb` file is imported once into a go-ca database
-(`.gca`), which has go-ca's own schema and encryption.
+them over: an XCA `.xdb` file is imported once into an OpenKCA database
+(`.okca`), which has OpenKCA's own schema and encryption.
 
 ## Features
 
 **Databases**
 
-- Lists every go-ca database (`.gca`) and every XCA database waiting to be
+- Lists every OpenKCA database (`.okca`) and every XCA database waiting to be
   imported (`.xdb`) in the data folder; create new databases and upload
   existing ones (either kind) from the start page. Several databases can
   be open at the same time, each with its own password (at least 8
@@ -19,7 +21,7 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
   their issuers), templates and revocation lists, with search, a column
   chooser and expiry colours, plus XCA's shared options.
 - An XCA database is imported at its first
-  login into a new go-ca database of the same name, with a progress page
+  login into a new OpenKCA database of the same name, with a progress page
   while the keys are re-encrypted. Item IDs, names, comments, dates and all
   links carry over; items XCA had marked deleted go to the trash. Once the
   new database has been verified (every item and link is there, the
@@ -119,7 +121,7 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
   OpenPGP v4 keys for GnuPG and every other program or as v6 keys (RFC
   9580) for Sequoia, OpenPGP.js and gopenpgp. Post-quantum v6 keys (RFC
   9980) are ML-DSA-65+Ed25519 with an ML-KEM-768+X25519 subkey or
-  ML-DSA-87+Ed448 with ML-KEM-1024+X448; they are go-ca's Composite ML-DSA
+  ML-DSA-87+Ed448 with ML-KEM-1024+X448; they are OpenKCA's Composite ML-DSA
   and ML-KEM keys. GnuPG 2.4 knows neither Ed448/X448 as RFC 9580 keys nor
   the post-quantum algorithms.
 - Any stored RSA, ECDSA (also on secp256k1), EdDSA or ML-DSA composite
@@ -178,7 +180,7 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
   key are offered: encrypted traditional PEM takes RSA, EC and DSA keys;
   keys without a traditional form are written as PKCS#8, as OpenSSL 3
   does. PKCS#12 takes every key type; OpenSSL reads the post-quantum ones
-  from version 3.5 on, and nothing outside go-ca reads composite keys yet.
+  from version 3.5 on, and nothing outside OpenKCA reads composite keys yet.
 - Beyond XCA, keys also export as OpenSSH private keys with their comment
   (plain or passphrase protected, as ssh-keygen writes them), as PuTTY
   private keys (`.ppk` version 3 or 2, plain or encrypted) and as RFC 4716
@@ -191,7 +193,7 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 - Import PEM (any number of blocks), DER, PKCS#7, PKCS#8 (encrypted with
   PBES2 using PBKDF2 or scrypt, with the PKCS#12 schemes such as
   PBE-SHA1-3DES, old OpenSSL's default, or with PBES1 MD5/SHA-1 and DES or
-  RC2; a scheme go-ca cannot decrypt, such as Camellia, is reported as
+  RC2; a scheme OpenKCA cannot decrypt, such as Camellia, is reported as
   such, not as a wrong password), PKCS#12 (any
   number of keys and certificates, also certificates or a key alone; a key
   of an unknown type is reported and its certificate still imported), SSH
@@ -216,23 +218,22 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 - Diffie-Hellman parameters (1024 to 4096 bit), generated in the background.
 - An OID resolver.
 
-| Database                                  | go-ca                                          |
-| ----------------------------------------- | ---------------------------------------------- |
-| go-ca `.gca` (schema 1)                   | supported                                      |
-| older go-ca `.gca` schema (none yet)      | upgraded in place when opened, after a backup  |
-| XCA schema 5 to 8 (XCA 2.x and later)     | imported into a new `.gca` on first login      |
-| XCA schema below 5, pre-2.0 format        | refused                                        |
-| go-ca's former XCA based `.xdb` format    | refused                                        |
-| newer XCA or go-ca schema                 | refused until supported                        |
+| Database                                | OpenKCA                                       |
+| --------------------------------------- | --------------------------------------------- |
+| OpenKCA `.okca` (schema 1)              | supported                                     |
+| older OpenKCA `.okca` schema (none yet) | upgraded in place when opened, after a backup |
+| XCA schema 5 to 8 (XCA 2.x and later)   | imported into a new `.okca` on first login    |
+| XCA schema below 5, pre-2.0 format      | refused                                       |
+| newer XCA or OpenKCA schema             | refused until supported                       |
 
-The go-ca schema was reset to 1 during development: `.gca` files from
-earlier development versions are not supported; import them again from
-XCA. From schema 1 on, every schema change comes with a migration step
-(`internal/gcadb`, `steps`) that upgrades older databases when they are
+OpenKCA was called go-ca until version 0.11.0. Its `.gca` files from
+those development versions are not supported; import the databases again
+from XCA. From schema 1 on, every schema change comes with a migration step
+(`internal/db`, `steps`) that upgrades older databases when they are
 opened.
 
-A go-ca database is an SQLite file with its own schema (`internal/gcadb`)
-and SQLite's application ID `gca1`: every item with a UUID (version 7)
+An OpenKCA database is an SQLite file with its own schema (`internal/db`)
+and SQLite's application ID `okc1`: every item with a UUID (version 7)
 next to its row ID, DER objects as BLOBs with SHA-256
 fingerprints, links as foreign keys, templates as JSON, a trash and an
 append-only audit table. The `kdf` and `dek` settings hold the Argon2id
@@ -245,7 +246,7 @@ still be exported in XCA's formats.
 
 Releases with binaries for Linux (amd64, arm64), Windows (amd64) and macOS
 (amd64, arm64) are on the
-[releases page](https://github.com/mailsvb/go-ca/releases). `go-ca version`
+[releases page](https://github.com/mailsvb/go-ca/releases). `openkca version`
 prints the version of a binary.
 
 ## Build
@@ -254,7 +255,7 @@ Requires Go 1.27 or later (the toolchain is downloaded automatically by older
 `go` commands). No C compiler is needed:
 
 ```sh
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o go-ca ./cmd/go-ca
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o openkca ./cmd/openkca
 ```
 
 ## Versions and releases
@@ -275,21 +276,21 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
 
 ## Run
 
-All settings are in a YAML configuration file. go-ca reads `config.yaml`
+All settings are in a YAML configuration file. OpenKCA reads `config.yaml`
 next to its executable, or the file given with `--config`, the only command
 line option. `config.example.yaml` describes every setting.
 
 ```sh
 # once: create a server password hash and put the printed line into the
 # general section of config.yaml
-./go-ca set-password
+./openkca set-password
 
 # serve on https://<host>:8443/ (the listen address is in the config)
-./go-ca                          # config.yaml next to the executable
-./go-ca --config /etc/go-ca/config.yaml
+./openkca                          # config.yaml next to the executable
+./openkca --config /etc/openkca/config.yaml
 
 # print the version
-./go-ca version
+./openkca version
 ```
 
 ```yaml
@@ -305,19 +306,19 @@ crl:
 databases:
   - name: Home Lab CA
     type: file
-    path: homelab.gca
+    path: homelab.okca
     password: "…"
 ```
 
 | `general` key    | Default  | Meaning                                                          |
 | ---------------- | -------- | ---------------------------------------------------------------- |
-| `data_dir`       | required | folder with the `.gca` and `.xdb` files, rescanned on every page load |
+| `data_dir`       | required | folder with the `.okca` and `.xdb` files, rescanned on every page load |
 | `listen`         | `:8443`  | listen address (all interfaces by default)                       |
 | `tls_cert`       |          | PEM certificate; without it a self-issued certificate is used    |
 | `tls_key`        |          | PEM key for `tls_cert`                                           |
 | `idle_timeout`   | `30m`    | idle timeout of server and database sessions                     |
 | `max_upload_mb`  | `256`    | largest upload (database file or items to import), in MB         |
-| `password_hash`  | required | argon2id hash of the server password, from `go-ca set-password`  |
+| `password_hash`  | required | argon2id hash of the server password, from `openkca set-password`  |
 
 Relative paths (`data_dir`, `tls_cert`, `tls_key`) are relative to the
 configuration file's folder; unknown keys are an error.
@@ -329,39 +330,32 @@ configuration file's folder; unknown keys are an error.
 
 ### Databases
 
-Each entry of `databases` names one go-ca database:
+Each entry of `databases` names one OpenKCA database:
 
 | Key        | Meaning                                                                    |
 | ---------- | -------------------------------------------------------------------------- |
 | `name`     | the name shown in the web UI (unique)                                       |
-| `type`     | `file`, the only type: a `.gca` file                                        |
+| `type`     | `file`, the only type: a `.okca` file                                        |
 | `path`     | the file, relative to `data_dir`; may be in a subfolder, never outside it   |
 | `password` | optional: the database password, to keep the database open in the background |
 
-A database with a `password` is opened when go-ca starts and stays open
-with its data key unlocked, so that go-ca can do CA work on it on its own.
-go-ca refuses to start when such a database is missing, locked by another
+A database with a `password` is opened when OpenKCA starts and stays open
+with its data key unlocked, so that OpenKCA can do CA work on it on its own.
+OpenKCA refuses to start when such a database is missing, locked by another
 process or the password is wrong. Logging into it in the web UI still needs
 the database password; the web session unlocks its own copy of the key.
 Its password cannot be changed in the web UI, since that would replace the
 data key under the running background session: remove the password from
 the configuration, restart, change it, put the new one in and restart
 again. Keep a configuration file with passwords readable by its owner only;
-go-ca warns at startup otherwise.
+OpenKCA warns at startup otherwise.
 
 A database without `password` is only listed under its name. Configured
-databases come first on the login page; all other `.gca` and `.xdb` files
+databases come first on the login page; all other `.okca` and `.xdb` files
 directly in the data folder are listed after them and work as before.
-A configured name (the file name without `.gca`) is taken for new and
-uploaded databases. Only `.gca` files can be configured: open an XCA
-database once in the web UI to convert it, then configure the `.gca` file.
-
-Upgrading from the command line options: `--data-dir`, `--listen`,
-`--tls-cert`, `--tls-key`, `--idle-timeout` and `--max-upload` became
-`data_dir`, `listen`, `tls_cert`, `tls_key`, `idle_timeout` and
-`max_upload_mb`. The server password hash moved from
-`<data-dir>/.go-ca/server-password` into `password_hash`: copy it over, or
-run `go-ca set-password` again.
+A configured name (the file name without `.okca`) is taken for new and
+uploaded databases. Only `.okca` files can be configured: open an XCA
+database once in the web UI to convert it, then configure the `.okca` file.
 
 ### CRL publishing
 
@@ -410,7 +404,7 @@ but not published, as the revocations page shows. A generated CRL
 replaces the CA's previously generated one (the CRL number keeps
 counting); imported CRLs stay.
 
-**Automatic signing.** In databases kept open in the background, go-ca
+**Automatic signing.** In databases kept open in the background, OpenKCA
 signs a new CRL for every CA whose key is protected by the database
 password: a first one, after every change of its revocations
 (revoke, unrevoke, edit, renewal with revocation, entries aging out) and
@@ -424,12 +418,12 @@ CRL…" offers XCA's options. The CA page says which applies.
 cache a CRL until its next update, so a revocation reaches them only
 then: keep the interval of CAs that issue end-entity certificates short.
 
-**Expiry monitoring.** go-ca checks every published CRL hourly, logs a
+**Expiry monitoring.** OpenKCA checks every published CRL hourly, logs a
 warning 7 days before its next update and an error once it has passed,
 and shows the same on the databases page. An expired CRL makes many
 clients reject every certificate below that CA.
 
-Without `tls_cert`, go-ca creates a self-signed certificate (CN `go-ca`,
+Without `tls_cert`, OpenKCA creates a self-signed certificate (CN `OpenKCA`,
 SANs `localhost`, `127.0.0.1`, `::1`, valid 365 days) on first start, reuses it
 and replaces it automatically once it has expired. Browsers on other machines
 will warn about the name until you pass a certificate for the real host name.
@@ -438,12 +432,12 @@ will warn about the name until you pass a certificate for the real host name.
 
 ```
 /srv/xca/
-├── ca-root.gca           go-ca databases, listed on the login page
-├── ca-root.gca.lock      lock held while go-ca has the database open
+├── ca-root.okca           OpenKCA databases, listed on the login page
+├── ca-root.okca.lock      lock held while OpenKCA has the database open
 ├── old-ca.xdb            an XCA database, imported (and deleted) at its first login
-└── .go-ca/               server state (never listed)
+└── .openkca/               server state (never listed)
     ├── tls.crt, tls.key  self-issued certificate
-    └── backup/           <name>.<yyyyMMddHHmmss>.gca
+    └── backup/           <name>.<yyyyMMddHHmmss>.okca
 /srv/xca/ca/<database>/<authority ID>/   per-CA folder:
     index.txt, index.txt.attr             certificate index (openssl ocsp -index)
     ca.crt, crl.der                       published CA certificate and newest CRL
@@ -459,9 +453,9 @@ How many are kept is a database option: at most 10 and none older than
 every older backup is deleted, since they still open with the old
 password, and a new one is written.
 
-Two go-ca processes cannot open the same database (`flock` on the `.lock`
+Two OpenKCA processes cannot open the same database (`flock` on the `.lock`
 file); a database kept open in the background holds its lock as long as
-go-ca runs.
+OpenKCA runs.
 
 ## Security
 
@@ -470,7 +464,7 @@ go-ca runs.
   happen at a time, so parallel login attempts cannot exhaust memory.
 - New database passwords need at least 8 characters.
 - A database configured with a `password` has its data key in memory for
-  as long as go-ca runs, and the password is stored in plain text in the
+  as long as OpenKCA runs, and the password is stored in plain text in the
   configuration file: anyone who can read that file or the process memory
   can sign with its CA keys. Configure passwords only for databases that
   need unattended CA work. Keys with their own password stay locked.
@@ -501,16 +495,16 @@ go test -race ./...
 Some tests compare against the `openssl`, `ssh-keygen`, `puttygen`
 (`putty-tools` on Debian and Ubuntu) and `gpg` command lines and are
 skipped where those are missing. The OpenPGP tests have gpg import
-go-ca's keys, encrypt to them, verify their signatures and import their
+OpenKCA's keys, encrypt to them, verify their signatures and import their
 revocation certificates, and read keys gpg generated in each export form.
 
 `testdata/xdb/` holds databases generated with the real XCA command line and
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
 password, schema 8 and 9, a pre-2.0 file); the tests import them into
-go-ca databases. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
+OpenKCA databases. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
 `xca`, `openssl`, `sqlite3`, `perl`).
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
-and lets the XCA command line import each file, except go-ca's own SSH
+and lets the XCA command line import each file, except OpenKCA's own SSH
 and OpenPGP formats.
 
 Third-party code: [htmx](https://htmx.org) 2.0.11 (BSD Zero Clause License,

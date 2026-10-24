@@ -10,14 +10,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
 )
 
-var typeTabs = map[int]string{gcadb.TypeKey: "keys", gcadb.TypeRequest: "requests", gcadb.TypeCert: "certs", gcadb.TypeCRL: "crls", gcadb.TypeTemplate: "templates"}
-var typeKinds = map[int]string{gcadb.TypeKey: "key", gcadb.TypeRequest: "request", gcadb.TypeCert: "cert", gcadb.TypeCRL: "crl", gcadb.TypeTemplate: "template"}
+var typeTabs = map[int]string{db.TypeKey: "keys", db.TypeRequest: "requests", db.TypeCert: "certs", db.TypeCRL: "crls", db.TypeTemplate: "templates"}
+var typeKinds = map[int]string{db.TypeKey: "key", db.TypeRequest: "request", db.TypeCert: "cert", db.TypeCRL: "crl", db.TypeTemplate: "template"}
 
 func formIDs(vals []string) []int64 {
 	var ids []int64
@@ -44,7 +44,7 @@ type exportForm struct {
 	Filename string
 }
 
-func (s *Server) exportForm(r *http.Request, snap *gcadb.Snapshot, ids []int64) (*exportForm, bool) {
+func (s *Server) exportForm(r *http.Request, snap *db.Snapshot, ids []int64) (*exportForm, bool) {
 	f := &exportForm{IDs: ids, Formats: store.ExportFormats(snap, ids)}
 	if len(ids) == 0 || len(f.Formats) == 0 {
 		return f, false
@@ -52,11 +52,11 @@ func (s *Server) exportForm(r *http.Request, snap *gcadb.Snapshot, ids []int64) 
 	ix := newIndex(snap)
 	for _, id := range ids {
 		f.Items = append(f.Items, link{id, ix.names[id]})
-		if k := ix.keys[id]; k != nil && k.Protection == gcadb.ProtPassword {
+		if k := ix.keys[id]; k != nil && k.Protection == db.ProtPassword {
 			f.OwnPass = true
 		}
 		if c := ix.certs[id]; c != nil {
-			if k := ix.keys[c.KeyID]; k != nil && k.Protection == gcadb.ProtPassword {
+			if k := ix.keys[c.KeyID]; k != nil && k.Protection == db.ProtPassword {
 				f.OwnPass = true
 			}
 		}

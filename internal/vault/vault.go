@@ -35,7 +35,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // ErrWrongPassword is returned when a password does not open the DEK or a
@@ -194,7 +194,7 @@ func (k *Keyring) Wipe() {
 	k.mu.Unlock()
 }
 
-func dekAAD(kdf string) []byte { return append([]byte("go-ca dek v1\x00"), kdf...) }
+func dekAAD(kdf string) []byte { return append([]byte("openkca dek v1\x00"), kdf...) }
 
 // Wrap derives a KEK from password with fresh salt and parameters p and
 // wraps the DEK. It returns the "kdf" and "dek" settings. The keyring

@@ -15,7 +15,7 @@ general:
   data_dir: data
   listen: "127.0.0.1:9443"
   tls_cert: tls/cert.pem
-  tls_key: /etc/go-ca/key.pem
+  tls_key: /etc/openkca/key.pem
   idle_timeout: 45m
   max_upload_mb: 64
   password_hash: " $argon2id$x "
@@ -27,10 +27,10 @@ crl:
 databases:
   - name: Home Lab CA
     type: file
-    path: homelab.gca
+    path: homelab.okca
     password: secret
   - name: Archive
-    path: old/archive.gca
+    path: old/archive.okca
 `), base)
 	if err != nil {
 		t.Fatal(err)
@@ -40,17 +40,17 @@ databases:
 		g.MaxUploadMB != 64 || g.PasswordHash != "$argon2id$x" {
 		t.Fatalf("general = %+v", g)
 	}
-	if g.TLSCert != filepath.Join(base, "tls/cert.pem") || g.TLSKey != "/etc/go-ca/key.pem" {
+	if g.TLSCert != filepath.Join(base, "tls/cert.pem") || g.TLSKey != "/etc/openkca/key.pem" {
 		t.Fatalf("tls = %q %q", g.TLSCert, g.TLSKey)
 	}
 	if len(c.Databases) != 2 {
 		t.Fatalf("databases = %+v", c.Databases)
 	}
 	d0, d1 := c.Databases[0], c.Databases[1]
-	if d0.Path != filepath.Join(base, "data", "homelab.gca") || !d0.Background() {
+	if d0.Path != filepath.Join(base, "data", "homelab.okca") || !d0.Background() {
 		t.Fatalf("db0 = %+v", d0)
 	}
-	if d1.Type != TypeFile || d1.Path != filepath.Join(base, "data", "old", "archive.gca") || d1.Background() {
+	if d1.Type != TypeFile || d1.Path != filepath.Join(base, "data", "old", "archive.okca") || d1.Background() {
 		t.Fatalf("db1 = %+v", d1)
 	}
 	if !c.HasPasswords() {
@@ -102,19 +102,19 @@ func TestParseErrors(t *testing.T) {
 		{"general:\n  data_dir: d\n  idle_timeout: 10s\n", "at least 1m"},
 		{"general:\n  data_dir: d\n  idle_timeout: soon\n", "time.Duration"},
 		{"general:\n  data_dir: d\n  max_upload_mb: -1\n", "max_upload_mb"},
-		{db("  - path: a.gca\n"), "name is required"},
-		{db("  - name: A\n    path: a.gca\n  - name: A\n    path: b.gca\n"), "name already used"},
-		{db("  - name: A\n    type: ldap\n    path: a.gca\n"), "unknown type"},
+		{db("  - path: a.okca\n"), "name is required"},
+		{db("  - name: A\n    path: a.okca\n  - name: A\n    path: b.okca\n"), "name already used"},
+		{db("  - name: A\n    type: ldap\n    path: a.okca\n"), "unknown type"},
 		{db("  - name: A\n"), "path is required"},
-		{db("  - name: A\n    path: /abs/a.gca\n"), "relative"},
-		{db("  - name: A\n    path: ../a.gca\n"), "inside"},
-		{db("  - name: A\n    path: x/../../a.gca\n"), "inside"},
-		{db("  - name: A\n    path: .hidden/a.gca\n"), "hidden"},
+		{db("  - name: A\n    path: /abs/a.okca\n"), "relative"},
+		{db("  - name: A\n    path: ../a.okca\n"), "inside"},
+		{db("  - name: A\n    path: x/../../a.okca\n"), "inside"},
+		{db("  - name: A\n    path: .hidden/a.okca\n"), "hidden"},
 		{db("  - name: A\n    path: a.xdb\n"), "XCA"},
-		{db("  - name: A\n    path: a.GCA\n"), "lower case"},
-		{db("  - name: A\n    path: a.db\n"), ".gca"},
-		{db("  - name: A\n    path: a.gca\n  - name: B\n    path: sub/A.gca\n"), "file name"},
-		{db("  - name: A\n    path: a.gca\n    passwd: x\n"), "field passwd not found"},
+		{db("  - name: A\n    path: a.OKCA\n"), "lower case"},
+		{db("  - name: A\n    path: a.db\n"), ".okca"},
+		{db("  - name: A\n    path: a.okca\n  - name: B\n    path: sub/A.okca\n"), "file name"},
+		{db("  - name: A\n    path: a.okca\n    passwd: x\n"), "field passwd not found"},
 		{gen + "crl:\n  base_urls: [https://pki.example.org]\n", "http://"},
 		{gen + "crl:\n  base_urls: [\"http://\"]\n", "no host"},
 		{gen + "crl:\n  base_urls: [\"http://x/?a=1\"]\n", "query"},
@@ -134,7 +134,7 @@ func TestLoadAndPermissions(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 	p := filepath.Join(dir, "config.yaml")
-	body := "general:\n  data_dir: data\ndatabases:\n  - name: A\n    type: file\n    path: a.gca\n    password: pw\n"
+	body := "general:\n  data_dir: data\ndatabases:\n  - name: A\n    type: file\n    path: a.okca\n    password: pw\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -15,15 +15,15 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xcaimport"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/vault"
+	"github.com/mailsvb/openkca/internal/xcaimport"
 )
 
 // ConvertReport says what an import changed.
 type ConvertReport struct {
-	Target        string // name of the new go-ca database
+	Target        string // name of the new OpenKCA database
 	Items         int
 	Trashed       int // items XCA had marked deleted, now in the trash
 	Skipped       []string
@@ -33,7 +33,7 @@ type ConvertReport struct {
 	Removed       []string // the imported XCA file
 }
 
-// Conversion is a running or finished import of an XCA database (.xdb) into a new go-ca database. Several logins may wait for
+// Conversion is a running or finished import of an XCA database (.xdb) into a new OpenKCA database. Several logins may wait for
 // the same conversion.
 type Conversion struct {
 	total atomic.Int64
@@ -89,7 +89,7 @@ func (c *Conversion) Result() (*vault.Keyring, ConvertReport, error) {
 }
 
 // StartImport checks password against an .xdb file (name ends with .xdb)
-// and imports it in the background into a new go-ca database with the
+// and imports it in the background into a new OpenKCA database with the
 // Argon2id cost p, or returns the import of that file already running.
 // When the new database has been verified, the .xdb file and its backups
 // are deleted. A wrong password returns pki.ErrWrongPassword.
@@ -203,19 +203,19 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		return nil, rep, err
 	}
-	db, err := sql.Open("sqlite", dsn(tmp, false))
+	sqldb, err := sql.Open("sqlite", dsn(tmp, false))
 	if err != nil {
 		return nil, rep, err
 	}
-	db.SetMaxOpenConns(1)
-	nk, ir, err := src.Import(ctx, db, password, p, nil, func(done, total int) {
+	sqldb.SetMaxOpenConns(1)
+	nk, ir, err := src.Import(ctx, sqldb, password, p, nil, func(done, total int) {
 		c.total.Store(int64(total))
 		c.done.Store(int64(done))
 	})
 	if err == nil {
-		_, err = db.ExecContext(ctx, "VACUUM")
+		_, err = sqldb.ExecContext(ctx, "VACUUM")
 	}
-	if cerr := db.Close(); err == nil {
+	if cerr := sqldb.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
@@ -234,11 +234,11 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 		return fail(fmt.Errorf("verifying the imported database: %w", err))
 	}
 	base := strings.TrimSuffix(info.Name, ExtXCA)
-	if rep.Target, err = s.placeUnique(tmp, base, ExtGCA, info.Path); err != nil {
+	if rep.Target, err = s.placeUnique(tmp, base, ExtOKCA, info.Path); err != nil {
 		return fail(err)
 	}
 	// A first backup of the new database, before the original goes.
-	if err := s.backupFile(ctx, filepath.Join(s.Dir, rep.Target+ExtGCA), rep.Target); err != nil {
+	if err := s.backupFile(ctx, filepath.Join(s.Dir, rep.Target+ExtOKCA), rep.Target); err != nil {
 		slog.Error("backup of the imported database failed", "db", rep.Target, "err", err)
 	}
 	// The new database is in place and verified: the XCA file goes.
@@ -258,12 +258,12 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 	if st != Supported {
 		return fmt.Errorf("status %s %s", st, detail)
 	}
-	db, err := sql.Open("sqlite", dsn(path, true))
+	sqldb, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	d, err := gcadb.Open(ctx, db)
+	defer sqldb.Close()
+	d, err := db.Open(ctx, sqldb)
 	if err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 		return fmt.Errorf("%d items written, %d found", items, n)
 	}
 	var fk int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fk); err != nil || fk != 0 {
+	if err := sqldb.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fk); err != nil || fk != 0 {
 		return fmt.Errorf("%d broken links (%v)", fk, err)
 	}
 	kdf, err := d.Setting(ctx, "kdf")
@@ -300,7 +300,7 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 		return err
 	}
 	for _, r := range rows {
-		if r.Protection != gcadb.ProtDEK {
+		if r.Protection != db.ProtDEK {
 			continue
 		}
 		der, err := kr.Open(r.Blob, r.Public)

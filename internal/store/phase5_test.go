@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 func extOrder(c *x509.Certificate) string {

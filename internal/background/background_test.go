@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 var testKDF = vault.Params{MemoryKiB: 64, Time: 1, Threads: 1}
@@ -27,7 +27,7 @@ func newStore(t *testing.T, names ...string) *store.Store {
 		if err := s.Create(context.Background(), n, []byte("password-"+n), testKDF); err != nil {
 			t.Fatal(err)
 		}
-		conf = append(conf, store.Configured{Label: strings.ToUpper(n), Path: filepath.Join(s.Dir, n+".gca"), Background: true})
+		conf = append(conf, store.Configured{Label: strings.ToUpper(n), Path: filepath.Join(s.Dir, n+".okca"), Background: true})
 	}
 	if _, err := s.Configure(context.Background(), conf); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestOpenAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	hd.Release()
-	if _, err := os.Stat(filepath.Join(s.Dir, "one.gca.lock")); err != nil && !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(s.Dir, "one.okca.lock")); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 }

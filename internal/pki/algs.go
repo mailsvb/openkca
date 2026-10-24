@@ -40,7 +40,7 @@ var (
 	oidSHA1   = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}
 )
 
-// ECCurve is an elliptic curve go-ca can compute with: the NIST curves
+// ECCurve is an elliptic curve OpenKCA can compute with: the NIST curves
 // natively, Brainpool and secp256k1 through crypto/ecdsa's generic code.
 type ECCurve struct {
 	Name  string // as offered and in KeySpec.Curve, e.g. "brainpoolP256r1"
@@ -78,7 +78,7 @@ func curveByName(name string) *ECCurve {
 	return nil
 }
 
-// CurveOf finds the entry of an elliptic.Curve, nil if go-ca does not
+// CurveOf finds the entry of an elliptic.Curve, nil if OpenKCA does not
 // know it.
 func CurveOf(c elliptic.Curve) *ECCurve {
 	for i := range ECCurves {
@@ -117,7 +117,7 @@ func parseECPoint(c elliptic.Curve, b []byte) (*ecdsa.PublicKey, error) {
 	return &ecdsa.PublicKey{Curve: c, X: x, Y: y}, nil
 }
 
-// CurveByName returns the curve of ECCurves with that name, nil if go-ca
+// CurveByName returns the curve of ECCurves with that name, nil if OpenKCA
 // does not know it.
 func CurveByName(name string) *ECCurve { return curveByName(name) }
 

@@ -11,10 +11,10 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
 )
 
 // sshKeyChoices are the key types offered for new SSH keys, the usual one
@@ -58,7 +58,7 @@ func (s *Server) newSSHKey(w http.ResponseWriter, r *http.Request) {
 
 // sshKeyForm is the SSH page of a key.
 type sshKeyForm struct {
-	Key         *gcadb.Key
+	Key         *db.Key
 	Algorithm   string
 	Fingerprint string // as ssh-keygen -l shows it
 	Comment     string
@@ -71,7 +71,7 @@ type sshKeyForm struct {
 
 // sshKeyForm describes a key for its SSH page; false if the item is not a
 // key SSH can use.
-func (s *Server) sshKeyForm(r *http.Request, snap *gcadb.Snapshot) (*sshKeyForm, bool) {
+func (s *Server) sshKeyForm(r *http.Request, snap *db.Snapshot) (*sshKeyForm, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		return nil, false
@@ -94,7 +94,7 @@ func (s *Server) sshKeyForm(r *http.Request, snap *gcadb.Snapshot) (*sshKeyForm,
 		}
 		return &sshKeyForm{Key: k, Algorithm: sp.Type() + ", " + strconv.Itoa(pki.DescribePublicKey(k.Public).Bits) + " bit",
 			Fingerprint: ssh.FingerprintSHA256(sp), Comment: codec.SSHComment(k.Comment), Line: strings.TrimSpace(string(line)),
-			Private: k.HasPrivate && !k.Token, OwnPass: k.Protection == gcadb.ProtPassword,
+			Private: k.HasPrivate && !k.Token, OwnPass: k.Protection == db.ProtPassword,
 			Flavors: sshFlavors, Flavor: sshFlavors[0]}, true
 	}
 	return nil, false

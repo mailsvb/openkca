@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // auditIf records an action in the database's audit log when err is nil.
@@ -28,7 +28,7 @@ func (h *Handle) Audit(ctx context.Context, action string, id int64, detail stri
 }
 
 // AuditLog returns audit entries newest first (all for itemID 0).
-func (h *Handle) AuditLog(ctx context.Context, itemID, before int64, limit int) ([]gcadb.AuditEntry, error) {
+func (h *Handle) AuditLog(ctx context.Context, itemID, before int64, limit int) ([]db.AuditEntry, error) {
 	return h.DB.AuditLog(ctx, itemID, before, limit)
 }
 

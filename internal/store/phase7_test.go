@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // The trash: links read as unknown while an item is there, come back on
@@ -82,7 +82,7 @@ func TestTrash(t *testing.T) {
 	if link != nil {
 		t.Fatalf("certificate still links the purged key: %v", link)
 	}
-	file, _ := os.ReadFile(filepath.Join(s.Dir, "trash.gca"))
+	file, _ := os.ReadFile(filepath.Join(s.Dir, "trash.okca"))
 	if bytes.Contains(file, keyBlob[20:60]) {
 		t.Fatal("the purged key's ciphertext is still in the file")
 	}
@@ -135,12 +135,12 @@ func TestPasswordChangePurgesBackups(t *testing.T) {
 	}
 	// the remaining backup is the new state: it opens with the new password
 	_ = old
-	db, err := openRO(all[0])
+	sqldb, err := openRO(all[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	g, _ := gcadb.Open(ctx, db)
+	defer sqldb.Close()
+	g, _ := db.Open(ctx, sqldb)
 	kdf, _ := g.Setting(ctx, "kdf")
 	dek, _ := g.Setting(ctx, "dek")
 	if _, err := vault.Unwrap(kdf, dek, []byte("another password")); err != nil {

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 // Column describes a list column; Key doubles as the CSS class suffix used
@@ -46,7 +46,7 @@ type Row struct {
 // certStatus classifies a certificate like XCA's list colours.
 type certStatus struct {
 	Status   string // message key
-	Revoked  *gcadb.Revocation
+	Revoked  *db.Revocation
 	Unusable bool
 	After    string // CSS class of the notAfter cell
 	Before   string
@@ -80,7 +80,7 @@ func truthy(s string) bool {
 	return false
 }
 
-func statusOf(c *gcadb.Cert, info *pki.CertInfo, revs map[string]*gcadb.Revocation, snap *gcadb.Snapshot, now time.Time) certStatus {
+func statusOf(c *db.Cert, info *pki.CertInfo, revs map[string]*db.Revocation, snap *db.Snapshot, now time.Time) certStatus {
 	st := certStatus{Status: "status.valid"}
 	if r, ok := revs[revKey(c.IssuerID, c.Serial)]; ok && c.IssuerID != c.ID {
 		st.Revoked, st.Status, st.Unusable = r, "status.revoked", true
@@ -122,19 +122,19 @@ func revKey(caID int64, serial string) string { return strconv.FormatInt(caID, 1
 
 // index holds lookups derived from a snapshot.
 type index struct {
-	snap     *gcadb.Snapshot
+	snap     *db.Snapshot
 	names    map[int64]string
-	certs    map[int64]*gcadb.Cert
-	keys     map[int64]*gcadb.Key
-	revs     map[string]*gcadb.Revocation
+	certs    map[int64]*db.Cert
+	keys     map[int64]*db.Key
+	revs     map[string]*db.Revocation
 	useCount map[int64]int
-	children map[int64][]*gcadb.Cert
+	children map[int64][]*db.Cert
 	info     map[int64]*pki.CertInfo
 }
 
-func newIndex(snap *gcadb.Snapshot) *index {
-	ix := &index{snap: snap, names: map[int64]string{}, certs: map[int64]*gcadb.Cert{}, keys: map[int64]*gcadb.Key{},
-		revs: map[string]*gcadb.Revocation{}, useCount: map[int64]int{}, children: map[int64][]*gcadb.Cert{},
+func newIndex(snap *db.Snapshot) *index {
+	ix := &index{snap: snap, names: map[int64]string{}, certs: map[int64]*db.Cert{}, keys: map[int64]*db.Key{},
+		revs: map[string]*db.Revocation{}, useCount: map[int64]int{}, children: map[int64][]*db.Cert{},
 		info: map[int64]*pki.CertInfo{}}
 	for _, k := range snap.Keys {
 		ix.names[k.ID], ix.keys[k.ID] = k.Name, k
@@ -225,9 +225,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			if k.HasPrivate {
 				priv = "private.db"
 				switch k.Protection {
-				case gcadb.ProtPassword:
+				case db.ProtPassword:
 					priv = "private.own"
-				case gcadb.ProtToken:
+				case db.ProtToken:
 					priv = "private.token"
 				}
 			}
@@ -252,9 +252,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			}})
 		}
 	case "certs":
-		var add func(c *gcadb.Cert, depth int)
+		var add func(c *db.Cert, depth int)
 		seen := map[int64]bool{}
-		add = func(c *gcadb.Cert, depth int) {
+		add = func(c *db.Cert, depth int) {
 			if seen[c.ID] {
 				return
 			}
@@ -358,19 +358,19 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 
 // detail is the data for an item page.
 type detail struct {
-	History  []gcadb.AuditEntry
-	Item     gcadb.Item
+	History  []db.AuditEntry
+	Item     db.Item
 	Kind     string
 	TypeKey  string
 	Source   string
-	Cert     *gcadb.Cert
+	Cert     *db.Cert
 	CertInfo *pki.CertInfo
 	Status   certStatus
-	Key      *gcadb.Key
+	Key      *db.Key
 	KeyInfo  pki.PublicKeyInfo
-	Request  *gcadb.Request
+	Request  *db.Request
 	ReqInfo  *pki.RequestInfo
-	CRL      *gcadb.CRL
+	CRL      *db.CRL
 	CRLInfo  *pki.CRLInfo
 	Template *tmpl.Template
 	TmplKeys []string
@@ -528,12 +528,12 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusNotFound, "error", &page{Title: "error.title", Error: "error.notfound"})
 		return
 	}
-	d.Source = "source." + gcadb.SourceName(d.Item.Source)
+	d.Source = "source." + db.SourceName(d.Item.Source)
 	if d.Cert != nil && d.Cert.KeyID != 0 {
 		d.HasKey = true
 		if k := ix.keys[d.Cert.KeyID]; k != nil {
 			d.KeyPrivate = k.HasPrivate
-			d.KeyOwnPass = k.Protection == gcadb.ProtPassword
+			d.KeyOwnPass = k.Protection == db.ProtPassword
 		}
 	}
 	if d.Request != nil && d.Request.KeyID != 0 {
@@ -586,7 +586,7 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	var key *gcadb.Key
+	var key *db.Key
 	for _, k := range snap.Keys {
 		if k.ID == id && k.HasPrivate {
 			key = k
@@ -599,20 +599,20 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusOK, "item", p)
 		return
 	}
-	res["OwnPass"] = key.Protection == gcadb.ProtPassword
+	res["OwnPass"] = key.Protection == db.ProtPassword
 	limitKey := ds.ID
 	if s.keyLimit.Blocked(limitKey) {
 		res["Result"] = "keycheck.ratelimit"
 		s.render(w, r, http.StatusTooManyRequests, "item", p)
 		return
 	}
-	if key.Protection == gcadb.ProtToken {
+	if key.Protection == db.ProtToken {
 		res["Result"] = "keycheck.token"
 		s.render(w, r, http.StatusOK, "item", p)
 		return
 	}
 	var pw []byte
-	if key.Protection == gcadb.ProtPassword {
+	if key.Protection == db.ProtPassword {
 		pw = []byte(r.PostFormValue("password"))
 		defer clear(pw)
 	}
@@ -678,8 +678,8 @@ var optionKeys = []struct {
 	{"no_expire_colors", "opt.no_expire_colors", "no", "bool", nil, ""},
 	{"backup_keep", "opt.backup_keep", strconv.Itoa(store.DefaultBackupKeep), "number", nil, ""},
 	{"backup_days", "opt.backup_days", strconv.Itoa(store.DefaultBackupDays), "number", nil, ""},
-	{"crl_days_root", "opt.crl_days_root", strconv.Itoa(gcadb.DefaultCRLDaysRoot), "number", nil, ""},
-	{"crl_days_sub", "opt.crl_days_sub", strconv.Itoa(gcadb.DefaultCRLDaysSub), "number", nil, ""},
+	{"crl_days_root", "opt.crl_days_root", strconv.Itoa(db.DefaultCRLDaysRoot), "number", nil, ""},
+	{"crl_days_sub", "opt.crl_days_sub", strconv.Itoa(db.DefaultCRLDaysSub), "number", nil, ""},
 	{"hide_unusable", "opt.hide_unusable", "no", "bool", nil, ""},
 	{"translate_dn", "opt.translate_dn", "no", "bool", nil, ""},
 	{"suppress_messages", "opt.suppress_messages", "no", "bool", nil, ""},
@@ -690,8 +690,8 @@ var optionRanges = map[string][2]int{
 	"pkcs12_iterations": {codec.PKCS12MinIterations, codec.PKCS12MaxIterations},
 	"backup_keep":       {1, store.MaxBackupKeep},
 	"backup_days":       {0, store.MaxBackupDays},
-	"crl_days_root":     {1, gcadb.MaxCRLDays},
-	"crl_days_sub":      {1, gcadb.MaxCRLDays},
+	"crl_days_root":     {1, db.MaxCRLDays},
+	"crl_days_sub":      {1, db.MaxCRLDays},
 }
 
 func (s *Server) options(w http.ResponseWriter, r *http.Request) {
@@ -738,7 +738,7 @@ func (s *Server) options(w http.ResponseWriter, r *http.Request) {
 }
 
 // tabOf returns the list tab an item belongs to.
-func tabOf(snap *gcadb.Snapshot, id int64) string {
+func tabOf(snap *db.Snapshot, id int64) string {
 	for _, k := range snap.Keys {
 		if k.ID == id {
 			return "keys"
@@ -764,7 +764,7 @@ func tabOf(snap *gcadb.Snapshot, id int64) string {
 
 // legacyKeys counts the keys with their own password still in an XCA
 // form, shown on the key list.
-func legacyKeys(snap *gcadb.Snapshot, tab string) int {
+func legacyKeys(snap *db.Snapshot, tab string) int {
 	if tab != "keys" {
 		return 0
 	}

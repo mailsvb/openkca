@@ -12,9 +12,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // ErrNeedKeyPassword means a key with its own password is involved and the
@@ -25,7 +25,7 @@ var ErrNeedKeyPassword = errors.New("the key's own password is required")
 // item id. The database password covers all other keys.
 type KeyPasswords map[int64][]byte
 
-func findKey(snap *gcadb.Snapshot, id int64) *gcadb.Key {
+func findKey(snap *db.Snapshot, id int64) *db.Key {
 	for _, k := range snap.Keys {
 		if k.ID == id {
 			return k
@@ -34,7 +34,7 @@ func findKey(snap *gcadb.Snapshot, id int64) *gcadb.Key {
 	return nil
 }
 
-func findCert(snap *gcadb.Snapshot, id int64) *gcadb.Cert {
+func findCert(snap *db.Snapshot, id int64) *db.Cert {
 	for _, c := range snap.Certs {
 		if c.ID == id {
 			return c
@@ -43,7 +43,7 @@ func findCert(snap *gcadb.Snapshot, id int64) *gcadb.Cert {
 	return nil
 }
 
-func findRequest(snap *gcadb.Snapshot, id int64) *gcadb.Request {
+func findRequest(snap *db.Snapshot, id int64) *db.Request {
 	for _, r := range snap.Requests {
 		if r.ID == id {
 			return r
@@ -59,7 +59,7 @@ func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki
 		return 0, err
 	}
 	var id int64
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		id, err = insertGenerated(ctx, tx, name, comment, key, kr)
 		return err
 	})
@@ -68,7 +68,7 @@ func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki
 	return id, err
 }
 
-func insertGenerated(ctx context.Context, tx *gcadb.Tx, name, comment string, key crypto.Signer, kr *vault.Keyring) (int64, error) {
+func insertGenerated(ctx context.Context, tx *db.Tx, name, comment string, key crypto.Signer, kr *vault.Keyring) (int64, error) {
 	spki, err := pki.MarshalPublicKey(key.Public())
 	if err != nil {
 		return 0, err
@@ -78,8 +78,8 @@ func insertGenerated(ctx context.Context, tx *gcadb.Tx, name, comment string, ke
 		return 0, err
 	}
 	typ, bits := keyAlgorithm(spki)
-	return tx.InsertKey(ctx, gcadb.NewKey{Name: name, Comment: comment, Source: gcadb.SourceGenerated, KeyType: typ, Len: bits,
-		SPKI: spki, Private: blob, Protection: gcadb.ProtDEK})
+	return tx.InsertKey(ctx, db.NewKey{Name: name, Comment: comment, Source: db.SourceGenerated, KeyType: typ, Len: bits,
+		SPKI: spki, Private: blob, Protection: db.ProtDEK})
 }
 
 // IssueParams is the certificate editor's input.
@@ -130,7 +130,7 @@ func (h *Handle) Preview(ctx context.Context, p IssueParams) ([]pkix.Extension, 
 
 // subjectAndKey resolves the subject name and public key. With newKey
 // non-nil and p.NewKey set, a placeholder is used for previews.
-func subjectAndKey(snap *gcadb.Snapshot, p IssueParams, generated crypto.Signer) (subject, spki []byte, req *x509.CertificateRequest, err error) {
+func subjectAndKey(snap *db.Snapshot, p IssueParams, generated crypto.Signer) (subject, spki []byte, req *x509.CertificateRequest, err error) {
 	settings := snap.Settings
 	if p.FromReqID != 0 && !p.Request {
 		r := findRequest(snap, p.FromReqID)
@@ -172,7 +172,7 @@ func subjectAndKey(snap *gcadb.Snapshot, p IssueParams, generated crypto.Signer)
 
 // extContext gathers what extension values refer to: the signer's key
 // identifier, name and alternative names.
-func extContext(snap *gcadb.Snapshot, p IssueParams, subject, spki []byte) (pki.ExtContext, *gcadb.Cert, error) {
+func extContext(snap *db.Snapshot, p IssueParams, subject, spki []byte) (pki.ExtContext, *db.Cert, error) {
 	ectx := pki.ExtContext{SubjectSPKI: spki, Subject: subject, Request: p.Request,
 		NoNetscape: snap.Settings["disable_netscape"] == "yes"}
 	if spki == nil {
@@ -208,7 +208,7 @@ func extContext(snap *gcadb.Snapshot, p IssueParams, subject, spki []byte) (pki.
 
 // mergeReqExt applies the CSR's extensions over the editor's, replacing
 // those with the same OID (XCA: addV3ext(ext, override=true)).
-func mergeReqExt(snap *gcadb.Snapshot, reqID int64, exts []pkix.Extension) []pkix.Extension {
+func mergeReqExt(snap *db.Snapshot, reqID int64, exts []pkix.Extension) []pkix.Extension {
 	r := findRequest(snap, reqID)
 	if r == nil {
 		return exts
@@ -233,7 +233,7 @@ func mergeReqExt(snap *gcadb.Snapshot, reqID int64, exts []pkix.Extension) []pki
 
 // usedSerials returns the serials a CA must not reuse: its own, those of
 // certificates it issued and its revocations (getUniqueSerial).
-func usedSerials(snap *gcadb.Snapshot, ca *gcadb.Cert) map[string]bool {
+func usedSerials(snap *db.Snapshot, ca *db.Cert) map[string]bool {
 	used := map[string]bool{ca.Serial: true}
 	for _, c := range snap.Certs {
 		if c.IssuerID == ca.ID {
@@ -311,7 +311,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 		// item has it, so keys that cannot sign (ML-KEM, X25519, X448)
 		// are certified as well.
 		if _, err := pki.ParsePublicKey(spki); err != nil {
-			return 0, fmt.Errorf("go-ca cannot issue certificates for this key type: %w", err)
+			return 0, fmt.Errorf("OpenKCA cannot issue certificates for this key type: %w", err)
 		}
 		cr := pki.CertRequest{Subject: subject, SPKI: spki, NotBefore: p.NotBefore, NotAfter: p.NotAfter,
 			Extensions: exts, Hash: p.Hash, SignerKey: subjectKey}
@@ -353,17 +353,17 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 		source = 2
 	}
 	var id int64
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		if generated != nil {
 			if _, err := insertGenerated(ctx, tx, p.Name, "", generated, kr); err != nil {
 				return err
 			}
 		}
 		if p.Request {
-			id, err = tx.InsertRequest(ctx, gcadb.NewRequest{Name: p.Name, Comment: p.Comment, Source: source, DER: der})
+			id, err = tx.InsertRequest(ctx, db.NewRequest{Name: p.Name, Comment: p.Comment, Source: source, DER: der})
 			return err
 		}
-		if id, err = tx.InsertCert(ctx, gcadb.NewCert{Name: p.Name, Comment: p.Comment, Source: source, DER: der}); err != nil {
+		if id, err = tx.InsertCert(ctx, db.NewCert{Name: p.Name, Comment: p.Comment, Source: source, DER: der}); err != nil {
 			return err
 		}
 		if csr != nil {
@@ -376,7 +376,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 			if err := tx.MarkSigned(ctx, r.ID, true); err != nil {
 				return err
 			}
-			if err := tx.Rename(ctx, r.ID, r.Name, gcadb.AppendComment(r.Comment, msg)); err != nil {
+			if err := tx.Rename(ctx, r.ID, r.Name, db.AppendComment(r.Comment, msg)); err != nil {
 				return err
 			}
 		}
@@ -388,7 +388,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 }
 
 // checkMandatory enforces settings.mandatory_dn (comma separated names).
-func checkMandatory(snap *gcadb.Snapshot, subject []byte) error {
+func checkMandatory(snap *db.Snapshot, subject []byte) error {
 	present := map[string]bool{}
 	for _, e := range pki.NameAttrs(subject) {
 		present[e.Name] = true
@@ -456,9 +456,9 @@ func (h *Handle) ExtractPublicKey(ctx context.Context, id int64) (int64, error) 
 	}
 	typ, bits := keyAlgorithm(spki)
 	var kid int64
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
-		kid, err = tx.InsertKey(ctx, gcadb.NewKey{Name: name, Source: 3, KeyType: typ, Len: bits, SPKI: spki,
-			Comment: gcadb.AppendComment("", fmt.Sprintf("Extracted from %s '%s'", kind, name))})
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
+		kid, err = tx.InsertKey(ctx, db.NewKey{Name: name, Source: 3, KeyType: typ, Len: bits, SPKI: spki,
+			Comment: db.AppendComment("", fmt.Sprintf("Extracted from %s '%s'", kind, name))})
 		return err
 	})
 	h.changed(ctx)
@@ -500,8 +500,8 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, kr *vault.Keyring,
 		return 0, err
 	}
 	var rid int64
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
-		rid, err = tx.InsertRequest(ctx, gcadb.NewRequest{Name: c.Name, Source: 3, DER: der})
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
+		rid, err = tx.InsertRequest(ctx, db.NewRequest{Name: c.Name, Source: 3, DER: der})
 		return err
 	})
 	h.changed(ctx)
@@ -540,7 +540,7 @@ func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []
 	}
 	var updates []re
 	for _, r := range rows {
-		if r.Protection != gcadb.ProtDEK {
+		if r.Protection != db.ProtDEK {
 			continue
 		}
 		der, err := old.Open(r.Blob, r.Public)
@@ -565,9 +565,9 @@ func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []
 	if string(oldPass) == string(newPass) {
 		what = "key derivation"
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		for _, u := range updates {
-			if err := tx.UpdatePrivateKey(ctx, u.id, u.blob, gcadb.ProtDEK); err != nil {
+			if err := tx.UpdatePrivateKey(ctx, u.id, u.blob, db.ProtDEK); err != nil {
 				return err
 			}
 		}
@@ -628,24 +628,24 @@ func (h *Handle) rekey(ctx context.Context, keyID int64, kr *vault.Keyring, kp K
 	}
 	defer clear(der)
 	var blob []byte
-	own := gcadb.ProtDEK
+	own := db.ProtDEK
 	if newPass == nil {
 		blob, err = kr.Seal(der, k.Public)
 	} else {
-		own = gcadb.ProtPassword
+		own = db.ProtPassword
 		blob, err = vault.SealWithPassword(der, k.Public, newPass, kr.Params())
 	}
 	if err != nil {
 		return err
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, own) })
+	err = h.DB.Write(ctx, func(tx *db.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, own) })
 	h.changed(ctx)
 	return err
 }
 
 // Rename, Delete and MarkSigned wrap the single-statement writes.
 func (h *Handle) Rename(ctx context.Context, id int64, name, comment string) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.Rename(ctx, id, name, comment) })
+	err := h.DB.Write(ctx, func(tx *db.Tx) error { return tx.Rename(ctx, id, name, comment) })
 	h.changed(ctx)
 	h.auditIf(ctx, err, "item.rename", id, "%s", name)
 	return err
@@ -653,7 +653,7 @@ func (h *Handle) Rename(ctx context.Context, id int64, name, comment string) err
 
 // Delete moves an item to the trash.
 func (h *Handle) Delete(ctx context.Context, id int64) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err := h.DB.Write(ctx, func(tx *db.Tx) error {
 		if err := tx.Audit(ctx, "item.trash", id, ""); err != nil {
 			return err
 		}
@@ -664,11 +664,11 @@ func (h *Handle) Delete(ctx context.Context, id int64) error {
 }
 
 // Trash lists the items in the trash.
-func (h *Handle) Trash(ctx context.Context) ([]gcadb.Item, error) { return h.DB.Trash(ctx) }
+func (h *Handle) Trash(ctx context.Context) ([]db.Item, error) { return h.DB.Trash(ctx) }
 
 // Restore takes an item out of the trash.
 func (h *Handle) Restore(ctx context.Context, id int64) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err := h.DB.Write(ctx, func(tx *db.Tx) error {
 		if err := tx.Restore(ctx, id); err != nil {
 			return err
 		}
@@ -693,7 +693,7 @@ func (h *Handle) Purge(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err := h.DB.Write(ctx, func(tx *db.Tx) error {
 		for _, id := range ids {
 			if err := tx.Audit(ctx, "item.purge", id, ""); err != nil {
 				return err
@@ -712,7 +712,7 @@ func (h *Handle) Purge(ctx context.Context, ids []int64) (int, error) {
 }
 
 func (h *Handle) MarkSigned(ctx context.Context, id int64, signed bool) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.MarkSigned(ctx, id, signed) })
+	err := h.DB.Write(ctx, func(tx *db.Tx) error { return tx.MarkSigned(ctx, id, signed) })
 	h.changed(ctx)
 	h.auditIf(ctx, err, "request.signed", id, "%v", signed)
 	return err
@@ -720,7 +720,7 @@ func (h *Handle) MarkSigned(ctx context.Context, id int64, signed bool) error {
 
 // SetSettings writes options shared with XCA.
 func (h *Handle) SetSettings(ctx context.Context, values map[string]string) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err := h.DB.Write(ctx, func(tx *db.Tx) error {
 		for k, v := range values {
 			if err := tx.SetSetting(ctx, k, v); err != nil {
 				return err

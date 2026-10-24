@@ -1,4 +1,4 @@
-module github.com/mailsvb/go-ca
+module github.com/mailsvb/openkca
 
 go 1.27.0
 

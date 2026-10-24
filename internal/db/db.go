@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 // Item types.
@@ -233,19 +233,19 @@ type Snapshot struct {
 	Trashed     int // items in the trash, not listed
 }
 
-// DB wraps an open go-ca database.
+// DB wraps an open OpenKCA database.
 type DB struct {
 	SQL *sql.DB
 }
 
-// Open wraps an already opened *sql.DB of a current go-ca database.
+// Open wraps an already opened *sql.DB of a current OpenKCA database.
 func Open(ctx context.Context, db *sql.DB) (*DB, error) {
-	s, gca, err := ReadSchema(ctx, db)
+	s, own, err := ReadSchema(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	if !gca || s != Schema {
-		return nil, fmt.Errorf("gcadb: not a go-ca database of schema %d", Schema)
+	if !own || s != Schema {
+		return nil, fmt.Errorf("db: not an OpenKCA database of schema %d", Schema)
 	}
 	return &DB{SQL: db}, nil
 }

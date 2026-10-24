@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/background"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/background"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // TestConfiguredDatabases covers databases from the configuration file:
@@ -28,12 +28,12 @@ func TestConfiguredDatabases(t *testing.T) {
 	}
 	sub := filepath.Join(st.Dir, "old")
 	os.MkdirAll(sub, 0o700)
-	if err := os.Rename(filepath.Join(st.Dir, "archive.gca"), filepath.Join(sub, "archive.gca")); err != nil {
+	if err := os.Rename(filepath.Join(st.Dir, "archive.okca"), filepath.Join(sub, "archive.okca")); err != nil {
 		t.Fatal(err)
 	}
 	names, err := st.Configure(ctx, []store.Configured{
-		{Label: "Home Lab CA", Path: filepath.Join(st.Dir, "lab.gca"), Background: true},
-		{Label: "Old Archive", Path: filepath.Join(sub, "archive.gca")},
+		{Label: "Home Lab CA", Path: filepath.Join(st.Dir, "lab.okca"), Background: true},
+		{Label: "Old Archive", Path: filepath.Join(sub, "archive.okca")},
 	})
 	if err != nil {
 		t.Fatal(err)

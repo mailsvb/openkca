@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 var (
@@ -57,8 +57,8 @@ func (s *Store) place(tmp, file string) error {
 }
 
 // placeUnique places tmp as base+ext, or base-1+ext, base-2+ext, … when
-// taken, and returns the base name used. A go-ca database name is free
-// only when neither name.gca nor name.xdb exists, except for the file
+// taken, and returns the base name used. An OpenKCA database name is free
+// only when neither name.okca nor name.xdb exists, except for the file
 // ignore (the .xdb being imported).
 func (s *Store) placeUnique(tmp, base, ext, ignore string) (string, error) {
 	for i := 0; i < 1000; i++ {
@@ -71,7 +71,7 @@ func (s *Store) placeUnique(tmp, base, ext, ignore string) (string, error) {
 		}
 		other := ExtXCA
 		if ext == ExtXCA {
-			other = ExtGCA
+			other = ExtOKCA
 		}
 		if p := filepath.Join(s.Dir, name+other); p != ignore {
 			if _, err := os.Lstat(p); err == nil {
@@ -108,7 +108,7 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	if s.isConfigured(name) {
 		return ErrExists
 	}
-	for _, ext := range []string{ExtGCA, ExtXCA} {
+	for _, ext := range []string{ExtOKCA, ExtXCA} {
 		if _, err := os.Lstat(filepath.Join(s.Dir, name+ext)); err == nil {
 			return ErrExists
 		}
@@ -126,14 +126,14 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	tmp := f.Name()
 	f.Close()
 	defer os.Remove(tmp)
-	db, err := sql.Open("sqlite", dsn(tmp, false))
+	sqldb, err := sql.Open("sqlite", dsn(tmp, false))
 	if err != nil {
 		return err
 	}
-	err = gcadb.Create(ctx, db, map[string]string{"kdf": kdf, "dek": dek}, func(tx *gcadb.Tx) error {
+	err = db.Create(ctx, sqldb, map[string]string{"kdf": kdf, "dek": dek}, func(tx *db.Tx) error {
 		return tx.Audit(ctx, "database.create", 0, "")
 	})
-	if cerr := db.Close(); err == nil {
+	if cerr := sqldb.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
@@ -142,19 +142,23 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		return err
 	}
-	return s.place(tmp, name+ExtGCA)
+	return s.place(tmp, name+ExtOKCA)
 }
 
 // SanitizeName turns an uploaded file name into a valid database name.
 func SanitizeName(filename string) string {
 	base := filepath.Base(strings.ReplaceAll(filename, "\\", "/"))
 	base = strings.TrimSuffix(base, filepath.Ext(base))
-	for {
+	for trimmed := true; trimmed; {
+		trimmed = false
 		lower := strings.ToLower(base)
-		if !strings.HasSuffix(lower, ExtGCA) && !strings.HasSuffix(lower, ExtXCA) {
-			break
+		for _, ext := range []string{ExtOKCA, ExtXCA} {
+			if strings.HasSuffix(lower, ext) {
+				base = base[:len(base)-len(ext)]
+				trimmed = true
+				break
+			}
 		}
-		base = base[:len(base)-len(ExtGCA)]
 	}
 	var b strings.Builder
 	for _, r := range base {
@@ -175,8 +179,8 @@ func SanitizeName(filename string) string {
 	return name
 }
 
-// Upload stores an uploaded database after validating it: a go-ca database
-// as name.gca, an XCA database as name.xdb, to be imported at its first
+// Upload stores an uploaded database after validating it: an OpenKCA database
+// as name.okca, an XCA database as name.xdb, to be imported at its first
 // login. It returns the name it is listed under (with -1, -2, … appended on
 // collision, and .xdb for an XCA file).
 func (s *Store) Upload(ctx context.Context, filename string, r io.Reader, maxSize int64) (string, error) {
@@ -203,7 +207,7 @@ func (s *Store) Upload(ctx context.Context, filename string, r io.Reader, maxSiz
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		return "", err
 	}
-	ext := ExtGCA
+	ext := ExtOKCA
 	if xca {
 		ext = ExtXCA
 	}

@@ -17,14 +17,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/auth"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/i18n"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/pubserve"
-	"github.com/mailsvb/go-ca/internal/session"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/auth"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/i18n"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pubserve"
+	"github.com/mailsvb/openkca/internal/session"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 //go:embed templates/*.html
@@ -34,8 +34,8 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 const (
-	authCookie = "gca_auth"
-	dbCookie   = "gca_sess"
+	authCookie = "okca_auth"
+	dbCookie   = "okca_sess"
 )
 
 // Config configures a Server.
@@ -277,7 +277,7 @@ func (s *Server) requireServer(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		ctx := gcadb.WithClient(context.WithValue(r.Context(), ctxServer, ss), clientIP(r))
+		ctx := db.WithClient(context.WithValue(r.Context(), ctxServer, ss), clientIP(r))
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -455,7 +455,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
 	if store.IsXCAName(name) {
-		// An XCA file is imported into a new go-ca
+		// An XCA file is imported into a new OpenKCA
 		// database in the background; the session waits for it on the
 		// progress page.
 		conv, err := s.store.StartImport(r.Context(), name, pw, vault.Default)
@@ -496,7 +496,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // convertingPage shows the progress of an import; htmx polls it. When
-// the import has finished, the browser gets a session on the new go-ca
+// the import has finished, the browser gets a session on the new OpenKCA
 // database and continues there; when it failed, the session ends.
 func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)

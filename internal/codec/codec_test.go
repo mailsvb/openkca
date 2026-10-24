@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 func selfSigned(t *testing.T, cn string) []byte {

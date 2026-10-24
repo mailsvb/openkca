@@ -4,11 +4,11 @@ import (
 	"encoding/asn1"
 	"strconv"
 
-	"github.com/mailsvb/go-ca/internal/pkcs12"
+	"github.com/mailsvb/openkca/internal/pkcs12"
 )
 
 // PKCS12Algorithms are the values of the pkcs12_enc_algo setting
-// (OpenSSL short names, as XCA stores them). The first is go-ca's default,
+// (OpenSSL short names, as XCA stores them). The first is OpenKCA's default,
 // as in OpenSSL 3; XCA defaults to PBE-SHA1-3DES, which is kept, like
 // RC2-40, only for software that cannot read anything else (Windows before
 // Server 2019 / Windows 10 1709, old Java and macOS versions).
@@ -16,7 +16,7 @@ var PKCS12Algorithms = []string{"AES-256-CBC", "PBE-SHA1-3DES", "PBE-SHA1-RC2-40
 
 // PKCS12 writes a key, its certificate and further certificates as a
 // password protected PKCS#12 file. key is an unencrypted PKCS#8
-// PrivateKeyInfo of any type go-ca stores; certs[0] is its certificate, and
+// PrivateKeyInfo of any type OpenKCA stores; certs[0] is its certificate, and
 // the key gets that certificate's friendlyName. algo is a PKCS12Algorithms
 // value: AES-256-CBC with PBKDF2 and a SHA-256 MAC; 3DES for keys and
 // certificates with a SHA-1 MAC; RC2-40 for the certificates with a 3DES

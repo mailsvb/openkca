@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 func NewUUID() (string, error) {
 	u, err := uuid.NewV7()
 	if err != nil {
-		return "", fmt.Errorf("gcadb: new uuid: %w", err)
+		return "", fmt.Errorf("db: new uuid: %w", err)
 	}
 	return u.String(), nil
 }
@@ -23,7 +23,7 @@ func NewUUID() (string, error) {
 func CanonicalUUID(s string) (string, error) {
 	u, err := uuid.Parse(s)
 	if err != nil {
-		return "", fmt.Errorf("gcadb: invalid uuid %q", s)
+		return "", fmt.Errorf("db: invalid uuid %q", s)
 	}
 	return u.String(), nil
 }

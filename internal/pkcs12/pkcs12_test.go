@@ -21,7 +21,7 @@ import (
 
 	gopkcs12 "software.sslmate.com/src/go-pkcs12"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 func TestDeriveKey(t *testing.T) {
@@ -212,7 +212,7 @@ func TestOpenSSL(t *testing.T) {
 	// ours, read by OpenSSL
 	certDER := pemToDER(t, filepath.Join(dir, "c.pem"))
 	for name, prof := range profiles {
-		p12, err := Encode(Bag{DER: keyDER, FriendlyName: "go-ca name"}, []Bag{{DER: certDER, FriendlyName: "go-ca name"}}, "pw", prof)
+		p12, err := Encode(Bag{DER: keyDER, FriendlyName: "OpenKCA name"}, []Bag{{DER: certDER, FriendlyName: "OpenKCA name"}}, "pw", prof)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -223,7 +223,7 @@ func TestOpenSSL(t *testing.T) {
 			args = append(args, "-legacy")
 		}
 		out := run(args...)
-		if !strings.Contains(out, "friendlyName: go-ca name") || !strings.Contains(out, "localKeyID:") ||
+		if !strings.Contains(out, "friendlyName: OpenKCA name") || !strings.Contains(out, "localKeyID:") ||
 			!strings.Contains(out, "BEGIN PRIVATE KEY") || !strings.Contains(out, "BEGIN CERTIFICATE") {
 			t.Errorf("%s: openssl reads\n%s", name, out)
 		}

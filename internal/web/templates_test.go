@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/i18n"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/i18n"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
 )
 
 var (

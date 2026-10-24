@@ -14,7 +14,7 @@
       {{if .Background}}<span class="badge badge-background" title="{{T "databases.background.help"}}">{{T "databases.background"}}</span>{{end}}
       <span class="muted">{{size .Size}} · {{time .ModTime}}</span>
       <span class="badge badge-{{.Status}}">{{T (print "dbstatus." .Status)}}</span>
-      {{if .XCA}}{{if .Schema}}<span class="muted">{{T "databases.xca" .Schema}}</span>{{end}}{{else if .Schema}}<span class="muted">{{T "databases.gca" .Schema}}</span>{{end}}
+      {{if .XCA}}{{if .Schema}}<span class="muted">{{T "databases.xca" .Schema}}</span>{{end}}{{else if .Schema}}<span class="muted">{{T "databases.okca" .Schema}}</span>{{end}}
     </div>
     {{if index $open .Name}}
       <a class="button" href="/db/{{.Name}}/">{{T "databases.continue"}}</a>
@@ -51,7 +51,7 @@
   <h2>{{T "import.heading"}}</h2>
   <form class="stack" hx-post="/import" hx-encoding="multipart/form-data">
     <label for="import-file">{{T "import.file"}}</label>
-    <input type="file" id="import-file" name="file" accept=".xdb" required>
+    <input type="file" id="import-file" name="file" accept=".xdb,.okca" required>
     <span class="muted small">{{T "import.help" .Data.MaxUploadMB}}</span>
     <button type="submit">{{T "import.submit"}}</button>
   </form>

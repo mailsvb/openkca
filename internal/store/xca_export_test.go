@@ -9,11 +9,11 @@ import (
 )
 
 // TestExportForXCA writes every export format of a small hierarchy to
-// $GOCA_XCA_DIR/export for XCA to import (testdata/gen/check-export-with-xca.sh).
+// $OPENKCA_XCA_DIR/export for XCA to import (testdata/gen/check-export-with-xca.sh).
 func TestExportForXCA(t *testing.T) {
-	dir := os.Getenv("GOCA_XCA_DIR")
+	dir := os.Getenv("OPENKCA_XCA_DIR")
 	if dir == "" {
-		t.Skip("GOCA_XCA_DIR not set")
+		t.Skip("OPENKCA_XCA_DIR not set")
 	}
 	s := copyFixtures(t)
 	ctx := context.Background()

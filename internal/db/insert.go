@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 func (t *Tx) insertItem(ctx context.Context, name string, typ, source int, comment string) (int64, error) {
@@ -564,7 +564,7 @@ func (t *Tx) Restore(ctx context.Context, id int64) error {
 
 // ErrAuthorityInUse: a CA in the trash cannot be restored because a live
 // CA (its renewal) holds its authority ID.
-var ErrAuthorityInUse = errors.New("gcadb: a live CA holds this CA's authority ID")
+var ErrAuthorityInUse = errors.New("db: a live CA holds this CA's authority ID")
 
 // checkAuthorityFree fails with ErrAuthorityInUse when another live CA
 // holds the authority ID of certificate id.
@@ -682,7 +682,7 @@ func (t *Tx) CompleteKey(ctx context.Context, id int64, private []byte, protecti
 		return err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return fmt.Errorf("gcadb: key %d already has a private part", id)
+		return fmt.Errorf("db: key %d already has a private part", id)
 	}
 	if _, err := t.ExecContext(ctx, "UPDATE items SET comment=? WHERE id=?", comment, id); err != nil {
 		return err

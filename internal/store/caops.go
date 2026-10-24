@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // Revocation describes a revocation entered in the UI.
@@ -19,7 +19,7 @@ type Revocation struct {
 	InvalDate time.Time // zero = none
 }
 
-func (h *Handle) issuerOf(snap *gcadb.Snapshot, certID int64) (*gcadb.Cert, *gcadb.Cert, error) {
+func (h *Handle) issuerOf(snap *db.Snapshot, certID int64) (*db.Cert, *db.Cert, error) {
 	c := findCert(snap, certID)
 	if c == nil {
 		return nil, nil, errors.New("certificate not found")
@@ -40,8 +40,8 @@ func (h *Handle) Revoke(ctx context.Context, certID int64, r Revocation) error {
 	if err != nil {
 		return err
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
-		return tx.Revoke(ctx, ca.ID, gcadb.RevocationRow{Serial: c.Serial, Date: time.Now(), InvalDate: r.InvalDate, Reason: r.Reason})
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
+		return tx.Revoke(ctx, ca.ID, db.RevocationRow{Serial: c.Serial, Date: time.Now(), InvalDate: r.InvalDate, Reason: r.Reason})
 	})
 	h.changed(ctx)
 	h.auditIf(ctx, err, "cert.revoke", certID, "serial %s, reason %d", c.Serial, r.Reason)
@@ -58,7 +58,7 @@ func (h *Handle) Unrevoke(ctx context.Context, certID int64) error {
 	if err != nil {
 		return err
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.Unrevoke(ctx, ca.ID, c.Serial) })
+	err = h.DB.Write(ctx, func(tx *db.Tx) error { return tx.Unrevoke(ctx, ca.ID, c.Serial) })
 	h.changed(ctx)
 	h.auditIf(ctx, err, "cert.unrevoke", certID, "serial %s", c.Serial)
 	return err
@@ -90,8 +90,8 @@ func (h *Handle) SetRevocation(ctx context.Context, caID int64, serial string, r
 	if ca := findCert(snap, caID); ca == nil || !ca.CA {
 		return errors.New("not a CA certificate")
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
-		return tx.Revoke(ctx, caID, gcadb.RevocationRow{Serial: serial, Date: time.Now(), InvalDate: r.InvalDate, Reason: r.Reason})
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
+		return tx.Revoke(ctx, caID, db.RevocationRow{Serial: serial, Date: time.Now(), InvalDate: r.InvalDate, Reason: r.Reason})
 	})
 	h.changed(ctx)
 	h.auditIf(ctx, err, "ca.revocation", caID, "serial %s, reason %d", serial, r.Reason)
@@ -100,7 +100,7 @@ func (h *Handle) SetRevocation(ctx context.Context, caID int64, serial string, r
 
 // DeleteRevocation removes a revocation entry of a CA.
 func (h *Handle) DeleteRevocation(ctx context.Context, caID int64, serial string) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.Unrevoke(ctx, caID, serial) })
+	err := h.DB.Write(ctx, func(tx *db.Tx) error { return tx.Unrevoke(ctx, caID, serial) })
 	h.changed(ctx)
 	h.auditIf(ctx, err, "ca.revocation_delete", caID, "serial %s", serial)
 	return err
@@ -111,7 +111,7 @@ func (h *Handle) SetCAProperties(ctx context.Context, caID int64, crlDays int, t
 	if crlDays < 1 || crlDays > 36500 {
 		return errors.New("the CRL interval must be between 1 and 36500 days")
 	}
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.SetCAProperties(ctx, caID, crlDays, templateID) })
+	err := h.DB.Write(ctx, func(tx *db.Tx) error { return tx.SetCAProperties(ctx, caID, crlDays, templateID) })
 	h.changed(ctx)
 	h.auditIf(ctx, err, "ca.properties", caID, "CRL days %d, template %d", crlDays, templateID)
 	return err
@@ -131,7 +131,7 @@ type CRLOptions struct {
 }
 
 // DefaultCRLOptions mirrors XCA's crljob defaults for a CA.
-func DefaultCRLOptions(snap *gcadb.Snapshot, ca *gcadb.Cert) CRLOptions {
+func DefaultCRLOptions(snap *db.Snapshot, ca *db.Cert) CRLOptions {
 	now := time.Now().UTC().Truncate(time.Minute)
 	days := 30
 	var num int64 = 1
@@ -201,12 +201,12 @@ func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, kr *
 	}
 	var id int64
 	var replaced int
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		num := int64(0)
 		if o.SetNumber {
 			num = o.Number
 		}
-		id, replaced, err = tx.InsertCRL(ctx, gcadb.NewCRL{Name: name, Source: gcadb.SourceGenerated, DER: der, CAID: caID, Number: num, NextTime: o.NextUpdate})
+		id, replaced, err = tx.InsertCRL(ctx, db.NewCRL{Name: name, Source: db.SourceGenerated, DER: der, CAID: caID, Number: num, NextTime: o.NextUpdate})
 		return err
 	})
 	h.changed(ctx)
@@ -298,12 +298,12 @@ func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, kr *va
 		return 0, err
 	}
 	var id int64
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
-		if id, err = tx.InsertCert(ctx, gcadb.NewCert{Name: old.Name, Comment: old.Comment, Source: 6, DER: der}); err != nil {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
+		if id, err = tx.InsertCert(ctx, db.NewCert{Name: old.Name, Comment: old.Comment, Source: 6, DER: der}); err != nil {
 			return err
 		}
 		if o.Revoke != nil && !self {
-			if err := tx.Revoke(ctx, signer.ID, gcadb.RevocationRow{Serial: old.Serial, Date: time.Now(),
+			if err := tx.Revoke(ctx, signer.ID, db.RevocationRow{Serial: old.Serial, Date: time.Now(),
 				InvalDate: o.Revoke.InvalDate, Reason: o.Revoke.Reason}); err != nil {
 				return err
 			}

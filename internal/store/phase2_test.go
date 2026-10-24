@@ -9,13 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 func TestCreate(t *testing.T) {
@@ -31,7 +30,7 @@ func TestCreate(t *testing.T) {
 	if err := s.Create(ctx, "sample", testPassword, vault.Default); !errors.Is(err, ErrExists) {
 		t.Fatalf("name of an .xdb file: %v", err)
 	}
-	for _, bad := range []string{"", ".hidden", "a/b", "ä", "x.xdb", "y.GCA", string(bytes.Repeat([]byte("x"), 65))} {
+	for _, bad := range []string{"", ".hidden", "a/b", "ä", "x.xdb", "y.OKCA", string(bytes.Repeat([]byte("x"), 65))} {
 		if err := s.Create(ctx, bad, testPassword, vault.Default); !errors.Is(err, ErrBadName) {
 			t.Errorf("name %q: %v", bad, err)
 		}
@@ -40,8 +39,8 @@ func TestCreate(t *testing.T) {
 		t.Fatalf("short password: %v", err)
 	}
 	info, err := s.Lookup(ctx, "new-ca")
-	if err != nil || info.Status != Supported || info.XCA || info.Schema != gcadb.Schema ||
-		filepath.Base(info.Path) != "new-ca.gca" {
+	if err != nil || info.Status != Supported || info.XCA || info.Schema != db.Schema ||
+		filepath.Base(info.Path) != "new-ca.okca" {
 		t.Fatalf("lookup: %+v %v", info, err)
 	}
 	h, snap := load(t, s, "new-ca")
@@ -95,13 +94,13 @@ func TestUpload(t *testing.T) {
 			t.Errorf("%s accepted: %v", f, err)
 		}
 	}
-	// a go-ca database keeps its kind, whatever the file is called
+	// an OpenKCA database keeps its kind, whatever the file is called
 	if err := s.Create(ctx, "native", testPassword, testKDF); err != nil {
 		t.Fatal(err)
 	}
-	gca, _ := os.ReadFile(filepath.Join(s.Dir, "native.gca"))
-	if name, err := s.Upload(ctx, "copy.xdb", bytes.NewReader(gca), 1<<20); err != nil || name != "copy" {
-		t.Fatalf("go-ca upload: %q %v", name, err)
+	own, _ := os.ReadFile(filepath.Join(s.Dir, "native.okca"))
+	if name, err := s.Upload(ctx, "copy.xdb", bytes.NewReader(own), 1<<20); err != nil || name != "copy" {
+		t.Fatalf("OpenKCA upload: %q %v", name, err)
 	}
 	if got := SanitizeName("../../etc/passwd"); got != "passwd" {
 		t.Errorf("sanitize: %q", got)
@@ -109,7 +108,7 @@ func TestUpload(t *testing.T) {
 	if got := SanitizeName("...."); got != "imported" {
 		t.Errorf("sanitize dots: %q", got)
 	}
-	if got := SanitizeName("a.xdb.gca"); got != "a" {
+	if got := SanitizeName("a.xdb.okca.xdb"); got != "a" {
 		t.Errorf("sanitize extensions: %q", got)
 	}
 }
@@ -148,7 +147,7 @@ func TestBackupRetention(t *testing.T) {
 	// age: backups older than backup_days go, the newest always stays
 	old := time.Now().AddDate(0, 0, -40).UTC().Format("20060102150405")
 	for i, p := range all {
-		os.Rename(p, filepath.Join(s.BackupDir(), "bk."+old+"-"+strconv.Itoa(i)+".gca"))
+		os.Rename(p, filepath.Join(s.BackupDir(), "bk."+old+"-"+strconv.Itoa(i)+".okca"))
 	}
 	if err := h.SetSettings(ctx, map[string]string{"backup_days": "30"}); err != nil {
 		t.Fatal(err)
@@ -180,13 +179,13 @@ func TestImport(t *testing.T) {
 	// Variants the fixture lacks: a "Bogus" key, a deleted item and a key
 	// encrypted with another password.
 	{
-		db, err := sql.Open("sqlite", dsn(src, false))
+		sqldb, err := sql.Open("sqlite", dsn(src, false))
 		if err != nil {
 			t.Fatal(err)
 		}
 		reencrypt := func(item int, typ, from, to string) string {
 			var blob string
-			db.QueryRow("SELECT private FROM private_keys WHERE item=?", item).Scan(&blob)
+			sqldb.QueryRow("SELECT private FROM private_keys WHERE item=?", item).Scan(&blob)
 			raw, _ := b64.StdEncoding.DecodeString(blob)
 			der, err := legacyDER(raw, typ, []byte(from))
 			if err != nil {
@@ -206,11 +205,11 @@ func TestImport(t *testing.T) {
 			{"UPDATE private_keys SET private=? WHERE item=18", []any{reencrypt(18, "EC", "secret", "other")}},
 			{"UPDATE items SET del=1 WHERE id=12", nil},
 		} {
-			if _, err := db.Exec(st.q, st.args...); err != nil {
+			if _, err := sqldb.Exec(st.q, st.args...); err != nil {
 				t.Fatal(err)
 			}
 		}
-		db.Close()
+		sqldb.Close()
 	}
 	// a file in the backup folder named like the source is not touched
 	os.MkdirAll(s.BackupDir(), 0o700)
@@ -261,12 +260,12 @@ func TestImport(t *testing.T) {
 	for _, r := range rows {
 		switch r.ID {
 		case 10, 18: // own password: mail (XCA), pending (did not open)
-			if r.Protection != gcadb.ProtPassword || vault.IsSealed(r.Blob) {
+			if r.Protection != db.ProtPassword || vault.IsSealed(r.Blob) {
 				t.Errorf("key %d: protection %d, sealed %v", r.ID, r.Protection, vault.IsSealed(r.Blob))
 			}
 			continue
 		}
-		if r.Protection != gcadb.ProtDEK || vault.Mode(r.Blob) != vault.ModeDEK {
+		if r.Protection != db.ProtDEK || vault.Mode(r.Blob) != vault.ModeDEK {
 			t.Errorf("key %d: protection %d, mode %d", r.ID, r.Protection, vault.Mode(r.Blob))
 			continue
 		}
@@ -288,7 +287,7 @@ func TestImport(t *testing.T) {
 		}
 	}
 
-	// Keys with their own password move to go-ca's form once it opens them.
+	// Keys with their own password move to OpenKCA's form once it opens them.
 	for id, pw := range map[int64]string{10: "mailpass", 18: "other"} {
 		k := findKey(snap, id)
 		if !k.Legacy {
@@ -301,7 +300,7 @@ func TestImport(t *testing.T) {
 			t.Errorf("key %d check: %s %v %v", id, algo, ok, err)
 		}
 		sk, _ := h.DB.StoredPrivateKey(ctx, id)
-		if sk.Protection != gcadb.ProtPassword || vault.Mode(sk.Blob) != vault.ModePassword {
+		if sk.Protection != db.ProtPassword || vault.Mode(sk.Blob) != vault.ModePassword {
 			t.Errorf("key %d not upgraded: protection %d, mode %d", id, sk.Protection, vault.Mode(sk.Blob))
 		}
 	}
@@ -336,54 +335,27 @@ func TestImportFixtures(t *testing.T) {
 	}
 }
 
-// A database from go-ca's former XCA based format is not imported.
-func TestFormerGoCARefused(t *testing.T) {
-	s := copyFixtures(t)
-	ctx := context.Background()
-	path := filepath.Join(s.Dir, "sample.xdb")
-	db, err := sql.Open("sqlite", dsn(path, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, q := range []string{
-		"UPDATE settings SET value='1000' WHERE key_='schema'",
-		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '2')",
-	} {
-		if _, err := db.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	db.Close()
-	info, _ := s.Lookup(ctx, "sample.xdb")
-	if info.Status != Invalid || !strings.Contains(info.Detail, "former") {
-		t.Fatalf("lookup %+v", info)
-	}
-	if _, _, err := s.Import(ctx, "sample.xdb", fixturePassword, testKDF); err == nil {
-		t.Fatal("imported go-ca's former format")
-	}
-}
-
-// A database from a newer go-ca is refused.
-func TestNewerGoCA(t *testing.T) {
+// A database from a newer OpenKCA is refused.
+func TestNewerOKCA(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
 	if err := s.Create(ctx, "next", testPassword, testKDF); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(s.Dir, "next.gca")
-	db, err := sql.Open("sqlite", dsn(path, false))
+	path := filepath.Join(s.Dir, "next.okca")
+	sqldb, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec("UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(gcadb.Schema+1))
-	db.Close()
+	_, err = sqldb.Exec("UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(db.Schema+1))
+	sqldb.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, _, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != gcadb.Schema+1 {
-		t.Fatalf("newer go-ca: %s %+v", st, v)
+	if st, _, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != db.Schema+1 {
+		t.Fatalf("newer OpenKCA: %s %+v", st, v)
 	}
 	if _, err := s.Acquire(ctx, "next"); err == nil {
-		t.Fatal("opened a newer go-ca database")
+		t.Fatal("opened a newer OpenKCA database")
 	}
 }

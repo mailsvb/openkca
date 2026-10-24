@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 var oidInvalidityDate = asn1.ObjectIdentifier{2, 5, 29, 24}

@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -40,7 +40,7 @@ func (t *Tx) SetPGPCert(ctx context.Context, c PGPCert) error {
 		return err
 	}
 	if n != 1 {
-		return fmt.Errorf("gcadb: key %d not found", c.KeyID)
+		return fmt.Errorf("db: key %d not found", c.KeyID)
 	}
 	if _, err := t.ExecContext(ctx, `INSERT INTO pgp (key, fingerprint, cert) VALUES (?, ?, ?)
 		ON CONFLICT (key) DO UPDATE SET fingerprint=excluded.fingerprint, cert=excluded.cert`,

@@ -3,16 +3,16 @@ package web
 import (
 	"bytes"
 	"fmt"
-	"github.com/mailsvb/go-ca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"html/template"
 	"net/http"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/i18n"
-	"github.com/mailsvb/go-ca/internal/session"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/i18n"
+	"github.com/mailsvb/openkca/internal/session"
 )
 
 // page is the data every template receives.
@@ -32,7 +32,7 @@ type page struct {
 type dbHeader struct {
 	Name       string // the name in URLs
 	Label      string // the name shown: the configured name, else Name
-	Background bool   // go-ca keeps the database open on its own
+	Background bool   // OpenKCA keeps the database open on its own
 	Schema     int
 }
 
@@ -165,7 +165,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 }
 
 func (s *Server) header(ds *session.Session) *dbHeader {
-	h := &dbHeader{Name: ds.DBName, Label: ds.DBName, Schema: gcadb.Schema}
+	h := &dbHeader{Name: ds.DBName, Label: ds.DBName, Schema: db.Schema}
 	if c, ok := s.store.ConfiguredDB(ds.DBName); ok {
 		h.Label, h.Background = c.Label, c.Background
 	}
