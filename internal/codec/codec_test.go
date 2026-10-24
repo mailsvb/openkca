@@ -73,12 +73,27 @@ func TestProbeOpenSSLFiles(t *testing.T) {
 	run("dsaparam", "-genkey", "-noout", "-out", "dsa.pem", "1024")
 	run("x509", "-in", "cert.pem", "-outform", "DER", "-out", "cert.der")
 	run("crl2pkcs7", "-nocrl", "-certfile", "cert.pem", "-out", "cert.p7b")
+	// PKCS#12 with keys crypto/x509 refuses, with certificates only and
+	// with a key only
+	run("genpkey", "-algorithm", "ED448", "-out", "ed448.pem")
+	run("req", "-new", "-x509", "-key", "ed448.pem", "-subj", "/CN=Ed448 leaf", "-days", "30", "-out", "ed448.crt")
+	run("pkcs12", "-export", "-in", "ed448.crt", "-inkey", "ed448.pem", "-certfile", "cert.pem", "-passout", "pass:secret", "-out", "ed448.p12")
+	run("req", "-new", "-x509", "-key", "bp.pem", "-subj", "/CN=Brainpool", "-days", "30", "-out", "bp.crt")
+	run("pkcs12", "-export", "-in", "bp.crt", "-inkey", "bp.pem", "-name", "bp", "-passout", "pass:secret", "-out", "bp.p12")
+	run("pkcs12", "-export", "-nokeys", "-in", "cert.pem", "-passout", "pass:secret", "-out", "certonly.p12")
+	run("pkcs12", "-export", "-nocerts", "-inkey", "ed448.pem", "-name", "lonely", "-passout", "pass:secret", "-out", "keyonly.p12")
+	run("pkcs12", "-export", "-legacy", "-in", "cert.pem", "-inkey", "rsa.pem", "-passout", "pass:secret", "-out", "legacy.p12")
 
 	cases := []struct {
 		file, password string
 		want           []string // type:name
 	}{
 		{"both.p12", "secret", []string{"3:my alias", "1:my alias_key"}},
+		{"ed448.p12", "secret", []string{"3:Ed448 leaf", "1:Ed448 leaf_key", "3:Ed448 leaf_ca_0"}},
+		{"bp.p12", "secret", []string{"3:bp", "1:bp_key"}},
+		{"certonly.p12", "secret", []string{"3:Foreign"}},
+		{"keyonly.p12", "secret", []string{"1:lonely_key"}},
+		{"legacy.p12", "secret", []string{"3:Foreign", "1:Foreign_key"}},
 		{"rsa-enc.pem", "secret", []string{"1:rsa-enc"}},
 		{"rsa.pvk", "secret", []string{"1:rsa"}},
 		{"rsa.pk8", "secret", []string{"1:rsa"}},

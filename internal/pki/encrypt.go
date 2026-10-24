@@ -26,50 +26,59 @@ const pbkdf2SaltLen = 16
 // EncryptPKCS8 encrypts a DER PrivateKeyInfo as EncryptedPrivateKeyInfo
 // (PBES2, PBKDF2-HMAC-SHA256, AES-256-CBC), readable by OpenSSL and XCA.
 func EncryptPKCS8(der, password []byte) ([]byte, error) {
+	algo, enc, err := PBES2Encrypt(der, password, PBKDF2Iterations)
+	if err != nil {
+		return nil, err
+	}
+	return asn1.Marshal(encryptedPrivateKeyInfo{Algo: algo, EncryptedData: enc})
+}
+
+// PBES2Encrypt pads and encrypts plain with PBES2 (PBKDF2-HMAC-SHA256 with
+// a random salt, AES-256-CBC with a random IV), as OpenSSL 3 does, and
+// returns the AlgorithmIdentifier and the ciphertext.
+func PBES2Encrypt(plain, password []byte, iterations int) (pkix.AlgorithmIdentifier, []byte, error) {
+	var none pkix.AlgorithmIdentifier
 	salt := make([]byte, pbkdf2SaltLen)
 	iv := make([]byte, aes.BlockSize)
 	if _, err := rand.Read(salt); err != nil {
-		return nil, err
+		return none, nil, err
 	}
 	if _, err := rand.Read(iv); err != nil {
-		return nil, err
+		return none, nil, err
 	}
-	key := pbkdf2.Key(password, salt, PBKDF2Iterations, 32, sha256.New)
+	key := pbkdf2.Key(password, salt, iterations, 32, sha256.New)
 	defer clear(key)
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return none, nil, err
 	}
-	pad := aes.BlockSize - len(der)%aes.BlockSize
-	plain := make([]byte, len(der)+pad)
-	copy(plain, der)
-	for i := len(der); i < len(plain); i++ {
-		plain[i] = byte(pad)
+	pad := aes.BlockSize - len(plain)%aes.BlockSize
+	padded := make([]byte, len(plain)+pad)
+	copy(padded, plain)
+	for i := len(plain); i < len(padded); i++ {
+		padded[i] = byte(pad)
 	}
-	defer clear(plain)
-	enc := make([]byte, len(plain))
-	cipher.NewCBCEncrypter(block, iv).CryptBlocks(enc, plain)
+	defer clear(padded)
+	enc := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(enc, padded)
 
-	kdfParams, err := asn1.Marshal(pbkdf2Params{Salt: salt, IterationCount: PBKDF2Iterations,
+	kdfParams, err := asn1.Marshal(pbkdf2Params{Salt: salt, IterationCount: iterations,
 		PRF: pkix.AlgorithmIdentifier{Algorithm: oidHMACSHA256, Parameters: asn1.NullRawValue}})
 	if err != nil {
-		return nil, err
+		return none, nil, err
 	}
 	ivDER, err := asn1.Marshal(iv)
 	if err != nil {
-		return nil, err
+		return none, nil, err
 	}
 	pbes2, err := asn1.Marshal(pbes2Params{
 		KeyDerivationFunc: pkix.AlgorithmIdentifier{Algorithm: oidPBKDF2, Parameters: asn1.RawValue{FullBytes: kdfParams}},
 		EncryptionScheme:  pkix.AlgorithmIdentifier{Algorithm: oidAES256CBC, Parameters: asn1.RawValue{FullBytes: ivDER}},
 	})
 	if err != nil {
-		return nil, err
+		return none, nil, err
 	}
-	return asn1.Marshal(encryptedPrivateKeyInfo{
-		Algo:          pkix.AlgorithmIdentifier{Algorithm: oidPBES2, Parameters: asn1.RawValue{FullBytes: pbes2}},
-		EncryptedData: enc,
-	})
+	return pkix.AlgorithmIdentifier{Algorithm: oidPBES2, Parameters: asn1.RawValue{FullBytes: pbes2}}, enc, nil
 }
 
 // EncryptPrivateKey encodes and encrypts key for storage in private_keys.

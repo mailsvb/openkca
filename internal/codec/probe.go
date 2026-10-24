@@ -3,7 +3,6 @@ package codec
 import (
 	"bytes"
 	"crypto" //nolint:staticcheck // DSA keys exist in old databases
-	"crypto/ed25519"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -16,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/mailsvb/go-ca/internal/pkcs12"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/xdb"
@@ -264,14 +264,7 @@ func (p *prober) x509Name(name []byte) string {
 	return p.opts.Pasted
 }
 
-func (p *prober) cert(der []byte) {
-	c, err := pki.ParseCertificate(der)
-	if err != nil {
-		p.skip("certificate: %v", err)
-		return
-	}
-	p.add(Object{Type: xdb.TypeCert, Name: p.x509Name(c.RawSubject), DER: der})
-}
+func (p *prober) cert(der []byte) { p.namedCert(der, "") }
 
 func (p *prober) request(der []byte) {
 	r, err := pki.ParseCertificateRequest(der)
@@ -311,7 +304,7 @@ func (p *prober) pkcs12(der []byte) {
 		// an empty password is common for certificate-only files
 		pw = []byte{}
 	}
-	c, err := ParsePKCS12(der, string(pw))
+	c, err := pkcs12.Decode(der, string(pw))
 	if err != nil {
 		if errors.Is(err, ErrPassword) {
 			if len(p.opts.Password) > 0 {
@@ -324,27 +317,73 @@ func (p *prober) pkcs12(der []byte) {
 		return
 	}
 	p.res.NeedPassword = false
-	alias := c.Alias
-	if c.Cert != nil {
-		name := alias
-		if name == "" {
-			name = p.x509Name(c.Cert.RawSubject)
-			alias = name
-		}
-		p.add(Object{Type: xdb.TypeCert, Name: name, DER: c.Cert.Raw})
+	for _, s := range c.Skipped {
+		p.skip("PKCS#12: %s", s)
 	}
-	if s, ok := c.Key.(crypto.Signer); ok {
-		if der, err := pki.MarshalPKCS8(normalizeKey(s)); err == nil {
-			p.privateKey(der, alias+"_key", "")
+	// Each key with its certificate, found by localKeyId or public key, is
+	// named after the key's friendlyName, else the certificate's, else its
+	// subject, as XCA names them; the other certificates after their own
+	// friendlyName or as CA certificates of the first key.
+	used := make([]bool, len(c.Certs))
+	primary := ""
+	for _, k := range c.Keys {
+		ci := -1
+		for i, cb := range c.Certs {
+			if !used[i] && len(k.LocalKeyID) > 0 && bytes.Equal(k.LocalKeyID, cb.LocalKeyID) {
+				ci = i
+				break
+			}
 		}
-	}
-	for i, ca := range c.Chain {
-		name := p.x509Name(ca.RawSubject)
-		if c.Alias != "" {
-			name = fmt.Sprintf("%s_ca_%d", c.Alias, i)
+		if spki := pkcs8SPKI(k.DER); ci < 0 && spki != nil {
+			for i, cb := range c.Certs {
+				if x, err := pki.ParseCertificate(cb.DER); !used[i] && err == nil && bytes.Equal(x.RawSubjectPublicKeyInfo, spki) {
+					ci = i
+					break
+				}
+			}
 		}
-		p.add(Object{Type: xdb.TypeCert, Name: name, DER: ca.Raw})
+		alias := k.FriendlyName
+		if ci >= 0 {
+			used[ci] = true
+			if alias == "" {
+				alias = c.Certs[ci].FriendlyName
+			}
+			if name := p.namedCert(c.Certs[ci].DER, alias); alias == "" {
+				alias = name
+			}
+		}
+		if primary == "" {
+			primary = alias
+		}
+		p.privateKey(k.DER, alias+"_key", "")
 	}
+	n := 0
+	for i, cb := range c.Certs {
+		if used[i] {
+			continue
+		}
+		name := cb.FriendlyName
+		if name == "" && primary != "" {
+			name = fmt.Sprintf("%s_ca_%d", primary, n)
+		}
+		p.namedCert(cb.DER, name)
+		n++
+	}
+}
+
+// namedCert adds a certificate under name, or its subject's name if name
+// is empty, and returns the name; "" if it does not parse.
+func (p *prober) namedCert(der []byte, name string) string {
+	c, err := pki.ParseCertificate(der)
+	if err != nil {
+		p.skip("certificate: %v", err)
+		return ""
+	}
+	if name == "" {
+		name = p.x509Name(c.RawSubject)
+	}
+	p.add(Object{Type: xdb.TypeCert, Name: name, DER: der})
+	return name
 }
 
 func (p *prober) keyName(spki []byte, public bool) (string, string, int) {
@@ -420,16 +459,6 @@ func (p *prober) traditional(typ string, der []byte) {
 		return
 	}
 	p.privateKey(pk8, "", "")
-}
-
-// normalizeKey converts key types returned by x/crypto/ssh and PKCS#12
-// parsers into the forms pki uses.
-func normalizeKey(k crypto.Signer) crypto.Signer {
-	switch v := k.(type) {
-	case *ed25519.PrivateKey:
-		return *v
-	}
-	return k
 }
 
 func (p *prober) opensshPrivate(data []byte) {

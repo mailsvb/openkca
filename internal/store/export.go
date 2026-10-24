@@ -13,6 +13,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/index"
+	"github.com/mailsvb/go-ca/internal/pkcs12"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/xdb"
@@ -139,9 +140,6 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 		}
 		if r.pub == nil || !codec.JWKSupported(r.pub) {
 			d |= codec.FJWK
-		}
-		if r.pub == nil || !codec.PKCS12Supported(r.pub) {
-			d |= codec.FPKCS12
 		}
 	case xdb.TypeKey:
 		k := r.key
@@ -543,27 +541,27 @@ func (e *exporter) certs() error {
 		if err != nil {
 			return err
 		}
-		s, err := e.h.signer(e.ctx, keyOf(e.snap, first), e.req.DBPass, e.req.Keys)
+		k := keyOf(e.snap, first)
+		if k == nil {
+			return ErrNoPrivateKey
+		}
+		key, err := e.h.privateDER(e.ctx, k, e.req.DBPass, e.req.Keys)
 		if err != nil {
 			return err
 		}
-		cert, err := pki.ParseCertificate(first.DER)
-		if err != nil {
-			return err
-		}
-		var extra []*x509.Certificate
+		defer clear(key)
+		// every certificate under its name, as OpenSSL's -caname writes it
+		bags := []pkcs12.Bag{{DER: first.DER, FriendlyName: first.Name}}
 		if f&codec.FChain != 0 {
 			for _, c := range chain(e.snap, first)[1:] {
-				if x, err := pki.ParseCertificate(c.DER); err == nil {
-					extra = append(extra, x)
-				}
+				bags = append(bags, pkcs12.Bag{DER: c.DER, FriendlyName: c.Name})
 			}
 		}
 		algo := e.snap.Settings["pkcs12_enc_algo"]
 		if algo == "" {
 			algo = codec.PKCS12Algorithms[0]
 		}
-		b, err := codec.PKCS12(s, cert, extra, string(pw), algo)
+		b, err := codec.PKCS12(key, bags, string(pw), algo)
 		if err != nil {
 			return err
 		}
