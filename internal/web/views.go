@@ -392,7 +392,10 @@ type detail struct {
 	Templates  []link
 	Reasons    []reasonChoice
 	Now        string
-	CADir      string // a CA's folder on disk (index files and other data)
+	CADir      string   // a CA's folder on disk (index files and other data)
+	AutoCRL    string   // a CA's automatic CRL signing: ca.autocrl.<state>
+	CRLURLs    []string // a CA's published CRL, one per base URL
+	CertURLs   []string // a CA's published certificate, one per base URL
 }
 
 type link struct {
@@ -460,6 +463,11 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 			}
 			if c.CA && c.Authority != nil {
 				d.CADir, _ = ds.Handle.CADir(c.Authority.UUID)
+				d.CRLURLs, d.CertURLs = s.store.PublishedURLs(c)
+				d.AutoCRL = "ca.autocrl." + string(store.AutoCRLState(snap, c))
+				if cfg, ok := s.store.ConfiguredDB(ds.DBName); (!ok || !cfg.Background) && d.AutoCRL == "ca.autocrl.on" {
+					d.AutoCRL = "ca.autocrl.nobg"
+				}
 			}
 			for _, ch := range ix.children[c.ID] {
 				d.Issued = append(d.Issued, lk(ch.ID))
@@ -554,7 +562,7 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 	}
 	p := &page{Title: "tab." + tab, Tab: tab, Data: map[string]any{"D": d}}
 	q := r.URL.Query()
-	if n := q.Get("notice"); n == "created" || n == "saved" || n == "keypw" || n == "revoked" || n == "unrevoked" {
+	if n := q.Get("notice"); n == "created" || n == "saved" || n == "keypw" || n == "revoked" || n == "unrevoked" || n == "crlsigned" {
 		p.Notice = "item.notice." + n
 	}
 	if e := q.Get("error"); strings.HasPrefix(e, "item.error.") || strings.HasPrefix(e, "keypw.error.") || strings.HasPrefix(e, "ca.error.") {
@@ -670,6 +678,8 @@ var optionKeys = []struct {
 	{"no_expire_colors", "opt.no_expire_colors", "no", "bool", nil, ""},
 	{"backup_keep", "opt.backup_keep", strconv.Itoa(store.DefaultBackupKeep), "number", nil, ""},
 	{"backup_days", "opt.backup_days", strconv.Itoa(store.DefaultBackupDays), "number", nil, ""},
+	{"crl_days_root", "opt.crl_days_root", strconv.Itoa(gcadb.DefaultCRLDaysRoot), "number", nil, ""},
+	{"crl_days_sub", "opt.crl_days_sub", strconv.Itoa(gcadb.DefaultCRLDaysSub), "number", nil, ""},
 	{"hide_unusable", "opt.hide_unusable", "no", "bool", nil, ""},
 	{"translate_dn", "opt.translate_dn", "no", "bool", nil, ""},
 	{"suppress_messages", "opt.suppress_messages", "no", "bool", nil, ""},
@@ -680,6 +690,8 @@ var optionRanges = map[string][2]int{
 	"pkcs12_iterations": {codec.PKCS12MinIterations, codec.PKCS12MaxIterations},
 	"backup_keep":       {1, store.MaxBackupKeep},
 	"backup_days":       {0, store.MaxBackupDays},
+	"crl_days_root":     {1, gcadb.MaxCRLDays},
+	"crl_days_sub":      {1, gcadb.MaxCRLDays},
 }
 
 func (s *Server) options(w http.ResponseWriter, r *http.Request) {

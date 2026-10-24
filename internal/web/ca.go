@@ -120,6 +120,7 @@ type revRow struct {
 	Cert       link
 	Reason     string
 	InvalLocal string
+	Status     string // rev.status.<on|unknown|aged>
 }
 
 func (s *Server) revocationsPage(w http.ResponseWriter, r *http.Request) {
@@ -134,11 +135,18 @@ func (s *Server) revocationsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var rows []revRow
+	now := time.Now()
 	for _, rv := range snap.Revocations {
 		if rv.CAID != ca.ID {
 			continue
 		}
-		row := revRow{Revocation: *rv, Cert: bySerial[rv.Serial]}
+		row := revRow{Revocation: *rv, Cert: bySerial[rv.Serial], Status: "rev.status.on"}
+		switch {
+		case rv.Expires.IsZero():
+			row.Status = "rev.status.unknown"
+		case !rv.OnCRL(now):
+			row.Status = "rev.status.aged"
+		}
 		if rv.ReasonBit >= 0 && rv.ReasonBit < len(pki.ReasonNames) {
 			row.Reason = pki.ReasonNames[rv.ReasonBit]
 		}
@@ -153,8 +161,8 @@ func (s *Server) revocationsPage(w http.ResponseWriter, r *http.Request) {
 	case "saved":
 		p.Notice = "item.notice.saved"
 	}
-	if r.URL.Query().Get("error") == "rev.error.input" {
-		p.Error = "rev.error.input"
+	if e := r.URL.Query().Get("error"); e == "rev.error.input" || e == "rev.error.unknown" {
+		p.Error = e
 	}
 	s.render(w, r, http.StatusOK, "revocations", p)
 }
@@ -179,7 +187,11 @@ func (s *Server) revocationsSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Warn("revocation change failed", "ca", ca.ID, "err", err)
-		http.Redirect(w, r, back+"?error=rev.error.input", http.StatusSeeOther)
+		key := "rev.error.input"
+		if errors.Is(err, gcadb.ErrUnknownCert) {
+			key = "rev.error.unknown"
+		}
+		http.Redirect(w, r, back+"?error="+key, http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, back+"?notice=saved", http.StatusSeeOther)
@@ -205,9 +217,9 @@ func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, s
 			keyOwn = k.Protection == gcadb.ProtPassword
 		}
 	}
-	n := 0
+	n, now := 0, time.Now()
 	for _, rv := range snap.Revocations {
-		if rv.CAID == ca.ID {
+		if rv.CAID == ca.ID && rv.OnCRL(now) {
 			n++
 		}
 	}
@@ -215,6 +227,32 @@ func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, s
 		"CA": ca, "O": o, "Hashes": pki.HashChoices, "HasSAN": hasSAN, "KeyOwn": keyOwn, "Count": n,
 		"This": o.ThisUpdate.UTC().Format("2006-01-02T15:04"), "Next": o.NextUpdate.UTC().Format("2006-01-02T15:04"),
 	}})
+}
+
+// crlNow signs a new CRL with the CA's defaults (one click on the CA page).
+func (s *Server) crlNow(w http.ResponseWriter, r *http.Request) {
+	snap, ca, ok := s.caFor(w, r)
+	if !ok {
+		return
+	}
+	ds := dbSession(r)
+	if s.keyLimit.Blocked(ds.ID) {
+		s.toItem(w, r, ca.ID, "error=item.error.ratelimit")
+		return
+	}
+	_, err := ds.Handle.SignCRLNow(r.Context(), ca.ID, ds.Keyring(), keyPasswords(r, snap))
+	switch {
+	case errors.Is(err, store.ErrNeedKeyPassword), errors.Is(err, pki.ErrWrongPassword):
+		s.keyLimit.Fail(ds.ID)
+		s.toItem(w, r, ca.ID, "error=item.error.keypass")
+		return
+	case err != nil:
+		s.log.Warn("CRL signing failed", "ca", ca.ID, "err", err)
+		s.toItem(w, r, ca.ID, "error=item.error.crl")
+		return
+	}
+	s.log.Info("CRL signed", "db", ds.DBName, "ca", ca.ID)
+	s.toItem(w, r, ca.ID, "notice=crlsigned")
 }
 
 func (s *Server) crlSubmit(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +315,7 @@ func (s *Server) renewPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "renew", &page{Title: "renew.title", Tab: "certs", Error: r.URL.Query().Get("error"), Data: map[string]any{
 		"C": c, "Self": c.IssuerID == c.ID, "Reasons": reasonChoices(), "Now": nowLocal(),
 		"NotBefore": now.Format("2006-01-02T15:04"), "NotAfter": now.AddDate(0, 0, days).Format("2006-01-02T15:04"),
-		"NoExpiry": info.NoExpiry,
+		"NoExpiry": info.NoExpiry, "Published": s.published() && c.IssuerID != c.ID && c.IssuerID != 0,
 	}})
 }
 
@@ -289,7 +327,8 @@ func (s *Server) renewSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	ds := dbSession(r)
 	g := r.PostFormValue
-	o := store.RenewOptions{NoExpiry: g("noexpiry") != "", KeepSerial: g("keepserial") != "", Replace: g("replace") != ""}
+	o := store.RenewOptions{NoExpiry: g("noexpiry") != "", KeepSerial: g("keepserial") != "", Replace: g("replace") != "",
+		PubCDP: g("pubcdp") != "", PubAIA: g("pubaia") != ""}
 	var err error
 	if o.NotBefore, err = parseLocal(g("notbefore")); err == nil {
 		o.NotAfter, err = parseLocal(g("notafter"))

@@ -114,11 +114,11 @@ func (h *Handle) Preview(ctx context.Context, p IssueParams) ([]pkix.Extension, 
 	if err != nil {
 		return nil, nil, err
 	}
-	ectx, _, err := extContext(snap, p, subject, spki)
+	ectx, ca, err := extContext(snap, p, subject, spki)
 	if err != nil {
 		return nil, nil, err
 	}
-	exts, err := pki.BuildExtensions(p.Ext, ectx)
+	exts, err := pki.BuildExtensions(h.store.withPublished(p.Ext, ca), ectx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -275,7 +275,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 	if err != nil {
 		return 0, err
 	}
-	exts, err := pki.BuildExtensions(p.Ext, ectx)
+	exts, err := pki.BuildExtensions(h.store.withPublished(p.Ext, ca), ectx)
 	if err != nil {
 		return 0, err
 	}

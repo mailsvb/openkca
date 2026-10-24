@@ -21,6 +21,7 @@ import (
 	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/i18n"
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/pubserve"
 	"github.com/mailsvb/go-ca/internal/session"
 	"github.com/mailsvb/go-ca/internal/store"
 	"github.com/mailsvb/go-ca/internal/vault"
@@ -45,6 +46,8 @@ type Config struct {
 	IdleTimeout  time.Duration
 	MaxUpload    int64 // import size limit in bytes
 	Logger       *slog.Logger
+	// CRLAlerts returns the published CRLs that expire soon or expired.
+	CRLAlerts func() []pubserve.Alert
 }
 
 // Server is the HTTP handler.
@@ -188,6 +191,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /db/{name}/item/{id}/revocations", s.requireServer(s.requireDB(s.revocationsSubmit)))
 	m.HandleFunc("GET /db/{name}/item/{id}/crl", s.requireServer(s.requireDB(s.crlPage)))
 	m.HandleFunc("POST /db/{name}/item/{id}/crl", s.requireServer(s.requireDB(s.crlSubmit)))
+	m.HandleFunc("POST /db/{name}/item/{id}/crl/now", s.requireServer(s.requireDB(s.crlNow)))
 	m.HandleFunc("GET /db/{name}/item/{id}/renew", s.requireServer(s.requireDB(s.renewPage)))
 	m.HandleFunc("POST /db/{name}/item/{id}/renew", s.requireServer(s.requireDB(s.renewSubmit)))
 	s.mux = m
@@ -390,6 +394,7 @@ func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 	p := &page{Title: "databases.title", Data: map[string]any{
 		"Databases": infos, "Open": open, "Selected": r.URL.Query().Get("db"),
 		"MaxUploadMB": s.cfg.MaxUpload >> 20, "MinLen": store.MinPasswordLen,
+		"CRLAlerts": s.crlAlerts(),
 	}}
 	q := r.URL.Query()
 	if e := q.Get("error"); strings.HasPrefix(e, "dblogin.error.") || strings.HasPrefix(e, "create.error.") || strings.HasPrefix(e, "import.error.") {
@@ -399,6 +404,27 @@ func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 		p.Notice, p.NoticeArg = "databases.notice."+n, q.Get("name")
 	}
 	s.render(w, r, http.StatusOK, "databases", p)
+}
+
+// crlAlert is a published CRL that expires soon or expired, for display.
+type crlAlert struct {
+	pubserve.Alert
+	DBLabel string
+}
+
+func (s *Server) crlAlerts() []crlAlert {
+	if s.cfg.CRLAlerts == nil {
+		return nil
+	}
+	var out []crlAlert
+	for _, a := range s.cfg.CRLAlerts() {
+		label := a.DB
+		if c, ok := s.store.ConfiguredDB(a.DB); ok {
+			label = c.Label
+		}
+		out = append(out, crlAlert{a, label})
+	}
+	return out
 }
 
 func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {

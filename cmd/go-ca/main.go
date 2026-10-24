@@ -30,6 +30,7 @@ import (
 	"github.com/mailsvb/go-ca/internal/background"
 	"github.com/mailsvb/go-ca/internal/config"
 	"github.com/mailsvb/go-ca/internal/i18n"
+	"github.com/mailsvb/go-ca/internal/pubserve"
 	"github.com/mailsvb/go-ca/internal/store"
 	"github.com/mailsvb/go-ca/internal/web"
 )
@@ -149,6 +150,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	st.BaseURLs = cfg.CRL.BaseURLs
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -183,14 +185,31 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	monitor := &pubserve.Monitor{Dir: st.Dir, Log: log}
 	srv, err := web.New(web.Config{Store: st, PasswordHash: g.PasswordHash, Catalog: cat, IdleTimeout: g.IdleTimeout,
-		MaxUpload: g.MaxUploadMB << 20, Logger: log})
+		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts})
 	if err != nil {
 		return err
 	}
 	ran := make(chan struct{})
 	go func() { srv.Run(ctx); close(ran) }()
 	go certs.Watch(ctx.Done())
+	go monitor.Run(ctx, time.Hour)
+	bgDone := make(chan struct{})
+	go func() { bg.Run(ctx); close(bgDone) }()
+
+	// The plain HTTP server for CRLs and CA certificates.
+	var pub *http.Server
+	errc := make(chan error, 2)
+	if addr := cfg.CRL.ListenAddr(); addr != "" {
+		pub = pubserve.NewServer(addr, &pubserve.Handler{Dir: st.Dir, Log: log})
+		go func() {
+			if err := pub.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				errc <- fmt.Errorf("CRL server: %w", err)
+			}
+		}()
+		log.Info("publishing CRLs and CA certificates over HTTP", "addr", addr, "base_urls", strings.Join(cfg.CRL.BaseURLs, " "))
+	}
 
 	hs := &http.Server{
 		Addr:              g.Listen,
@@ -201,7 +220,6 @@ func serve(args []string) error {
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
 	}
-	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServeTLS("", "") }()
 	leaf := certs.Leaf()
 	log.Info("go-ca listening", "version", version, "config", cfg.File, "addr", g.Listen, "data", st.Dir,
@@ -210,7 +228,12 @@ func serve(args []string) error {
 	select {
 	case err := <-errc:
 		stop()
+		if pub != nil {
+			pub.Close()
+		}
+		hs.Close()
 		<-ran
+		<-bgDone
 		return err
 	case <-ctx.Done():
 	}
@@ -218,7 +241,12 @@ func serve(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = hs.Shutdown(shutdownCtx)
-	<-ran // sessions closed; the background databases close on return
+	if pub != nil {
+		pub.Shutdown(shutdownCtx)
+	}
+	<-ran // sessions closed
+	<-bgDone
+	// the background databases close on return
 	return err
 }
 

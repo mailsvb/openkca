@@ -93,6 +93,7 @@ type quickForm struct {
 	NewKey         string
 	KeyID, FromReq int64
 	NeedPass       bool
+	PubCDP, PubAIA bool // the issuer's published CRL and certificate
 }
 
 func parseQuick(r *http.Request, p *profile) *quickForm {
@@ -101,6 +102,7 @@ func parseQuick(r *http.Request, p *profile) *quickForm {
 		Issuer: g("issuer"), Validity: g("validity"), KeyMode: g("keymode"), NewKey: g("newkey")}
 	q.KeyID, _ = strconv.ParseInt(g("keyid"), 10, 64)
 	q.FromReq, _ = strconv.ParseInt(g("fromreq"), 10, 64)
+	q.PubCDP, q.PubAIA = g("pubcdp") != "", g("pubaia") != ""
 	q.normalize()
 	return q
 }
@@ -153,6 +155,7 @@ func (q *quickForm) editor(snap *gcadb.Snapshot, strict bool) (*editorForm, stri
 	v, _ := parseValidity(q.Validity)
 	f.ValidN, f.ValidUnit = v.N, v.Unit
 	f.Ext = p.ext(q.keyAlgorithm(snap))
+	f.Ext.PubCDP, f.Ext.PubAIA = q.PubCDP, q.PubAIA
 	switch q.KeyMode {
 	case "existing":
 		f.KeyMode, f.KeyID = "existing", q.KeyID
@@ -407,7 +410,7 @@ func (s *Server) profilePage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	q := &quickForm{Profile: p, Issuer: "self"}
+	q := &quickForm{Profile: p, Issuer: "self", PubCDP: s.published(), PubAIA: s.published()}
 	query := r.URL.Query()
 	if sg := query.Get("signer"); sg != "" && isSigner(snap, atoi64(sg)) {
 		q.Issuer = sg
@@ -469,6 +472,7 @@ func (s *Server) renderQuick(w http.ResponseWriter, r *http.Request, status int,
 		"Picker": newKeyPicker("newkey", q.NewKey, ds.DBName, store.Expert(snap)),
 		"Hosts":  q.Profile.has(fieldHosts), "CN": q.Profile.has(fieldCN), "Email": q.Profile.has(fieldEmail),
 		"Org": q.Profile.has(fieldOrg), "SelfOnly": q.Profile.Issuer == "self", "CAOnly": q.Profile.Issuer == "ca",
+		"Published": s.published(), "BaseURLs": s.store.BaseURLs,
 	}}
 	if len(errArgs) > 0 {
 		pg.ErrorArg = fmt.Sprint(errArgs[0])

@@ -16,6 +16,18 @@ var Keys = []string{"nameCons", "subAltName", "issAltName", "crlDist", "authInfA
 	"ca", "bcCritical", "ekuCritical", "kuCritical", "subKey", "authKey", "basicPath", "validN", "validM",
 	"validMidn", "keyUse", "eKeyUse", "adv_ext", "noWellDefinedExpDate", "OCSPstaple"}
 
+// go-ca's own keys, kept in its database but not in XCA's export form:
+// whether a certificate made from the template gets the issuer's published
+// CRL (CDP) and certificate (AIA caIssuers).
+const (
+	KeyPubCDP = "goca.pubCDP"
+	KeyPubAIA = "goca.pubAIA"
+)
+
+// IsGoCAKey reports whether a settings key is go-ca's own (XCA knows no
+// equivalent; Encode leaves such keys out).
+func IsGoCAKey(k string) bool { return strings.HasPrefix(k, "goca.") }
+
 func putQString(b []byte, s string) []byte {
 	u := utf16.Encode([]rune(s))
 	b = binary.BigEndian.AppendUint32(b, uint32(2*len(u)))
@@ -25,8 +37,8 @@ func putQString(b []byte, s string) []byte {
 	return b
 }
 
-// Encode writes a version 10 template: DER subject, then the settings as a
-// QDataStream QMap<QString,QString>. Entries are written in descending key
+// Encode writes a version 10 template: DER subject, then the settings
+// (without go-ca's own keys) as a QDataStream QMap<QString,QString>. Entries are written in descending key
 // order, as Qt 5's QDataStream (and thus XCA) writes a QMap.
 func Encode(t *Template) []byte {
 	subject := t.Subject
@@ -35,7 +47,9 @@ func Encode(t *Template) []byte {
 	}
 	keys := make([]string, 0, len(t.Settings))
 	for k := range t.Settings {
-		keys = append(keys, k)
+		if !IsGoCAKey(k) {
+			keys = append(keys, k)
+		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
 	b := append([]byte(nil), subject...)
@@ -83,7 +97,7 @@ func (t *Template) Spec() pki.ExtSpec {
 		NSCertType: atoi(s["nsCertType"]), NSComment: s["nsComment"], NSBaseURL: s["nsBaseUrl"],
 		NSRevocationURL: s["nsRevocationUrl"], NSCARevocationURL: s["nsCARevocationUrl"],
 		NSRenewalURL: s["nsRenewalUrl"], NSCAPolicyURL: s["nsCaPolicyUrl"], NSSSLServerName: s["nsSslServerName"],
-		AdvExt: s["adv_ext"],
+		AdvExt: s["adv_ext"], PubCDP: on(s[KeyPubCDP]), PubAIA: on(s[KeyPubAIA]),
 	}
 	for _, e := range strings.Split(s["eKeyUse"], ",") {
 		if e = strings.TrimSpace(e); e != "" {
@@ -120,6 +134,7 @@ func New(subject []byte, spec pki.ExtSpec, v Validity) *Template {
 	s["nsBaseUrl"], s["nsRevocationUrl"], s["nsCARevocationUrl"] = spec.NSBaseURL, spec.NSRevocationURL, spec.NSCARevocationURL
 	s["nsRenewalUrl"], s["nsCaPolicyUrl"], s["nsSslServerName"] = spec.NSRenewalURL, spec.NSCAPolicyURL, spec.NSSSLServerName
 	s["adv_ext"] = spec.AdvExt
+	s[KeyPubCDP], s[KeyPubAIA] = bit(spec.PubCDP), bit(spec.PubAIA)
 	s["validN"], s["validM"] = strconv.Itoa(v.N), strconv.Itoa(v.Unit)
 	s["validMidn"], s["noWellDefinedExpDate"] = bit(v.Midnight), bit(v.NoExpiry)
 	return &Template{Subject: subject, Settings: s}

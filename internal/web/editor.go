@@ -155,6 +155,7 @@ func parseEditor(r *http.Request, kind string, snap *gcadb.Snapshot) *editorForm
 	e.EKUCrit = on("ekucritical")
 	e.SubAltName, e.IssAltName, e.CRLDist = g("san"), g("ian"), g("crldist")
 	e.AuthInfAcc, e.NameCons, e.OCSPStaple = g("aia"), g("namecons"), on("ocspstaple")
+	e.PubCDP, e.PubAIA = on("pubcdp"), on("pubaia")
 	e.NSCertType = bitsFromForm(r, "ns.", len(pki.NSCertTypeNames))
 	e.NSComment = g("nscomment")
 	e.NSBaseURL, e.NSRevocationURL, e.NSCARevocationURL = g("nsbaseurl"), g("nsrevurl"), g("nscarevurl")
@@ -363,7 +364,9 @@ func similar(f *editorForm, snap *gcadb.Snapshot, id int64) {
 	var keyType string
 	if c, err := pki.ParseCertificate(der); err == nil {
 		subject = c.RawSubject
+		pubCDP, pubAIA := f.Ext.PubCDP, f.Ext.PubAIA
 		f.Ext = pki.SpecWithAdvanced(c.Extensions)
+		f.Ext.PubCDP, f.Ext.PubAIA = pubCDP, pubAIA
 		f.Hash = pki.HashChoice(c.Raw)
 		days := int(c.NotAfter.Sub(c.NotBefore).Hours()/24 + 0.5)
 		f.ValidN, f.ValidUnit = days, "d"
@@ -402,6 +405,9 @@ func (s *Server) editorPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := defaultEditor(kind, snap)
+	// The issuer's published CRL and certificate are offered, checked;
+	// a template applied below decides for itself.
+	f.Ext.PubCDP, f.Ext.PubAIA = s.published(), s.published()
 	q := r.URL.Query()
 	if p := profileByID(q.Get("profile")); p != nil && p.Link == "" {
 		f.applyProfile(p, snap)
@@ -493,6 +499,7 @@ func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int
 	pr := s.printer(r)
 	expert := store.Expert(snap)
 	p := &page{Title: title, Tab: tab, Error: errKey, Data: map[string]any{
+		"Published": s.published(), "BaseURLs": s.store.BaseURLs,
 		"F": f, "C": choices(snap), "Hashes": pki.HashChoices, "ExtraAttrs": extraAttrs,
 		"KU": pki.KeyUsageNames, "EKU": pki.EKUNames, "NS": pki.NSCertTypeNames,
 		"NoNetscape": snap.Settings["disable_netscape"] == "yes", "ErrArgs": errArgs, "Templates": templates,
@@ -504,6 +511,10 @@ func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int
 	}
 	s.render(w, r, status, "editor", p)
 }
+
+// published reports whether CRLs and CA certificates are published (base
+// URLs configured), so that CDP and AIA can point there.
+func (s *Server) published() bool { return len(s.store.BaseURLs) > 0 }
 
 func keyPasswords(r *http.Request, snap *gcadb.Snapshot) store.KeyPasswords {
 	pw := r.PostFormValue("keypass")

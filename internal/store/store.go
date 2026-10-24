@@ -26,6 +26,7 @@ import (
 	"github.com/mailsvb/go-ca/internal/cadir"
 	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/index"
+	"github.com/mailsvb/go-ca/internal/publish"
 	"github.com/mailsvb/go-ca/internal/xcaimport"
 )
 
@@ -155,9 +156,11 @@ func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Vers
 		// Schema 3 had no item UUIDs and is not migrated.
 		return Invalid, v, "go-ca schema 3 (before item UUIDs) is no longer supported", true
 	}
-	if schema < gcadb.Schema {
+	if schema < gcadb.MinMigratable {
 		return Invalid, v, "unknown go-ca schema", true
 	}
+	// An older schema from MinMigratable on is upgraded in place when the
+	// database is opened (Acquire).
 	for _, k := range []string{"kdf", "dek"} {
 		var val string
 		if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
@@ -182,6 +185,10 @@ type Store struct {
 	// afterwards.
 	conf      map[string]Configured
 	confNames []string // in the order of the configuration
+
+	// BaseURLs are where CRLs and CA certificates are published (config
+	// crl.base_urls); set before the store is used.
+	BaseURLs []string
 }
 
 // Configured is a database listed in the configuration file.
@@ -384,8 +391,11 @@ type Handle struct {
 	lock  *flock.Flock
 	refs  int
 
-	mu   sync.Mutex
-	snap *gcadb.Snapshot
+	mu       sync.Mutex
+	snap     *gcadb.Snapshot
+	watchers []chan struct{}
+
+	crlMu sync.Mutex // CRLs signed with the CA's defaults, one at a time
 }
 
 // Acquire opens the named database or returns the already open handle. Each
@@ -418,6 +428,15 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(1) // serialises writes
+	migrated, err := gcadb.Migrate(ctx, sqlDB, func() error { return s.backupFile(ctx, info.Path, name) })
+	if err != nil {
+		sqlDB.Close()
+		lk.Unlock()
+		return nil, err
+	}
+	if migrated {
+		slog.Info("database upgraded", "db", name, "from", info.Schema, "to", gcadb.Schema)
+	}
 	d, err := gcadb.Open(ctx, sqlDB)
 	if err != nil {
 		sqlDB.Close()
@@ -470,6 +489,10 @@ func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 	if err := index.Write(h.store.Dir, h.Name, snap); err != nil {
 		slog.Error("writing index files failed", "db", h.Name, "err", err)
 	}
+	// ... and the published CA certificates and CRLs.
+	if err := publish.Write(h.store.Dir, h.Name, snap); err != nil {
+		slog.Error("publishing CA files failed", "db", h.Name, "err", err)
+	}
 	return snap, nil
 }
 
@@ -489,6 +512,7 @@ func (h *Handle) changed(ctx context.Context) {
 	if _, err := h.Snapshot(ctx); err != nil {
 		slog.Error("reload after change failed", "db", h.Name, "err", err)
 	}
+	h.notify()
 }
 
 // Invalidate drops the cached snapshot.

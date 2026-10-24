@@ -10,6 +10,10 @@
 //	  idle_timeout: 30m
 //	  max_upload_mb: 256
 //	  password_hash: "$argon2id$…"  # from "go-ca set-password"
+//	crl:
+//	  listen: ":8080"               # plain HTTP for CRLs and CA certificates; "" = off
+//	  base_urls:                    # offered as CDP/AIA in new certificates
+//	    - http://pki.example.org
 //	databases:
 //	  - name: Home Lab CA           # shown in the web UI
 //	    type: file
@@ -27,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +52,27 @@ const (
 
 // TypeFile is the only database type: a .gca file in the data folder.
 const TypeFile = "file"
+
+// DefaultCRLListen is the address of the plain HTTP publication server.
+const DefaultCRLListen = ":8080"
+
+// CRL configures the publication of CRLs and CA certificates.
+type CRL struct {
+	// Listen is the address of the plain HTTP server; "" turns it off.
+	// Left out, it is DefaultCRLListen.
+	Listen *string `yaml:"listen"`
+	// BaseURLs are the http:// URLs the server is reachable at, in the
+	// order clients should try them; without a trailing slash once parsed.
+	BaseURLs []string `yaml:"base_urls"`
+}
+
+// ListenAddr returns the publication server's address, "" when off.
+func (c CRL) ListenAddr() string {
+	if c.Listen == nil {
+		return DefaultCRLListen
+	}
+	return strings.TrimSpace(*c.Listen)
+}
 
 // General holds the server settings.
 type General struct {
@@ -74,6 +100,7 @@ func (d Database) Background() bool { return d.Password != "" }
 type Config struct {
 	File      string // the configuration file
 	General   General
+	CRL       CRL
 	Databases []Database
 }
 
@@ -114,6 +141,7 @@ func Load(path string) (*Config, error) {
 func Parse(b []byte, base string) (*Config, error) {
 	var raw struct {
 		General   General    `yaml:"general"`
+		CRL       CRL        `yaml:"crl"`
 		Databases []Database `yaml:"databases"`
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -121,7 +149,7 @@ func Parse(b []byte, base string) (*Config, error) {
 	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	c := &Config{General: raw.General, Databases: raw.Databases}
+	c := &Config{General: raw.General, CRL: raw.CRL, Databases: raw.Databases}
 	if err := c.check(base); err != nil {
 		return nil, err
 	}
@@ -156,6 +184,9 @@ func (c *Config) check(base string) error {
 		return errors.New("general.max_upload_mb must be between 1 and 1048576")
 	}
 	g.PasswordHash = strings.TrimSpace(g.PasswordHash)
+	if err := c.CRL.check(); err != nil {
+		return err
+	}
 
 	names, files := map[string]int{}, map[string]int{}
 	for i := range c.Databases {
@@ -188,6 +219,34 @@ func (c *Config) check(base string) error {
 			return fmt.Errorf("%s: file name %s already used by databases[%d]", where, filepath.Base(p), j)
 		}
 		files[stem] = i
+	}
+	return nil
+}
+
+// check validates the base URLs: plain http:// with a host, no query or
+// fragment, each once.
+func (c *CRL) check() error {
+	seen := map[string]bool{}
+	for i, raw := range c.BaseURLs {
+		where := fmt.Sprintf("crl.base_urls[%d]", i)
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		switch {
+		case u.Scheme != "http":
+			return fmt.Errorf("%s: %q must be an http:// URL (CRLs and CA certificates are published over plain HTTP)", where, raw)
+		case u.Host == "" || u.Hostname() == "":
+			return fmt.Errorf("%s: %q has no host", where, raw)
+		case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+			return fmt.Errorf("%s: %q must not have a user, query or fragment", where, raw)
+		}
+		norm := strings.TrimRight(u.String(), "/")
+		if seen[norm] {
+			return fmt.Errorf("%s: %q is listed twice", where, raw)
+		}
+		seen[norm] = true
+		c.BaseURLs[i] = norm
 	}
 	return nil
 }

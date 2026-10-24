@@ -151,6 +151,16 @@
       <label><input type="checkbox" name="subkey" value="1"{{if $e.SubKey}} checked{{end}}> {{T "editor.ski"}}</label>
       {{if ne $f.Kind "request"}}<label><input type="checkbox" name="authkey" value="1"{{if $e.AuthKey}} checked{{end}}> {{T "editor.aki"}}</label>{{end}}
     </div>
+    {{if and $.Data.Published (ne $f.Kind "request")}}
+    <span>{{T "editor.published"}}</span>
+    <div class="checks">
+      <label><input type="checkbox" name="pubcdp" value="1"{{if $e.PubCDP}} checked{{end}}> {{T "editor.pubcdp"}}</label>
+      <label><input type="checkbox" name="pubaia" value="1"{{if $e.PubAIA}} checked{{end}}> {{T "editor.pubaia"}}</label>
+      <span class="muted small">{{T "editor.published.help" (join $.Data.BaseURLs ", ")}}</span>
+    </div>
+    {{else}}{{/* kept for templates while nothing is published */}}
+    {{if $e.PubCDP}}<input type="hidden" name="pubcdp" value="1">{{end}}{{if $e.PubAIA}}<input type="hidden" name="pubaia" value="1">{{end}}
+    {{end}}
     <label for="crldist">{{T "editor.crldist"}}</label>
     <input type="text" id="crldist" name="crldist" value="{{$e.CRLDist}}" placeholder="{{T "editor.ph.crldist"}}">
     <label for="aia">{{T "editor.aia"}}</label>

@@ -4,7 +4,7 @@
 <h1>{{T "rev.heading" $ca.Name}}</h1>
 <div class="tablewrap">
 <table class="list">
-  <thead><tr><th>{{T "cert.serial"}}</th><th>{{T "crl.certificate"}}</th><th>{{T "crl.date"}}</th><th>{{T "rev.invaldate"}}</th><th>{{T "crl.reason"}}</th><th>{{T "rev.crlno"}}</th></tr></thead>
+  <thead><tr><th>{{T "cert.serial"}}</th><th>{{T "crl.certificate"}}</th><th>{{T "crl.date"}}</th><th>{{T "rev.invaldate"}}</th><th>{{T "crl.reason"}}</th><th>{{T "rev.crlno"}}</th><th>{{T "rev.expires"}}</th><th>{{T "rev.status"}}</th></tr></thead>
   <tbody>
   {{range .Data.Rows}}{{$row := .}}
   <tr>
@@ -21,9 +21,11 @@
       </form>
     </td>
     <td>{{if .CRLNo}}{{.CRLNo}}{{end}}</td>
+    <td>{{if not .Expires.IsZero}}{{time .Expires}}{{end}}</td>
+    <td{{if ne .Status "rev.status.on"}} class="muted"{{end}}>{{T .Status}}</td>
   </tr>
   {{else}}
-  <tr><td colspan="6" class="muted">{{T "rev.none"}}</td></tr>
+  <tr><td colspan="8" class="muted">{{T "rev.none"}}</td></tr>
   {{end}}
   </tbody>
 </table>

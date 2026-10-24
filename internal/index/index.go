@@ -123,7 +123,8 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 				lines = append(lines, Entry(c, revs[fmt.Sprint(ca.ID, "/", c.Serial)], now))
 			}
 		}
-		// Revocations of serials not in the database (added by hand)
+		// Revocations of certificates that are not live (in the trash, or
+		// purged with their expiry recorded), as long as the CRL lists them
 		known := map[string]bool{}
 		for _, c := range snap.Certs {
 			if c.IssuerID == ca.ID {
@@ -131,12 +132,12 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 			}
 		}
 		for _, r := range snap.Revocations {
-			if r.CAID == ca.ID && !known[r.Serial] {
+			if r.CAID == ca.ID && !known[r.Serial] && r.OnCRL(now) {
 				rf := indexTime(r.Date)
 				if n, ok := opensslReasons[r.ReasonBit]; ok && r.ReasonBit != 0 {
 					rf += "," + n
 				}
-				lines = append(lines, fmt.Sprintf("R\t%s\t%s\t%s\tunknown\t%s\n", indexTime(time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)), rf, r.Serial, "/"))
+				lines = append(lines, fmt.Sprintf("R\t%s\t%s\t%s\tunknown\t%s\n", indexTime(r.Expires), rf, r.Serial, "/"))
 			}
 		}
 		if err := os.MkdirAll(folder, 0o700); err != nil {

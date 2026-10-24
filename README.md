@@ -135,10 +135,16 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 
 **Certificate authorities**
 
-- Revoke and unrevoke certificates, manage a CA's revocations (also of
-  serials not in the database), set the CRL interval and default template,
-  generate CRLs with XCA's options and renew certificates (new or same
-  serial, optionally revoking or deleting the old one).
+- Revoke and unrevoke certificates, manage a CA's revocations (of
+  certificates in the database, live or in the trash), set the CRL interval
+  and default template, generate CRLs with XCA's options or with one click,
+  and renew certificates (new or same serial, optionally revoking or
+  deleting the old one).
+- CRLs and CA certificates are published over plain HTTP and, in
+  databases kept open in the background, CRLs are signed automatically
+  (see [CRL publishing](#crl-publishing)). New certificates point to their
+  issuer's published CRL and certificate (CDP and AIA) when the user keeps
+  the boxes checked.
 - An OpenSSL `ca` style index per CA in
   `<data-dir>/ca/<database>/<authority ID>/index.txt` (plus `index.txt.attr`),
   kept current and usable directly with `openssl ocsp -index`. Every item
@@ -212,7 +218,8 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 
 | Database                                  | go-ca                                          |
 | ----------------------------------------- | ---------------------------------------------- |
-| go-ca `.gca` (schema 4)                   | supported                                      |
+| go-ca `.gca` (schema 5)                   | supported                                      |
+| go-ca `.gca` (schema 4)                   | upgraded in place when opened, after a backup  |
 | go-ca `.gca` (schema 3, no item UUIDs)    | refused, not migrated                          |
 | XCA schema 5 to 8 (XCA 2.x and later)     | imported into a new `.gca` on first login      |
 | go-ca 0.10 and earlier (`.xdb`, schema 1/2) | imported; schema 2 keeps its data key and keys |
@@ -285,6 +292,11 @@ general:
   data_dir: /srv/xca
   listen: ":8443"
   password_hash: "$argon2id$v=19$m=65536,t=3,p=2$…"
+crl:
+  listen: ":8080"
+  base_urls:
+    - http://pki.example.org
+    - http://pki.lan:8080
 databases:
   - name: Home Lab CA
     type: file
@@ -304,6 +316,11 @@ databases:
 
 Relative paths (`data_dir`, `tls_cert`, `tls_key`) are relative to the
 configuration file's folder; unknown keys are an error.
+
+| `crl` key   | Default | Meaning                                                                  |
+| ----------- | ------- | ------------------------------------------------------------------------ |
+| `listen`    | `:8080` | plain HTTP address for CRLs and CA certificates; `""` turns it off       |
+| `base_urls` |         | `http://` URLs under which that server is reachable, in the order clients should try them |
 
 ### Databases
 
@@ -341,6 +358,72 @@ Upgrading from the command line options: `--data-dir`, `--listen`,
 `<data-dir>/.go-ca/server-password` into `password_hash`: copy it over, or
 run `go-ca set-password` again.
 
+### CRL publishing
+
+Every CA (root and subordinate) publishes two files, addressed by its
+authority ID, which survives renaming and renewing with the same key:
+
+| URL                        | Content                                        |
+| -------------------------- | ---------------------------------------------- |
+| `/<authority ID>.crl`      | the CA's newest CRL (DER, `application/pkix-crl`) |
+| `/<authority ID>.crt`      | the CA certificate (DER, `application/pkix-cert`) |
+| `/<authority ID>.pem`      | the CA certificate (PEM)                       |
+
+The plain HTTP server (`crl.listen`) answers only these, with ETag,
+Last-Modified and a 5 minute `max-age`, for the CAs of all databases,
+open or not; anything else is 404. Only the last path element counts, so
+a base URL may have a path (`http://host/pki`) whether or not a proxy
+strips it. The files are kept in the CA's folder (`ca.crt`, `crl.der`)
+and only replaced, never removed: a CA in the trash keeps serving them.
+Behind a reverse proxy or an ingress on port 80, the base URLs need no
+port; otherwise include `:8080`. CRLs are served over HTTP, not HTTPS,
+as RFC 5280 recommends, which avoids a validation loop.
+
+The CA page lists its URLs below every base URL. With base URLs
+configured, the editor, the purpose profiles and the renew dialog offer
+"CRL distribution point" and "CA issuer (AIA)", checked by default:
+
+- **CDP:** all base URLs, as mirrors of one CRL in one distribution point,
+  which clients try in order. Put first the address most clients reach.
+- **AIA:** one `caIssuers` entry per base URL.
+- Free-text entries in the editor are added after them (one distribution
+  point each, as OpenSSL does); entries naming the same URLs are dropped.
+- Templates store both choices and set the boxes when applied (XCA's
+  template export leaves them out).
+- Renewing with the boxes checked replaces earlier published URLs with
+  the current ones and keeps other entries; unchecked, the extensions are
+  copied unchanged.
+- Self-signed certificates and requests never get them.
+
+**What is on a CRL.** A revocation is listed while its certificate is in
+the database (live or in the trash) and until 30 days after it expired.
+The certificate's expiry is recorded with the revocation, so a revoked
+certificate purged from the trash stays listed until then. Only
+certificates the CA issued that are in the database can be revoked;
+revocations without a known certificate (from older versions) are kept
+but not published, as the revocations page shows. A generated CRL
+replaces the CA's previously generated one (the CRL number keeps
+counting); imported CRLs stay.
+
+**Automatic signing.** In databases kept open in the background, go-ca
+signs a new CRL for every CA whose key is protected by the database
+password: a first one, after every change of its revocations
+(revoke, unrevoke, edit, renewal with revocation, entries aging out) and
+once half of the current CRL's validity has passed. A CA key with its own
+password, and every database without a configured password, is signed
+by hand: the CA page's "Re-sign CRL now" uses the CA's defaults, "Generate
+CRL…" offers XCA's options. The CA page says which applies.
+
+**CRL interval.** New root CAs get 180 days, new subordinate CAs 7 days
+(database options; each CA's value can be changed on its page). Clients
+cache a CRL until its next update, so a revocation reaches them only
+then: keep the interval of CAs that issue end-entity certificates short.
+
+**Expiry monitoring.** go-ca checks every published CRL hourly, logs a
+warning 7 days before its next update and an error once it has passed,
+and shows the same on the databases page. An expired CRL makes many
+clients reject every certificate below that CA.
+
 Without `tls_cert`, go-ca creates a self-signed certificate (CN `go-ca`,
 SANs `localhost`, `127.0.0.1`, `::1`, valid 365 days) on first start, reuses it
 and replaces it automatically once it has expired. Browsers on other machines
@@ -356,11 +439,15 @@ will warn about the name until you pass a certificate for the real host name.
 └── .go-ca/               server state (never listed)
     ├── tls.crt, tls.key  self-issued certificate
     └── backup/           <name>.<yyyyMMddHHmmss>.gca
-/srv/xca/ca/<database>/<authority ID>/index.txt   per-CA folder: certificate index
+/srv/xca/ca/<database>/<authority ID>/   per-CA folder:
+    index.txt, index.txt.attr             certificate index (openssl ocsp -index)
+    ca.crt, crl.der                       published CA certificate and newest CRL
 ```
 
-A backup is written right after an import and before every change that
-rewrites a whole database (database password or Argon2id cost change),
+A backup is written right after an import, before a database of an
+older schema is upgraded on opening (schema 4 to 5), and before every
+change that rewrites a whole database (database password or Argon2id
+cost change),
 using SQLite's `VACUUM INTO`, which copies within one read transaction.
 How many are kept is a database option: at most 10 and none older than
 90 days by default (the newest always stays). After a password change

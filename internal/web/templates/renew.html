@@ -13,6 +13,14 @@
       <label><input type="checkbox" name="keepserial" value="1"> {{T "renew.keepserial"}}</label>
       <label><input type="checkbox" name="replace" value="1"> {{T "renew.replace"}}</label>
     </div>
+    {{if .Data.Published}}
+    <span>{{T "editor.published"}}</span>
+    <div class="checks">
+      <label><input type="checkbox" name="pubcdp" value="1" checked> {{T "editor.pubcdp"}}</label>
+      <label><input type="checkbox" name="pubaia" value="1" checked> {{T "editor.pubaia"}}</label>
+      <span class="muted small">{{T "renew.published.help"}}</span>
+    </div>
+    {{end}}
     {{if not .Data.Self}}
     <span></span>
     <label><input type="checkbox" name="revoke" value="1"> {{T "renew.revoke"}}</label>

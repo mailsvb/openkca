@@ -35,6 +35,49 @@ type ExtSpec struct {
 	NSComment                                                                                   string // "nsComment"
 	NSBaseURL, NSRevocationURL, NSCARevocationURL, NSRenewalURL, NSCAPolicyURL, NSSSLServerName string
 	AdvExt                                                                                      string // "adv_ext": further extensions in OpenSSL config syntax
+
+	// PubCDP and PubAIA ask for the issuer's CRL and certificate as go-ca
+	// publishes them (config crl.base_urls); store resolves them into
+	// CRLMirrors and CAIssuers when the issuer is known.
+	PubCDP, PubAIA bool
+
+	// CRLMirrors are URLs of one CRL, put as mirrors into one distribution
+	// point ahead of CRLDist's (go-ca's published CRL of the issuer).
+	CRLMirrors []string
+	// CAIssuers are caIssuers URLs put into authorityInfoAccess ahead of
+	// AuthInfAcc's (go-ca's published certificate of the issuer).
+	CAIssuers []string
+}
+
+// PublishedURLs returns where go-ca publishes a CA's CRL and certificate
+// (package pubserve) below each base URL, in the base URLs' order.
+func PublishedURLs(baseURLs []string, authorityID string) (crl, cert []string) {
+	for _, b := range baseURLs {
+		b = strings.TrimRight(b, "/")
+		crl = append(crl, b+"/"+authorityID+".crl")
+		cert = append(cert, b+"/"+authorityID+".crt")
+	}
+	return crl, cert
+}
+
+// uriName is a GeneralName uniformResourceIdentifier.
+func uriName(u string) asn1.RawValue {
+	return asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 6, Bytes: []byte(u)}
+}
+
+// distributionPoint encodes a DistributionPoint with a fullName of names.
+func distributionPoint(names []asn1.RawValue) ([]byte, error) {
+	var gnb []byte
+	for _, gn := range names {
+		b, err := asn1.Marshal(gn)
+		if err != nil {
+			return nil, err
+		}
+		gnb = append(gnb, b...)
+	}
+	full, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: gnb})
+	dpn, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: full})
+	return seqOf(dpn)
 }
 
 // KeyUsageNames in XCA's (and RFC 5280's bit) order.
@@ -396,18 +439,30 @@ func BuildExtensions(spec ExtSpec, ctx ExtContext) ([]pkix.Extension, error) {
 			return nil, err
 		}
 	}
-	// crlDistributionPoints: one distribution point per entry, as OpenSSL
-	if strings.TrimSpace(spec.CRLDist) != "" {
+	// crlDistributionPoints: the mirrors as one distribution point, then
+	// one distribution point per CRLDist entry, as OpenSSL
+	if len(spec.CRLMirrors) > 0 || strings.TrimSpace(spec.CRLDist) != "" {
 		var dps []byte
+		if len(spec.CRLMirrors) > 0 {
+			var names []asn1.RawValue
+			for _, u := range spec.CRLMirrors {
+				names = append(names, uriName(u))
+			}
+			dp, err := distributionPoint(names)
+			if err != nil {
+				return nil, err
+			}
+			dps = append(dps, dp...)
+		}
 		for _, item := range splitList(spec.CRLDist) {
 			gn, err := parseGeneralName(item, false)
 			if err != nil {
 				return nil, err
 			}
-			gnb, _ := asn1.Marshal(gn)
-			full, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: gnb})
-			dpn, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: full})
-			dp, _ := seqOf(dpn)
+			dp, err := distributionPoint([]asn1.RawValue{gn})
+			if err != nil {
+				return nil, err
+			}
 			dps = append(dps, dp...)
 		}
 		v, err := seqOf(dps)
@@ -415,9 +470,19 @@ func BuildExtensions(spec ExtSpec, ctx ExtContext) ([]pkix.Extension, error) {
 			return nil, err
 		}
 	}
-	// authorityInfoAccess: "OCSP;URI:…, caIssuers;URI:…"
-	if strings.TrimSpace(spec.AuthInfAcc) != "" {
+	// authorityInfoAccess: the caIssuers URLs, then "OCSP;URI:…, caIssuers;URI:…"
+	if len(spec.CAIssuers) > 0 || strings.TrimSpace(spec.AuthInfAcc) != "" {
 		var ads []byte
+		for _, u := range spec.CAIssuers {
+			ad, err := asn1.Marshal(struct {
+				Method   asn1.ObjectIdentifier
+				Location asn1.RawValue
+			}{oidCAIssuers, uriName(u)})
+			if err != nil {
+				return nil, err
+			}
+			ads = append(ads, ad...)
+		}
 		for _, item := range splitList(spec.AuthInfAcc) {
 			method, loc, ok := strings.Cut(item, ";")
 			if !ok {

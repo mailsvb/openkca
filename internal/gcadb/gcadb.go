@@ -157,6 +157,22 @@ type Revocation struct {
 	InvalDate time.Time // zero = none
 	CRLNo     int64
 	ReasonBit int
+	// Expires is when the revoked certificate expires: from the
+	// certificate when it is in the database (live or in the trash), else
+	// as recorded at revocation time; zero when the certificate is unknown.
+	Expires   time.Time
+	CertKnown bool // the certificate is in the database (live or in the trash)
+}
+
+// CRLGrace is how long a revocation stays on the CRL after its
+// certificate expired.
+const CRLGrace = 30 * 24 * time.Hour
+
+// OnCRL reports whether the revocation is published on the CA's CRL at
+// now: its certificate is known (in the database, or its expiry was
+// recorded when it was revoked) and expired at most CRLGrace ago.
+func (r *Revocation) OnCRL(now time.Time) bool {
+	return !r.Expires.IsZero() && !now.After(r.Expires.Add(CRLGrace))
 }
 
 // Authority holds a CA's bookkeeping.
@@ -448,7 +464,8 @@ func loadTemplates(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 }
 
 func loadRevocations(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
-	rows, err := tx.QueryContext(ctx, `SELECT r.ca, r.serial, r.date, r.invalidity, r.crl_number, r.reason
+	rows, err := tx.QueryContext(ctx, `SELECT r.ca, r.serial, r.date, r.invalidity, r.crl_number, r.reason,
+		r.expires, `+certExpirySQL+`
 		FROM revocations r JOIN items i ON i.id = r.ca WHERE i.trashed IS NULL ORDER BY r.ca, r.serial`)
 	if err != nil {
 		return err
@@ -456,12 +473,16 @@ func loadRevocations(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 	defer rows.Close()
 	for rows.Next() {
 		r := &Revocation{}
-		var date, inval sql.NullString
+		var date, inval, expires, certExpiry sql.NullString
 		var crlNo sql.NullInt64
-		if err := rows.Scan(&r.CAID, &r.Serial, &date, &inval, &crlNo, &r.ReasonBit); err != nil {
+		if err := rows.Scan(&r.CAID, &r.Serial, &date, &inval, &crlNo, &r.ReasonBit, &expires, &certExpiry); err != nil {
 			return err
 		}
 		r.CRLNo, r.Date, r.InvalDate = crlNo.Int64, parseTime(date), parseTime(inval)
+		r.CertKnown = certExpiry.Valid
+		if r.Expires = parseTime(certExpiry); r.Expires.IsZero() {
+			r.Expires = parseTime(expires)
+		}
 		s.Revocations = append(s.Revocations, r)
 	}
 	return rows.Err()

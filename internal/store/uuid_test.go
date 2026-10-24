@@ -127,10 +127,14 @@ func TestItemUUIDs(t *testing.T) {
 		t.Fatal("index of the restored CA missing")
 	}
 
-	// A trashed CA's folder holding only index files is removed.
+	// A trashed CA keeps its published files; a folder holding only index
+	// files (nothing published) is removed.
 	root := findCert(snap, p.root)
 	rootDir, _ := h.CADir(root.Authority.UUID)
-	if _, err := os.Stat(rootDir); err != nil {
+	if _, err := os.Stat(filepath.Join(rootDir, "ca.crt")); err != nil {
+		t.Fatal("CA certificate not published:", err)
+	}
+	if err := os.Remove(filepath.Join(rootDir, "ca.crt")); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Delete(ctx, p.root); err != nil {
@@ -291,7 +295,7 @@ func TestSchema3Refused(t *testing.T) {
 	if _, err := s.Acquire(ctx, "old"); err == nil {
 		t.Fatal("opened a schema 3 database")
 	}
-	if gcadb.Schema != 4 {
-		t.Fatalf("schema %d", gcadb.Schema)
+	if gcadb.MinMigratable != 4 {
+		t.Fatalf("oldest migratable schema %d", gcadb.MinMigratable)
 	}
 }
