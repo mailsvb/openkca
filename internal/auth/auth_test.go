@@ -13,19 +13,15 @@ import (
 )
 
 func TestPassword(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := LoadPassword(dir); err != ErrNoPassword {
-		t.Fatalf("LoadPassword without file: %v", err)
-	}
-	if err := SavePassword(dir, []byte("correct horse")); err != nil {
-		t.Fatal(err)
-	}
-	h, err := LoadPassword(dir)
-	if err != nil {
-		t.Fatal(err)
+	h := HashPassword([]byte("correct horse"))
+	if !ValidHash(h) || ValidHash("garbage") || ValidHash("$argon2id$v=19$m=99999999,t=1,p=1$c2FsdA$a2V5") {
+		t.Fatal("ValidHash")
 	}
 	if !CheckPassword(h, []byte("correct horse")) || CheckPassword(h, []byte("wrong")) || CheckPassword("garbage", nil) {
 		t.Fatal("CheckPassword")
+	}
+	if !CheckPassword(" "+h+"\n", []byte("correct horse")) {
+		t.Fatal("CheckPassword with surrounding space")
 	}
 }
 

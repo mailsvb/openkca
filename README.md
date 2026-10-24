@@ -263,27 +263,85 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
 
 ## Run
 
-```sh
-# once: set the server password (stored as an argon2id hash)
-./go-ca set-password --data-dir /srv/xca
+All settings are in a YAML configuration file. go-ca reads `config.yaml`
+next to its executable, or the file given with `--config`, the only command
+line option. `config.example.yaml` describes every setting.
 
-# serve the databases in the folder on https://<host>:8443/
-./go-ca --data-dir /srv/xca
+```sh
+# once: create a server password hash and put the printed line into the
+# general section of config.yaml
+./go-ca set-password
+
+# serve on https://<host>:8443/ (the listen address is in the config)
+./go-ca                          # config.yaml next to the executable
+./go-ca --config /etc/go-ca/config.yaml
 
 # print the version
 ./go-ca version
 ```
 
-| Flag             | Default  | Meaning                                                          |
-| ---------------- | -------- | ---------------------------------------------------------------- |
-| `--data-dir`     | required | folder with the `.gca` and `.xdb` files, rescanned on every page load |
-| `--listen`       | `:8443`  | listen address (all interfaces by default)                       |
-| `--tls-cert`     |          | PEM certificate; without it a self-issued certificate is used    |
-| `--tls-key`      |          | PEM key for `--tls-cert`                                         |
-| `--idle-timeout` | `30m`    | idle timeout of server and database sessions                     |
-| `--max-upload`   | `256`    | largest upload (database file or items to import), in MB         |
+```yaml
+general:
+  data_dir: /srv/xca
+  listen: ":8443"
+  password_hash: "$argon2id$v=19$m=65536,t=3,p=2$…"
+databases:
+  - name: Home Lab CA
+    type: file
+    path: homelab.gca
+    password: "…"
+```
 
-Without `--tls-cert`, go-ca creates a self-signed certificate (CN `go-ca`,
+| `general` key    | Default  | Meaning                                                          |
+| ---------------- | -------- | ---------------------------------------------------------------- |
+| `data_dir`       | required | folder with the `.gca` and `.xdb` files, rescanned on every page load |
+| `listen`         | `:8443`  | listen address (all interfaces by default)                       |
+| `tls_cert`       |          | PEM certificate; without it a self-issued certificate is used    |
+| `tls_key`        |          | PEM key for `tls_cert`                                           |
+| `idle_timeout`   | `30m`    | idle timeout of server and database sessions                     |
+| `max_upload_mb`  | `256`    | largest upload (database file or items to import), in MB         |
+| `password_hash`  | required | argon2id hash of the server password, from `go-ca set-password`  |
+
+Relative paths (`data_dir`, `tls_cert`, `tls_key`) are relative to the
+configuration file's folder; unknown keys are an error.
+
+### Databases
+
+Each entry of `databases` names one go-ca database:
+
+| Key        | Meaning                                                                    |
+| ---------- | -------------------------------------------------------------------------- |
+| `name`     | the name shown in the web UI (unique)                                       |
+| `type`     | `file`, the only type: a `.gca` file                                        |
+| `path`     | the file, relative to `data_dir`; may be in a subfolder, never outside it   |
+| `password` | optional: the database password, to keep the database open in the background |
+
+A database with a `password` is opened when go-ca starts and stays open
+with its data key unlocked, so that go-ca can do CA work on it on its own.
+go-ca refuses to start when such a database is missing, locked by another
+process or the password is wrong. Logging into it in the web UI still needs
+the database password; the web session unlocks its own copy of the key.
+Its password cannot be changed in the web UI, since that would replace the
+data key under the running background session: remove the password from
+the configuration, restart, change it, put the new one in and restart
+again. Keep a configuration file with passwords readable by its owner only;
+go-ca warns at startup otherwise.
+
+A database without `password` is only listed under its name. Configured
+databases come first on the login page; all other `.gca` and `.xdb` files
+directly in the data folder are listed after them and work as before.
+A configured name (the file name without `.gca`) is taken for new and
+uploaded databases. Only `.gca` files can be configured: open an XCA
+database once in the web UI to convert it, then configure the `.gca` file.
+
+Upgrading from the command line options: `--data-dir`, `--listen`,
+`--tls-cert`, `--tls-key`, `--idle-timeout` and `--max-upload` became
+`data_dir`, `listen`, `tls_cert`, `tls_key`, `idle_timeout` and
+`max_upload_mb`. The server password hash moved from
+`<data-dir>/.go-ca/server-password` into `password_hash`: copy it over, or
+run `go-ca set-password` again.
+
+Without `tls_cert`, go-ca creates a self-signed certificate (CN `go-ca`,
 SANs `localhost`, `127.0.0.1`, `::1`, valid 365 days) on first start, reuses it
 and replaces it automatically once it has expired. Browsers on other machines
 will warn about the name until you pass a certificate for the real host name.
@@ -296,7 +354,6 @@ will warn about the name until you pass a certificate for the real host name.
 ├── ca-root.gca.lock      lock held while go-ca has the database open
 ├── old-ca.xdb            an XCA database, imported (and deleted) at its first login
 └── .go-ca/               server state (never listed)
-    ├── server-password   argon2id hash
     ├── tls.crt, tls.key  self-issued certificate
     └── backup/           <name>.<yyyyMMddHHmmss>.gca
 /srv/xca/ca/<database>/<authority ID>/index.txt   per-CA folder: certificate index
@@ -311,7 +368,8 @@ every older backup is deleted, since they still open with the old
 password, and a new one is written.
 
 Two go-ca processes cannot open the same database (`flock` on the `.lock`
-file).
+file); a database kept open in the background holds its lock as long as
+go-ca runs.
 
 ## Security
 
@@ -319,6 +377,11 @@ file).
   after it. Both logins are rate limited, and at most two Argon2id runs
   happen at a time, so parallel login attempts cannot exhaust memory.
 - New database passwords need at least 8 characters.
+- A database configured with a `password` has its data key in memory for
+  as long as go-ca runs, and the password is stored in plain text in the
+  configuration file: anyone who can read that file or the process memory
+  can sign with its CA keys. Configure passwords only for databases that
+  need unattended CA work. Keys with their own password stay locked.
 - HTTPS only, HSTS, strict Content Security Policy without inline scripts,
   `SameSite=Strict` cookies plus CSRF tokens.
 - A database password is used once per login to unwrap the data key; a

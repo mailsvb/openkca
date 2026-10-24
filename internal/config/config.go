@@ -1,0 +1,258 @@
+// Package config reads go-ca's YAML configuration file: the server's
+// settings (formerly command line options) and the databases go-ca keeps
+// open.
+//
+//	general:
+//	  data_dir: data                # relative to the config file's folder
+//	  listen: ":8443"
+//	  tls_cert: ""                  # PEM; empty = self-issued certificate
+//	  tls_key: ""
+//	  idle_timeout: 30m
+//	  max_upload_mb: 256
+//	  password_hash: "$argon2id$…"  # from "go-ca set-password"
+//	databases:
+//	  - name: Home Lab CA           # shown in the web UI
+//	    type: file
+//	    path: homelab.gca           # relative to data_dir
+//	    password: "…"               # optional: open in the background
+//
+// A database with a password is opened when go-ca starts and stays open
+// with its keys unlocked, so that go-ca can do CA work on its own. Users
+// still log into it with the database password in the web UI. A database
+// without a password is only listed under its name.
+package config
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"go.yaml.in/yaml/v3"
+)
+
+// FileName is the configuration file looked for next to the executable.
+const FileName = "config.yaml"
+
+// Defaults of the general section.
+const (
+	DefaultListen      = ":8443"
+	DefaultIdleTimeout = 30 * time.Minute
+	DefaultMaxUploadMB = 256
+)
+
+// TypeFile is the only database type: a .gca file in the data folder.
+const TypeFile = "file"
+
+// General holds the server settings.
+type General struct {
+	DataDir      string        `yaml:"data_dir"`
+	Listen       string        `yaml:"listen"`
+	TLSCert      string        `yaml:"tls_cert"`
+	TLSKey       string        `yaml:"tls_key"`
+	IdleTimeout  time.Duration `yaml:"idle_timeout"`
+	MaxUploadMB  int64         `yaml:"max_upload_mb"`
+	PasswordHash string        `yaml:"password_hash"`
+}
+
+// Database is one database section.
+type Database struct {
+	Name     string `yaml:"name"`
+	Type     string `yaml:"type"`
+	Path     string `yaml:"path"`
+	Password string `yaml:"password"`
+}
+
+// Background reports whether go-ca keeps the database open on its own.
+func (d Database) Background() bool { return d.Password != "" }
+
+// Config is a parsed and checked configuration. Paths are absolute.
+type Config struct {
+	File      string // the configuration file
+	General   General
+	Databases []Database
+}
+
+// DefaultPath is config.yaml in the folder of the running executable.
+func DefaultPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Join(filepath.Dir(exe), FileName), nil
+}
+
+// Load reads and checks a configuration file.
+func Load(path string) (*Config, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("configuration file %s not found (see config.example.yaml)", abs)
+		}
+		return nil, err
+	}
+	c, err := Parse(b, filepath.Dir(abs))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", abs, err)
+	}
+	c.File = abs
+	return c, nil
+}
+
+// Parse parses a configuration; relative paths resolve against base.
+func Parse(b []byte, base string) (*Config, error) {
+	var raw struct {
+		General   General    `yaml:"general"`
+		Databases []Database `yaml:"databases"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	c := &Config{General: raw.General, Databases: raw.Databases}
+	if err := c.check(base); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (c *Config) check(base string) error {
+	g := &c.General
+	if strings.TrimSpace(g.DataDir) == "" {
+		return errors.New("general.data_dir is required")
+	}
+	g.DataDir = resolve(base, g.DataDir)
+	if g.Listen == "" {
+		g.Listen = DefaultListen
+	}
+	if (g.TLSCert == "") != (g.TLSKey == "") {
+		return errors.New("general.tls_cert and general.tls_key go together")
+	}
+	if g.TLSCert != "" {
+		g.TLSCert, g.TLSKey = resolve(base, g.TLSCert), resolve(base, g.TLSKey)
+	}
+	switch {
+	case g.IdleTimeout == 0:
+		g.IdleTimeout = DefaultIdleTimeout
+	case g.IdleTimeout < time.Minute:
+		return errors.New("general.idle_timeout must be at least 1m")
+	}
+	switch {
+	case g.MaxUploadMB == 0:
+		g.MaxUploadMB = DefaultMaxUploadMB
+	case g.MaxUploadMB < 0 || g.MaxUploadMB > 1<<20:
+		return errors.New("general.max_upload_mb must be between 1 and 1048576")
+	}
+	g.PasswordHash = strings.TrimSpace(g.PasswordHash)
+
+	names, files := map[string]int{}, map[string]int{}
+	for i := range c.Databases {
+		d := &c.Databases[i]
+		where := fmt.Sprintf("databases[%d]", i)
+		d.Name = strings.TrimSpace(d.Name)
+		if d.Name == "" {
+			return fmt.Errorf("%s: name is required", where)
+		}
+		where = fmt.Sprintf("%s (%s)", where, d.Name)
+		if j, dup := names[d.Name]; dup {
+			return fmt.Errorf("%s: name already used by databases[%d]", where, j)
+		}
+		names[d.Name] = i
+		if d.Type == "" {
+			d.Type = TypeFile
+		}
+		if d.Type != TypeFile {
+			return fmt.Errorf("%s: unknown type %q (only %q)", where, d.Type, TypeFile)
+		}
+		p, err := dataPath(g.DataDir, d.Path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		d.Path = p
+		// The file name without .gca is the database's name in URLs and
+		// folders, so it must be unique too.
+		stem := strings.ToLower(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)))
+		if j, dup := files[stem]; dup {
+			return fmt.Errorf("%s: file name %s already used by databases[%d]", where, filepath.Base(p), j)
+		}
+		files[stem] = i
+	}
+	return nil
+}
+
+// dataPath checks a database path from the configuration: relative to the
+// data folder, inside it, and a .gca file.
+func dataPath(dataDir, p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", errors.New("path is required")
+	}
+	if filepath.IsAbs(p) {
+		return "", errors.New("path must be relative to general.data_dir")
+	}
+	clean := filepath.Clean(filepath.FromSlash(p))
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("path must stay inside general.data_dir")
+	}
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if strings.HasPrefix(part, ".") {
+			return "", errors.New("path must not contain hidden files or folders")
+		}
+	}
+	switch strings.ToLower(filepath.Ext(clean)) {
+	case ".gca":
+		if filepath.Ext(clean) != ".gca" {
+			return "", errors.New("the file extension must be .gca in lower case")
+		}
+	case ".xdb":
+		return "", errors.New("an XCA database (.xdb) cannot be configured: open it once in the web UI to convert it, then configure the .gca file")
+	default:
+		return "", errors.New("path must name a go-ca database (.gca)")
+	}
+	return filepath.Join(dataDir, clean), nil
+}
+
+func resolve(base, p string) string {
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(base, p)
+}
+
+// HasPasswords reports whether any database password is configured.
+func (c *Config) HasPasswords() bool {
+	for _, d := range c.Databases {
+		if d.Background() {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckPermissions returns a warning when the file holds database
+// passwords and others than its owner may read it.
+func (c *Config) CheckPermissions() string {
+	if !c.HasPasswords() {
+		return ""
+	}
+	fi, err := os.Stat(c.File)
+	if err != nil {
+		return ""
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return fmt.Sprintf("%s holds database passwords and is readable by others (mode %04o); use chmod 600", c.File, fi.Mode().Perm())
+	}
+	return ""
+}

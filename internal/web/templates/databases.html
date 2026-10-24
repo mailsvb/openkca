@@ -6,7 +6,9 @@
 {{range .Data.Databases}}
   <li class="db status-{{.Status}}{{if eq .Name $sel}} selected{{end}}" id="db-{{.Name}}">
     <div class="dbmeta">
-      <strong>{{.Name}}</strong>
+      <strong>{{.Label}}</strong>
+      {{if ne .Label .Name}}<span class="muted mono small">{{.Name}}</span>{{end}}
+      {{if .Background}}<span class="badge badge-background" title="{{T "databases.background.help"}}">{{T "databases.background"}}</span>{{end}}
       <span class="muted">{{size .Size}} · {{time .ModTime}}</span>
       <span class="badge badge-{{.Status}}">{{T (print "dbstatus." .Status)}}</span>
       {{if .XCA}}{{if .GoCA}}<span class="muted">{{T "databases.goca" .GoCA}}</span>{{else if .Schema}}<span class="muted">{{T "databases.xca" .Schema}}</span>{{end}}{{else if .Schema}}<span class="muted">{{T "databases.gca" .Schema}}</span>{{end}}

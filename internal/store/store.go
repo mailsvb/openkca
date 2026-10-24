@@ -64,6 +64,10 @@ type Info struct {
 	Schema  int    // go-ca's schema, or XCA's (xcaimport.LockoutSchema for go-ca's former format)
 	GoCA    int    // go-ca's former schema of an .xdb file, 0 for XCA's own
 	Detail  string // why a file is invalid
+
+	Label      string // the name shown in the UI: the configured name, else Name
+	Configured bool   // listed in the configuration file
+	Background bool   // go-ca keeps it open on its own (configured with a password)
 }
 
 // Version is the pair of schema settings of a database file.
@@ -172,6 +176,91 @@ type Store struct {
 
 	importMu sync.Mutex
 	imports  map[string]*Conversion // by source path
+
+	// conf holds the databases of the configuration file by name. It is
+	// set once by Configure, before the store is used, and only read
+	// afterwards.
+	conf      map[string]Configured
+	confNames []string // in the order of the configuration
+}
+
+// Configured is a database listed in the configuration file.
+type Configured struct {
+	Label      string // the name shown in the UI
+	Path       string // the .gca file, inside the data folder (possibly in a subfolder)
+	Background bool   // go-ca keeps it open on its own
+}
+
+// Configure registers the databases of the configuration file. Their name
+// in URLs and folders is the file name without .gca; a database in a
+// subfolder must not share it with a file directly in the data folder.
+// Each file must exist and be a go-ca database of the current schema. It
+// returns the names in the order given.
+func (s *Store) Configure(ctx context.Context, dbs []Configured) ([]string, error) {
+	conf := map[string]Configured{}
+	var names []string
+	for _, c := range dbs {
+		rel, err := filepath.Rel(s.Dir, c.Path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return nil, fmt.Errorf("%s: %s is not inside the data folder %s", c.Label, c.Path, s.Dir)
+		}
+		name, ok := strings.CutSuffix(filepath.Base(c.Path), ExtGCA)
+		if !ok || !ValidName(name) {
+			return nil, fmt.Errorf("%s: %s is not a valid database file name (letters, digits, '.', '_', '-', ending in .gca)", c.Label, filepath.Base(c.Path))
+		}
+		for other := range conf {
+			if strings.EqualFold(other, name) {
+				return nil, fmt.Errorf("%s: the file name %s is used twice", c.Label, filepath.Base(c.Path))
+			}
+		}
+		if filepath.Dir(c.Path) != s.Dir {
+			for _, ext := range []string{ExtGCA, ExtXCA} {
+				if _, err := os.Lstat(filepath.Join(s.Dir, name+ext)); err == nil {
+					return nil, fmt.Errorf("%s: %s in the data folder has the same name as %s", c.Label, name+ext, rel)
+				}
+			}
+		}
+		if c.Label == "" {
+			c.Label = name
+		}
+		conf[name] = c
+		names = append(names, name)
+	}
+	prev, prevNames := s.conf, s.confNames
+	s.conf, s.confNames = conf, names
+	for _, name := range names {
+		info, err := s.Lookup(ctx, name)
+		if err != nil {
+			s.conf, s.confNames = prev, prevNames
+			return nil, fmt.Errorf("%s: %w", conf[name].Label, err)
+		}
+		if info.Status != Supported {
+			s.conf, s.confNames = prev, prevNames
+			msg := string(info.Status)
+			if info.Detail != "" {
+				msg += ": " + info.Detail
+			}
+			return nil, fmt.Errorf("%s: %s cannot be opened (%s)", info.Label, info.Path, msg)
+		}
+	}
+	return names, nil
+}
+
+// isConfigured reports whether a configured database has this name (in
+// any case), which makes the name taken for new databases.
+func (s *Store) isConfigured(name string) bool {
+	for n := range s.conf {
+		if strings.EqualFold(n, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ConfiguredDB returns a configured database by name.
+func (s *Store) ConfiguredDB(name string) (Configured, bool) {
+	c, ok := s.conf[name]
+	return c, ok
 }
 
 // New returns a Store for dir, creating dir if needed.
@@ -204,6 +293,9 @@ func IsXCAName(name string) bool {
 
 // path returns the file of a database name, "" for an invalid name.
 func (s *Store) path(name string) string {
+	if c, ok := s.conf[name]; ok {
+		return c.Path
+	}
 	switch {
 	case IsXCAName(name):
 		return filepath.Join(s.Dir, name)
@@ -213,14 +305,24 @@ func (s *Store) path(name string) string {
 	return ""
 }
 
-// Scan lists the .gca and .xdb files directly in the data folder.
-// Symlinks, subfolders and hidden files are ignored.
+// Scan lists the .gca and .xdb files directly in the data folder and the
+// configured databases. Symlinks, subfolders and hidden files are ignored,
+// except for configured databases in subfolders. Configured databases come
+// first, in the order of the configuration.
 func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
 		return nil, err
 	}
-	var out []Info
+	var out, conf []Info
+	for _, name := range s.confNames {
+		info, err := s.Lookup(ctx, name)
+		if err != nil {
+			slog.Warn("configured database not found", "db", name, "path", s.conf[name].Path, "err", err)
+			continue
+		}
+		conf = append(conf, info)
+	}
 	for _, e := range entries {
 		var name string
 		if base, ok := strings.CutSuffix(e.Name(), ExtGCA); ok && ValidName(base) {
@@ -233,12 +335,15 @@ func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 		if !e.Type().IsRegular() {
 			continue
 		}
+		if _, ok := s.conf[name]; ok {
+			continue // listed above
+		}
 		if info, err := s.Lookup(ctx, name); err == nil {
 			out = append(out, info)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
-	return out, nil
+	return append(conf, out...), nil
 }
 
 // Lookup classifies a single database by name.
@@ -259,8 +364,12 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 		// a go-ca database named .xdb or the reverse: not opened by name
 		st, detail = Invalid, "file extension does not match the content"
 	}
-	return Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, XCA: xca,
-		Schema: v.Schema, GoCA: v.GoCA, Detail: detail}, nil
+	info := Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, XCA: xca,
+		Schema: v.Schema, GoCA: v.GoCA, Detail: detail, Label: name}
+	if c, ok := s.conf[name]; ok {
+		info.Label, info.Configured, info.Background = c.Label, true, c.Background
+	}
+	return info, nil
 }
 
 // ErrLocked means another go-ca process serves the database.

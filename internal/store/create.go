@@ -66,6 +66,9 @@ func (s *Store) placeUnique(tmp, base, ext, ignore string) (string, error) {
 		if i > 0 {
 			name = base + "-" + strconv.Itoa(i)
 		}
+		if s.isConfigured(name) {
+			continue // a configured database in a subfolder has this name
+		}
 		other := ExtXCA
 		if ext == ExtXCA {
 			other = ExtGCA
@@ -101,6 +104,9 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	}
 	if len(password) < MinPasswordLen {
 		return ErrShortPassword
+	}
+	if s.isConfigured(name) {
+		return ErrExists
 	}
 	for _, ext := range []string{ExtGCA, ExtXCA} {
 		if _, err := os.Lstat(filepath.Join(s.Dir, name+ext)); err == nil {

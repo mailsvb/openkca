@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,9 +27,6 @@ const (
 	argonKeyLen  = 32
 )
 
-// ErrNoPassword means no server password has been set yet.
-var ErrNoPassword = errors.New("no server password set; run: go-ca set-password --data-dir <dir>")
-
 // HashPassword returns an encoded argon2id hash.
 func HashPassword(pw []byte) string {
 	salt := make([]byte, 16)
@@ -43,55 +39,58 @@ func HashPassword(pw []byte) string {
 		enc.EncodeToString(salt), enc.EncodeToString(key))
 }
 
-// CheckPassword verifies pw against an encoded argon2id hash.
-func CheckPassword(encoded string, pw []byte) bool {
+type argonHash struct {
+	salt, key []byte
+	m, t      uint32
+	p         uint8
+}
+
+// parseHash decodes an encoded argon2id hash, refusing costs beyond what a
+// login may take.
+func parseHash(encoded string) (argonHash, bool) {
+	var h argonHash
 	parts := strings.Split(strings.TrimSpace(encoded), "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
-		return false
+		return h, false
 	}
 	var v int
-	var m uint32
-	var t uint32
-	var p uint8
 	if _, err := fmt.Sscanf(parts[2], "v=%d", &v); err != nil || v != argon2.Version {
-		return false
+		return h, false
 	}
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &m, &t, &p); err != nil || m > 1<<22 || t > 100 || p == 0 {
-		return false
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &h.m, &h.t, &h.p); err != nil || h.m > 1<<22 || h.t > 100 || h.p == 0 {
+		return h, false
 	}
 	enc := base64.RawStdEncoding
-	salt, err1 := enc.DecodeString(parts[4])
-	want, err2 := enc.DecodeString(parts[5])
-	if err1 != nil || err2 != nil || len(want) == 0 {
+	var err1, err2 error
+	h.salt, err1 = enc.DecodeString(parts[4])
+	h.key, err2 = enc.DecodeString(parts[5])
+	if err1 != nil || err2 != nil || len(h.key) == 0 {
+		return h, false
+	}
+	return h, true
+}
+
+// ValidHash reports whether encoded is an argon2id hash CheckPassword can
+// use, as HashPassword makes them.
+func ValidHash(encoded string) bool {
+	_, ok := parseHash(encoded)
+	return ok
+}
+
+// CheckPassword verifies pw against an encoded argon2id hash.
+func CheckPassword(encoded string, pw []byte) bool {
+	h, ok := parseHash(encoded)
+	if !ok {
 		return false
 	}
-	got := argon2.IDKey(pw, salt, t, m, p, uint32(len(want)))
-	return subtle.ConstantTimeCompare(got, want) == 1
+	got := argon2.IDKey(pw, h.salt, h.t, h.m, h.p, uint32(len(h.key)))
+	return subtle.ConstantTimeCompare(got, h.key) == 1
 }
 
-// PasswordPath is where the server password hash is stored.
-func PasswordPath(dataDir string) string {
+// LegacyPasswordPath is where go-ca kept the server password hash before
+// it moved into the configuration file (general.password_hash).
+func LegacyPasswordPath(dataDir string) string {
 	return filepath.Join(dataDir, StateDir, passwordFile)
-}
-
-// SavePassword stores the hash of pw in the state folder.
-func SavePassword(dataDir string, pw []byte) error {
-	if err := os.MkdirAll(filepath.Join(dataDir, StateDir), 0o700); err != nil {
-		return err
-	}
-	return writeFileAtomic(PasswordPath(dataDir), []byte(HashPassword(pw)+"\n"), 0o600)
-}
-
-// LoadPassword reads the stored hash.
-func LoadPassword(dataDir string) (string, error) {
-	b, err := os.ReadFile(PasswordPath(dataDir))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrNoPassword
-	}
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(b)), nil
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

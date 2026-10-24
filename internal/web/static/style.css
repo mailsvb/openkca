@@ -46,6 +46,7 @@ label { color: var(--muted); }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; background: var(--badge); font-size: .8rem; color: var(--fg); }
 .badge-supported { background: var(--cyan); }
 .badge-upgradable { background: var(--yellow); }
+.badge-background { background: var(--accent); color: var(--accent-fg); }
 .badge-outdated, .badge-newer, .badge-legacy, .badge-invalid { background: var(--red); color: var(--red-fg); }
 .st-status\.revoked, .st-status\.expired, .st-status\.notyet { background: var(--red); color: var(--red-fg); }
 .st-status\.expiring { background: var(--yellow); }

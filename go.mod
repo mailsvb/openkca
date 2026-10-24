@@ -9,6 +9,7 @@ require (
 	github.com/cloudflare/circl v1.6.3
 	github.com/gofrs/flock v0.13.1
 	github.com/google/uuid v1.6.0
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0

@@ -13,7 +13,7 @@
 <header class="top">
   <a class="brand" href="/">{{T "app.name"}}</a>
   {{if .DB}}
-  <span class="dbname">{{.DB.Name}}</span>
+  <span class="dbname"{{if ne .DB.Label .DB.Name}} title="{{.DB.Name}}"{{end}}>{{.DB.Label}}</span>
   <nav class="tabs">
     {{$cur := .Tab}}{{$db := .DB.Name}}
     {{range tabs}}<a href="/db/{{$db}}/{{.}}"{{if eq . $cur}} class="active" aria-current="page"{{end}}>{{T (print "tab." .)}}</a>{{end}}

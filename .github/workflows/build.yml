@@ -93,6 +93,7 @@ jobs:
           mkdir -p "dist/$name" pkg
           go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/$name/go-ca$ext" ./cmd/go-ca
           cp README.md "dist/$name/"
+          cp config.example.yaml "dist/$name/"
           cp internal/web/static/htmx.LICENSE "dist/$name/"
           cd dist
           if [ "$GOOS" = windows ]; then
