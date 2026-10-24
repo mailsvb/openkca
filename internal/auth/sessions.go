@@ -154,3 +154,14 @@ func (l *Limiter) Reset(key string) {
 	delete(l.m, key)
 	l.mu.Unlock()
 }
+
+// Sweep drops keys whose failures are all older than the window, so that
+// the map does not grow with every client that ever failed.
+func (l *Limiter) Sweep() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	for k := range l.m {
+		l.prune(k, now)
+	}
+}

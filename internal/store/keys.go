@@ -7,21 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
-
-// ErrNotConverted means a database still has to be converted to go-ca's
-// current format before its keys can be used.
-var ErrNotConverted = errors.New("the database has not been converted to the current format")
 
 // Unlock opens the DEK of a current database with the database password.
 // A wrong password returns pki.ErrWrongPassword.
 func (h *Handle) Unlock(ctx context.Context, password []byte) (*vault.Keyring, error) {
-	if !h.DB.Current() {
-		return nil, ErrNotConverted
-	}
 	kdf, err := h.DB.Setting(ctx, "kdf")
 	if err != nil {
 		return nil, err
@@ -41,6 +34,12 @@ func (h *Handle) KDFParams(ctx context.Context) (vault.Params, error) {
 	}
 	p, _, err := vault.ParseKDF(kdf)
 	return p, err
+}
+
+// keyAlgorithm names the algorithm of a public key as stored, and its size.
+func keyAlgorithm(spki []byte) (string, int) {
+	code, bits := pki.StoredKeyType(spki)
+	return pki.KeyTypeText(code), bits
 }
 
 // legacyDER decrypts a key in one of XCA's forms (encrypted PKCS#8 or the
@@ -66,10 +65,10 @@ func (h *Handle) keyDER(ctx context.Context, keyID int64, keyType string, kr *va
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoPrivateKey, err)
 	}
-	switch sk.OwnPass {
-	case xdb.PassPIN:
+	switch sk.Protection {
+	case gcadb.ProtToken:
 		return nil, errors.New("the key is on a security token, which go-ca does not access")
-	case xdb.PassPrivate:
+	case gcadb.ProtPassword:
 		pw := kp[keyID]
 		if len(pw) == 0 {
 			return nil, ErrNeedKeyPassword
@@ -109,13 +108,14 @@ func (h *Handle) upgradeOwnPassword(ctx context.Context, keyID int64, spki, der,
 	}
 	blob, err := vault.SealWithPassword(der, spki, pw, p)
 	if err == nil {
-		err = h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, xdb.PassPrivate) })
+		err = h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, gcadb.ProtPassword) })
 	}
 	if err != nil {
 		slog.Warn("upgrading a key with its own password failed", "db", h.Name, "id", keyID, "err", err)
 		return
 	}
 	slog.Info("key with its own password upgraded to go-ca's format", "db", h.Name, "id", keyID)
+	h.auditIf(ctx, nil, "key.upgrade", keyID, "own password, from XCA's encryption")
 	h.changed(ctx)
 }
 
@@ -142,7 +142,7 @@ func sealKey(kr *vault.Keyring, key crypto.Signer, spki []byte) ([]byte, error) 
 // CheckKey decrypts a key and reports its algorithm and whether it
 // matches its public key. password is the key's own password (ignored for
 // other keys); a wrong one returns ErrNeedKeyPassword.
-func (h *Handle) CheckKey(ctx context.Context, k *xdb.Key, kr *vault.Keyring, password []byte) (algorithm string, ok bool, err error) {
+func (h *Handle) CheckKey(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, password []byte) (algorithm string, ok bool, err error) {
 	var kp KeyPasswords
 	if len(password) > 0 {
 		kp = KeyPasswords{k.ID: password}

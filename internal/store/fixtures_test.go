@@ -1,18 +1,18 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
-	b64 "encoding/base64"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
-	"github.com/mailsvb/go-ca/internal/xdb"
+	"github.com/mailsvb/go-ca/internal/vault"
 )
 
 const fixtures = "../../testdata/xdb"
@@ -50,164 +50,143 @@ func copyFixtures(t *testing.T) *Store {
 
 func TestScan(t *testing.T) {
 	s := copyFixtures(t)
+	if err := s.Create(context.Background(), "native", testPassword, testKDF); err != nil {
+		t.Fatal(err)
+	}
 	infos, err := s.Scan(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]Status{
-		"garbage": Invalid, "legacy": Legacy, "md5": Upgradable, "newer": Newer,
-		"sample": Upgradable, "schema8": Upgradable, "variants": Upgradable,
+		"garbage.xdb": Invalid, "legacy.xdb": Legacy, "md5.xdb": Upgradable, "newer.xdb": Newer,
+		"sample.xdb": Upgradable, "schema8.xdb": Upgradable, "variants.xdb": Upgradable, "native": Supported,
 	}
 	if len(infos) != len(want) {
 		t.Fatalf("got %d databases, want %d: %+v", len(infos), len(want), infos)
 	}
 	for _, in := range infos {
-		if in.Status != want[in.Name] {
-			t.Errorf("%s: status %s, want %s (%s)", in.Name, in.Status, want[in.Name], in.Detail)
+		if in.Status != want[in.Name] || in.XCA != (in.Name != "native") {
+			t.Errorf("%s: status %s, XCA %v, want %s (%s)", in.Name, in.Status, in.XCA, want[in.Name], in.Detail)
 		}
 	}
 }
 
-func load(t *testing.T, s *Store, name string) (*Handle, *xdb.Snapshot) {
+// load opens a database by name; an XCA fixture of that name is imported
+// first (with fixturePassword).
+func load(t *testing.T, s *Store, name string) (*Handle, *gcadb.Snapshot) {
 	t.Helper()
-	h, err := s.Acquire(context.Background(), name)
+	ctx := context.Background()
+	var kr *vault.Keyring
+	if _, err := s.Lookup(ctx, name); err != nil {
+		var rep ConvertReport
+		if kr, rep, err = s.Import(ctx, name+ExtXCA, fixturePassword, testKDF); err != nil {
+			t.Fatalf("import %s: %v", name, err)
+		}
+		if rep.Target != name {
+			t.Fatalf("imported as %s", rep.Target)
+		}
+	}
+	h, err := s.Acquire(ctx, name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(h.Release)
-	snap, err := h.Snapshot(context.Background())
+	if kr != nil {
+		setKR(h, kr)
+		t.Cleanup(func() {
+			keyringsMu.Lock()
+			delete(keyrings, h)
+			keyringsMu.Unlock()
+		})
+	}
+	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h, snap
 }
 
-func TestSnapshotAndHashes(t *testing.T) {
+func TestImportedSnapshot(t *testing.T) {
 	s := copyFixtures(t)
-	_, snap := load(t, s, "sample")
+	h, snap := load(t, s, "sample")
 	if len(snap.Keys) != 10 || len(snap.Certs) != 7 || len(snap.Requests) != 1 || len(snap.CRLs) != 2 || len(snap.Templates) != 3 {
 		t.Fatalf("counts: keys %d certs %d reqs %d crls %d templates %d",
 			len(snap.Keys), len(snap.Certs), len(snap.Requests), len(snap.CRLs), len(snap.Templates))
 	}
-	keyHash := map[int64]int64{}
-	for _, k := range snap.Keys {
-		if got := xdb.Hash(k.Public); got != k.Hash {
-			t.Errorf("key %s: hash %d, stored %d", k.Name, got, k.Hash)
-		}
-		keyHash[k.ID] = k.Hash
-	}
 	for _, c := range snap.Certs {
-		if got := xdb.Hash(c.DER); got != c.Hash {
-			t.Errorf("cert %s: hash %d, stored %d", c.Name, got, c.Hash)
-		}
 		cert, err := x509.ParseCertificate(c.DER)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := xdb.NameHash(cert.RawIssuer); got != c.IssHash {
-			t.Errorf("cert %s: iss_hash %d, stored %d", c.Name, got, c.IssHash)
+		if c.KeyID == 0 || c.IssuerID == 0 {
+			t.Errorf("cert %s: key %d, issuer %d", c.Name, c.KeyID, c.IssuerID)
 		}
-		if c.KeyID == 0 {
-			t.Errorf("cert %s has no key", c.Name)
-		}
-	}
-	// subj_hash and key_hash live in x509super
-	rows, err := s.open[filepath.Join(s.Dir, "sample.xdb")].DB.SQL.Query(
-		`SELECT x.subj_hash, x.key_hash, COALESCE(c.cert, r.request) FROM x509super x
-		 LEFT JOIN certs c ON c.item = x.item LEFT JOIN requests r ON r.item = x.item`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	n := 0
-	for rows.Next() {
-		var subj, kh int64
-		var b64 string
-		if err := rows.Scan(&subj, &kh, &b64); err != nil {
-			t.Fatal(err)
-		}
-		n++
-		der, _ := base64Decode(b64)
-		var rawSubject, spki []byte
-		if c, err := x509.ParseCertificate(der); err == nil {
-			rawSubject, spki = c.RawSubject, c.RawSubjectPublicKeyInfo
-		} else if r, err := x509.ParseCertificateRequest(der); err == nil {
-			rawSubject, spki = r.RawSubject, r.RawSubjectPublicKeyInfo
-		} else {
-			t.Fatal(err)
-		}
-		if got, _ := xdb.NameHash(rawSubject); got != subj {
-			t.Errorf("subj_hash %d, computed %d", subj, got)
-		}
-		if got := xdb.Hash(spki); got != kh {
-			t.Errorf("key_hash %d, computed %d", kh, got)
+		var fpr, subject, issuer []byte
+		h.DB.SQL.QueryRow("SELECT fingerprint, subject, issuer_name FROM certs WHERE item=?", c.ID).Scan(&fpr, &subject, &issuer)
+		if !bytes.Equal(fpr, gcadb.Fingerprint(c.DER)) || !bytes.Equal(subject, cert.RawSubject) || !bytes.Equal(issuer, cert.RawIssuer) {
+			t.Errorf("cert %s: stored columns differ", c.Name)
 		}
 	}
-	if n != 8 {
-		t.Errorf("x509super rows %d", n)
+	for _, r := range snap.Requests {
+		if r.KeyID == 0 {
+			t.Errorf("request %s has no key", r.Name)
+		}
 	}
 	for _, c := range snap.CRLs {
-		if got := xdb.Hash(c.DER); got != c.Hash {
-			t.Errorf("crl %s: hash %d, stored %d", c.Name, got, c.Hash)
-		}
-		crl, err := x509.ParseRevocationList(c.DER)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, _ := xdb.NameHash(crl.RawIssuer); got != c.IssHash {
-			t.Errorf("crl %s: iss_hash %d, stored %d", c.Name, got, c.IssHash)
+		if c.IssuerID == 0 {
+			t.Errorf("crl %s has no issuer", c.Name)
 		}
 	}
 	if len(snap.Revocations) != 1 || snap.Revocations[0].Serial != "2003" {
 		t.Errorf("revocations: %+v", snap.Revocations)
 	}
+	if _, err := os.Stat(filepath.Join(s.Dir, "sample.xdb")); !os.IsNotExist(err) {
+		t.Errorf("the XCA file is still there: %v", err)
+	}
+	log, _ := h.AuditLog(context.Background(), 0, 0, 10)
+	if len(log) == 0 || log[len(log)-1].Action != "database.import" {
+		t.Errorf("audit %+v", log)
+	}
 }
 
 func TestDecryptAllKeys(t *testing.T) {
 	s := copyFixtures(t)
+	ctx := context.Background()
 	for _, tc := range []struct {
 		db        string
-		legacy    map[string]bool
 		ownPass   map[string]string
 		wantCount int
 	}{
 		{db: "sample", wantCount: 10},
-		{db: "variants", legacy: map[string]bool{"www": true}, ownPass: map[string]string{"mail": "mailpass"}, wantCount: 9},
+		{db: "variants", ownPass: map[string]string{"mail": "mailpass"}, wantCount: 9},
 	} {
 		h, snap := load(t, s, tc.db)
+		kr := krOf(t, h)
 		n := 0
 		for _, k := range snap.Keys {
 			if !k.HasPrivate {
 				continue
 			}
 			n++
-			blob, own, err := h.DB.PrivateKey(context.Background(), k.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			pw := "secret"
+			var kp KeyPasswords
 			if p, ok := tc.ownPass[k.Name]; ok {
-				if own != xdb.PassPrivate {
-					t.Errorf("%s/%s: ownPass %d", tc.db, k.Name, own)
+				if k.Protection != gcadb.ProtPassword || !k.Legacy {
+					t.Errorf("%s/%s: protection %d legacy %v", tc.db, k.Name, k.Protection, k.Legacy)
 				}
-				if _, _, err := pki.DecryptPrivateKey(blob, k.KeyType, []byte(pw)); !errors.Is(err, pki.ErrWrongPassword) {
-					t.Errorf("%s/%s: database password accepted: %v", tc.db, k.Name, err)
+				if _, err := h.unlock(ctx, k.ID, k.KeyType, kr, nil); !errors.Is(err, ErrNeedKeyPassword) {
+					t.Errorf("%s/%s: opened without its password: %v", tc.db, k.Name, err)
 				}
-				pw = p
+				kp = KeyPasswords{k.ID: []byte(p)}
+			} else if k.Protection != gcadb.ProtDEK {
+				t.Errorf("%s/%s: protection %d", tc.db, k.Name, k.Protection)
 			}
-			priv, legacy, err := pki.DecryptPrivateKey(blob, k.KeyType, []byte(pw))
+			priv, err := h.unlock(ctx, k.ID, k.KeyType, kr, kp)
 			if err != nil {
 				t.Errorf("%s/%s (%s): %v", tc.db, k.Name, k.KeyType, err)
 				continue
 			}
-			if legacy != tc.legacy[k.Name] {
-				t.Errorf("%s/%s: legacy=%v", tc.db, k.Name, legacy)
-			}
 			if ok, err := pki.MatchesPublic(priv, k.Public); !ok || err != nil {
 				t.Errorf("%s/%s: private key does not match public key (%v)", tc.db, k.Name, err)
-			}
-			if _, _, err := pki.DecryptPrivateKey(blob, k.KeyType, []byte("wrong")); !errors.Is(err, pki.ErrWrongPassword) {
-				t.Errorf("%s/%s: wrong password gives %v", tc.db, k.Name, err)
 			}
 		}
 		if n != tc.wantCount {
@@ -215,8 +194,6 @@ func TestDecryptAllKeys(t *testing.T) {
 		}
 	}
 }
-
-func base64Decode(s string) ([]byte, error) { return b64.StdEncoding.DecodeString(s) }
 
 func TestDescribeAll(t *testing.T) {
 	s := copyFixtures(t)
@@ -250,8 +227,8 @@ func TestDescribeAll(t *testing.T) {
 		}
 	}
 	for _, tp := range snap.Templates {
-		if _, err := tmpl.Decode(tp.Blob, tp.Version); err != nil {
-			t.Errorf("template %s: %v", tp.Name, err)
+		if tp.Data == nil || len(tp.Data.Settings) == 0 {
+			t.Errorf("template %s: %+v", tp.Name, tp.Data)
 		}
 	}
 }

@@ -70,7 +70,7 @@ func (s *Server) importDB(w http.ResponseWriter, r *http.Request) {
 		}
 		io.Copy(io.Discard, part)
 	}
-	name, err := s.store.Import(r.Context(), part.FileName(), part, s.cfg.MaxUpload)
+	name, err := s.store.Upload(r.Context(), part.FileName(), part, s.cfg.MaxUpload)
 	var rej *store.RejectedError
 	var tooBig *http.MaxBytesError
 	switch {

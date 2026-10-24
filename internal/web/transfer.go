@@ -11,13 +11,13 @@ import (
 	"sync"
 
 	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
-var typeTabs = map[int]string{xdb.TypeKey: "keys", xdb.TypeRequest: "requests", xdb.TypeCert: "certs", xdb.TypeCRL: "crls", xdb.TypeTemplate: "templates"}
-var typeKinds = map[int]string{xdb.TypeKey: "key", xdb.TypeRequest: "request", xdb.TypeCert: "cert", xdb.TypeCRL: "crl", xdb.TypeTemplate: "template"}
+var typeTabs = map[int]string{gcadb.TypeKey: "keys", gcadb.TypeRequest: "requests", gcadb.TypeCert: "certs", gcadb.TypeCRL: "crls", gcadb.TypeTemplate: "templates"}
+var typeKinds = map[int]string{gcadb.TypeKey: "key", gcadb.TypeRequest: "request", gcadb.TypeCert: "cert", gcadb.TypeCRL: "crl", gcadb.TypeTemplate: "template"}
 
 func formIDs(vals []string) []int64 {
 	var ids []int64
@@ -44,7 +44,7 @@ type exportForm struct {
 	Filename string
 }
 
-func (s *Server) exportForm(r *http.Request, snap *xdb.Snapshot, ids []int64) (*exportForm, bool) {
+func (s *Server) exportForm(r *http.Request, snap *gcadb.Snapshot, ids []int64) (*exportForm, bool) {
 	f := &exportForm{IDs: ids, Formats: store.ExportFormats(snap, ids)}
 	if len(ids) == 0 || len(f.Formats) == 0 {
 		return f, false
@@ -52,11 +52,11 @@ func (s *Server) exportForm(r *http.Request, snap *xdb.Snapshot, ids []int64) (*
 	ix := newIndex(snap)
 	for _, id := range ids {
 		f.Items = append(f.Items, link{id, ix.names[id]})
-		if k := ix.keys[id]; k != nil && k.OwnPass == xdb.PassPrivate {
+		if k := ix.keys[id]; k != nil && k.Protection == gcadb.ProtPassword {
 			f.OwnPass = true
 		}
 		if c := ix.certs[id]; c != nil {
-			if k := ix.keys[c.KeyID]; k != nil && k.OwnPass == xdb.PassPrivate {
+			if k := ix.keys[c.KeyID]; k != nil && k.Protection == gcadb.ProtPassword {
 				f.OwnPass = true
 			}
 		}

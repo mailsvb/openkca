@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 var caExt = pki.ExtSpec{CA: 1, BCCritical: true, SubKey: true, AuthKey: true, KeyUse: 1<<5 | 1<<6, KUCritical: true}
@@ -115,7 +115,7 @@ func TestIssueHierarchy(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap, _ = h.Snapshot(ctx)
-	if findCert(snap, subID) != nil || findCert(snap, leafID).IssuerID != 0 || snap.Deleted < 2 {
+	if findCert(snap, subID) != nil || findCert(snap, leafID).IssuerID != 0 || snap.Trashed < 2 {
 		t.Fatal("delete CA")
 	}
 
@@ -124,7 +124,7 @@ func TestIssueHierarchy(t *testing.T) {
 		t.Fatalf("wrong old password: %v", err)
 	}
 	oldKR := krOf(t, h)
-	rows, _ := h.DB.PrivateKeyRows(ctx, true)
+	rows, _ := h.DB.PrivateKeyRows(ctx)
 	nk, err := h.ChangeDatabasePassword(ctx, testPassword, []byte("new password"), testKDF)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestIssueHierarchy(t *testing.T) {
 			continue
 		}
 		blob, own, _ := h.DB.PrivateKey(ctx, k.ID)
-		if own != xdb.PassCommon || vault.Mode(blob) != vault.ModeDEK {
+		if own != gcadb.ProtDEK || vault.Mode(blob) != vault.ModeDEK {
 			t.Errorf("%s ownPass %d, mode %d", k.Name, own, vault.Mode(blob))
 		}
 		if _, err := h.unlock(ctx, k.ID, k.KeyType, nk, nil); err != nil {

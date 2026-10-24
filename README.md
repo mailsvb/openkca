@@ -3,23 +3,35 @@
 A web based certificate authority with SSH and OpenPGP keys, written in Go.
 One statically linked binary serves the UI over HTTPS. It started as a web
 UI for [XCA](https://github.com/chris2511/xca) databases and still takes
-them over: an XCA `.xdb` file opens in go-ca and is converted to go-ca's
-format, which builds on XCA's schema but is no longer opened by desktop
-XCA.
+them over: an XCA `.xdb` file is imported once into a go-ca database
+(`.gca`), which has go-ca's own schema and encryption.
 
 ## Features
 
 **Databases**
 
-- Lists every `.xdb` file in the data folder; create new databases and
-  upload existing ones from the start page. Several databases can be open
-  at the same time, each with its own password.
+- Lists every go-ca database (`.gca`) and every XCA database waiting to be
+  imported (`.xdb`) in the data folder; create new databases and upload
+  existing ones (either kind) from the start page. Several databases can
+  be open at the same time, each with its own password (at least 8
+  characters for new ones).
 - Shows keys, certificate signing requests, certificates (as a tree under
   their issuers), templates and revocation lists, with search, a column
   chooser and expiry colours, plus XCA's shared options.
-- XCA databases are converted to go-ca's format on first login, after a
-  backup (see the table below), with a progress page while the keys are
-  re-encrypted.
+- An XCA database (or one from an older go-ca) is imported at its first
+  login into a new go-ca database of the same name, with a progress page
+  while the keys are re-encrypted. Item IDs, names, comments, dates and all
+  links carry over; items XCA had marked deleted go to the trash. Once the
+  new database has been verified (every item and link is there, the
+  password opens it, every key opens), the `.xdb` file and its backups are
+  deleted, so no copy with XCA's encryption remains.
+- Deleting an item moves it to the trash: it disappears from the lists,
+  links to it read as unknown and come back when it is restored. Items are
+  deleted for good, private keys included, only from the trash.
+- An append-only audit log records every change (keys generated, imported
+  and exported, certificates issued, renewed and revoked, CRLs, options,
+  password changes, trash, failed and successful logins) with time and
+  client address, never secrets. It is shown per database and per item.
 - Private keys are stored with envelope encryption. The database password
   is stretched with Argon2id (256 MiB, 3 passes by default, adjustable per
   database) into a key that wraps a random 256-bit data key; the data key
@@ -29,9 +41,10 @@ XCA.
   that password instead. Changing the password (or the Argon2id cost)
   replaces the data key and re-seals all keys.
 - XCA's key encryption (PBKDF2 with 2048 iterations, the legacy 3DES form,
-  the "Bogus" password) and its password hash are converted away: keys
-  under the database password during the conversion, keys with their own
-  password the next time that password opens them.
+  the "Bogus" password) and its password hash are left behind: keys under
+  the database password during the import, keys with their own password
+  the next time that password opens them; the key list points out the keys
+  still waiting.
 
 **Keys, requests and certificates**
 
@@ -165,23 +178,22 @@ XCA.
 - Diffie-Hellman parameters (1024 to 4096 bit), generated in the background.
 - An OID resolver.
 
-| Database                            | go-ca                                                 |
-| ----------------------------------- | ----------------------------------------------------- |
-| go-ca                               | supported                                             |
-| XCA schema 8 (XCA 2.7 and later)    | converted to go-ca's format on first login, after a backup |
-| XCA schema 5 to 7 (XCA 2.x to 2.6)  | upgraded to schema 8 and converted, after a backup    |
-| XCA schema below 5, pre-2.0 format  | refused                                               |
-| newer XCA or go-ca schema           | refused until supported                               |
+| Database                                  | go-ca                                          |
+| ----------------------------------------- | ---------------------------------------------- |
+| go-ca `.gca` (schema 3)                   | supported                                      |
+| XCA schema 5 to 8 (XCA 2.x and later)     | imported into a new `.gca` on first login      |
+| go-ca 0.10 and earlier (`.xdb`, schema 1/2) | imported; schema 2 keeps its data key and keys |
+| XCA schema below 5, pre-2.0 format        | refused                                        |
+| newer XCA or go-ca schema                 | refused until supported                        |
 
-A go-ca database is XCA's schema 8 plus go-ca's own tables (OpenPGP
-certificates). Its `schema` setting is `1000`, so desktop XCA refuses it
-instead of losing go-ca's data, and `gca_schema` holds go-ca's own schema
-version. Since go-ca schema 2 the `kdf` and `dek` settings (Argon2id
-parameters and the wrapped data key) replace XCA's `pwhash`, and private
-keys are stored in go-ca's own sealed form (`internal/vault`). go-ca
-schema 1 databases are converted like XCA databases. The backup taken
-before the conversion is still an XCA (or go-ca schema 1) database, with
-the old key encryption: delete it once the conversion is verified.
+A go-ca database is an SQLite file with its own schema (`internal/gcadb`)
+and SQLite's application ID `gca1`: DER objects as BLOBs with SHA-256
+fingerprints, links as foreign keys, templates as JSON, a trash and an
+append-only audit table. The `kdf` and `dek` settings hold the Argon2id
+parameters and the wrapped data key; private keys are sealed by
+`internal/vault`. Reading XCA's schema is `internal/xcaimport`'s job only,
+and it opens `.xdb` files read-only. Templates and the database dump can
+still be exported in XCA's formats.
 
 ## Download
 
@@ -221,7 +233,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
 # once: set the server password (stored as an argon2id hash)
 ./go-ca set-password --data-dir /srv/xca
 
-# serve all *.xdb files in the folder on https://<host>:8443/
+# serve the databases in the folder on https://<host>:8443/
 ./go-ca --data-dir /srv/xca
 
 # print the version
@@ -230,7 +242,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
 
 | Flag             | Default  | Meaning                                                          |
 | ---------------- | -------- | ---------------------------------------------------------------- |
-| `--data-dir`     | required | folder with the `.xdb` files, rescanned on every page load       |
+| `--data-dir`     | required | folder with the `.gca` and `.xdb` files, rescanned on every page load |
 | `--listen`       | `:8443`  | listen address (all interfaces by default)                       |
 | `--tls-cert`     |          | PEM certificate; without it a self-issued certificate is used    |
 | `--tls-key`      |          | PEM key for `--tls-cert`                                         |
@@ -246,19 +258,23 @@ will warn about the name until you pass a certificate for the real host name.
 
 ```
 /srv/xca/
-├── ca-root.xdb           databases, listed on the login page
-├── ca-root.xdb.lock      lock held while go-ca has the database open
+├── ca-root.gca           go-ca databases, listed on the login page
+├── ca-root.gca.lock      lock held while go-ca has the database open
+├── old-ca.xdb            an XCA database, imported (and deleted) at its first login
 └── .go-ca/               server state (never listed)
     ├── server-password   argon2id hash
     ├── tls.crt, tls.key  self-issued certificate
-    └── backup/           <name>.<yyyyMMddHHmmss>.xdb, newest 10 per database
+    └── backup/           <name>.<yyyyMMddHHmmss>.gca
 /srv/xca/index/<database>/<CA>/index.txt   per-CA certificate index
 ```
 
-A backup is written before every change that rewrites a whole database
-(conversion of an XCA or older go-ca database, database password or
-Argon2id cost change), using
-SQLite's `VACUUM INTO`, which copies within one read transaction.
+A backup is written right after an import and before every change that
+rewrites a whole database (database password or Argon2id cost change),
+using SQLite's `VACUUM INTO`, which copies within one read transaction.
+How many are kept is a database option: at most 10 and none older than
+90 days by default (the newest always stays). After a password change
+every older backup is deleted, since they still open with the old
+password, and a new one is written.
 
 Two go-ca processes cannot open the same database (`flock` on the `.lock`
 file).
@@ -276,7 +292,8 @@ file).
   after the idle timeout (as far as Go allows: the runtime may keep
   copies). Private keys are decrypted in memory only when needed.
 - SQLite's `secure_delete` is on, and the file is vacuumed after keys are
-  re-encrypted, so replaced or deleted key blobs do not stay in the file.
+  re-encrypted and after items are deleted from the trash, so replaced or
+  deleted key blobs do not stay in the file.
 
 ## Translations
 
@@ -300,8 +317,8 @@ revocation certificates, and read keys gpg generated in each export form.
 
 `testdata/xdb/` holds databases generated with the real XCA command line and
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
-password, schema 8 and 9, a pre-2.0 file); the tests convert them to
-go-ca's format. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
+password, schema 8 and 9, a pre-2.0 file); the tests import them into
+go-ca databases, also as go-ca 0.10's schema 2. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
 `xca`, `openssl`, `sqlite3`, `perl`).
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
 and lets the XCA command line import each file, except go-ca's own SSH

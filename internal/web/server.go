@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/auth"
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/i18n"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/session"
@@ -32,8 +33,8 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 const (
-	authCookie = "xca_auth"
-	dbCookie   = "xca_sess"
+	authCookie = "gca_auth"
+	dbCookie   = "gca_sess"
 )
 
 // Config configures a Server.
@@ -106,6 +107,9 @@ func (s *Server) Run(ctx context.Context) {
 		case <-t.C:
 			s.auth.Sweep()
 			s.dbs.Sweep()
+			s.srvLimit.Sweep()
+			s.dbLimit.Sweep()
+			s.keyLimit.Sweep()
 		}
 	}
 }
@@ -130,6 +134,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /db/{name}/converting", s.requireServer(s.requireDBSession(s.convertingPage)))
 	m.HandleFunc("GET /db/{name}/{$}", s.requireServer(s.requireDB(s.dbHome)))
 	m.HandleFunc("GET /db/{name}/options", s.requireServer(s.requireDB(s.options)))
+	m.HandleFunc("GET /db/{name}/trash", s.requireServer(s.requireDB(s.trashPage)))
+	m.HandleFunc("POST /db/{name}/trash/empty", s.requireServer(s.requireDB(s.purgeItems)))
+	m.HandleFunc("POST /db/{name}/trash/{id}/restore", s.requireServer(s.requireDB(s.restoreItem)))
+	m.HandleFunc("POST /db/{name}/trash/{id}/purge", s.requireServer(s.requireDB(s.purgeItems)))
+	m.HandleFunc("GET /db/{name}/audit", s.requireServer(s.requireDB(s.auditPage)))
 	m.HandleFunc("GET /db/{name}/item/{id}", s.requireServer(s.requireDB(s.item)))
 	m.HandleFunc("POST /db/{name}/item/{id}/check-key", s.requireServer(s.requireDB(s.checkKey)))
 	m.HandleFunc("GET /db/{name}/{tab}", s.requireServer(s.requireDB(s.list)))
@@ -260,7 +269,8 @@ func (s *Server) requireServer(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxServer, ss)))
+		ctx := gcadb.WithClient(context.WithValue(r.Context(), ctxServer, ss), clientIP(r))
+		next(w, r.WithContext(ctx))
 	}
 }
 
@@ -396,73 +406,68 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 		back("dblogin.error.ratelimit")
 		return
 	}
-	h, err := s.store.Acquire(r.Context(), name)
-	if err != nil {
+	openErr := func(err error) {
 		s.log.Warn("database open failed", "db", name, "err", err)
-		if errors.Is(err, store.ErrLocked) {
+		switch {
+		case errors.Is(err, pki.ErrWrongPassword):
+			s.log.Warn("database login failed", "db", name, "ip", clientIP(r))
+			back("dblogin.error.password")
+		case errors.Is(err, store.ErrLocked):
 			back("dblogin.error.locked")
-		} else if errors.Is(err, os.ErrNotExist) {
+		case errors.Is(err, os.ErrNotExist):
 			back("dblogin.error.missing")
-		} else {
+		default:
 			back("dblogin.error.unsupported")
 		}
-		return
 	}
 	// Count the attempt before the (slow) check, as for the server login.
 	s.dbLimit.Fail(name)
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
-	var kr *vault.Keyring
-	var conv *store.Conversion
-	if h.DB.Current() {
-		kr, err = h.Unlock(r.Context(), pw)
-		if errors.Is(err, pki.ErrWrongPassword) {
-			h.Release()
-			s.log.Warn("database login failed", "db", name, "ip", clientIP(r))
-			back("dblogin.error.password")
-			return
-		}
+	if store.IsXCAName(name) {
+		// An XCA (or former go-ca) file is imported into a new go-ca
+		// database in the background; the session waits for it on the
+		// progress page.
+		conv, err := s.store.StartImport(r.Context(), name, pw, vault.Default)
 		if err != nil {
-			h.Release()
-			s.log.Error("database unlock failed", "db", name, "err", err)
-			back("dblogin.error.unsupported")
+			openErr(err)
 			return
 		}
-	} else {
-		ok, err := h.VerifyLegacyPassword(r.Context(), pw)
-		if err != nil {
-			h.Release()
-			s.fail(w, r, err)
-			return
-		}
-		if !ok {
-			h.Release()
-			s.log.Warn("database login failed", "db", name, "ip", clientIP(r))
-			back("dblogin.error.password")
-			return
-		}
-		// The conversion re-encrypts every key with a new DEK in the
-		// background; the session waits for it on the progress page.
-		conv = h.StartConversion(pw, vault.Default)
-		s.log.Info("database conversion started", "db", name, "ip", clientIP(r))
-	}
-	s.dbLimit.Reset(name)
-	if c, err := r.Cookie(dbCookie); err == nil {
-		s.dbs.End(c.Value)
-	}
-	ds := s.dbs.Create(serverSession(r).ID, name, h, kr, conv)
-	s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
-	s.log.Info("database opened", "db", name, "ip", clientIP(r))
-	if conv != nil {
+		s.dbLimit.Reset(name)
+		s.log.Info("database import started", "file", name, "ip", clientIP(r))
+		ds := s.dbs.Create(serverSession(r).ID, name, nil, nil, conv)
+		s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
 		http.Redirect(w, r, dbPath(name)+"converting", http.StatusSeeOther)
 		return
 	}
+	h, err := s.store.Acquire(r.Context(), name)
+	if err != nil {
+		openErr(err)
+		return
+	}
+	kr, err := h.Unlock(r.Context(), pw)
+	if err != nil {
+		if errors.Is(err, pki.ErrWrongPassword) {
+			h.Audit(r.Context(), "database.unlock_failed", 0, "")
+		}
+		h.Release()
+		openErr(err)
+		return
+	}
+	s.dbLimit.Reset(name)
+	h.Audit(r.Context(), "database.unlock", 0, "")
+	if c, err := r.Cookie(dbCookie); err == nil {
+		s.dbs.End(c.Value)
+	}
+	ds := s.dbs.Create(serverSession(r).ID, name, h, kr, nil)
+	s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
+	s.log.Info("database opened", "db", name, "ip", clientIP(r))
 	http.Redirect(w, r, dbPath(name), http.StatusSeeOther)
 }
 
-// convertingPage shows the progress of a database conversion; htmx polls
-// it. When the conversion has finished, the session takes its keyring and
-// the browser continues to the database; when it failed, the session ends.
+// convertingPage shows the progress of an import; htmx polls it. When
+// the import has finished, the browser gets a session on the new go-ca
+// database and continues there; when it failed, the session ends.
 func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
 	if ds.Ready() {
@@ -470,12 +475,16 @@ func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conv := ds.Conversion()
-	if conv == nil {
+	failed := func() {
 		s.dbs.End(ds.ID)
+		s.setCookie(w, dbCookie, "", dbPath(ds.DBName), -1)
 		s.redirect(w, r, "/?db="+url.QueryEscape(ds.DBName)+"&error=dblogin.error.upgrade")
+	}
+	if conv == nil {
+		failed()
 		return
 	}
-	// Small databases convert in well under a second: wait a moment
+	// Small databases import in well under a second: wait a moment
 	// instead of showing the progress page at once.
 	wait := time.NewTimer(time.Second)
 	defer wait.Stop()
@@ -487,16 +496,25 @@ func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 	case <-conv.Finished():
 		kr, rep, err := conv.Result()
 		if err != nil {
-			s.dbs.End(ds.ID)
-			s.redirect(w, r, "/?db="+url.QueryEscape(ds.DBName)+"&error=dblogin.error.upgrade")
+			failed()
 			return
 		}
-		ds.SetKeyring(kr)
-		q := ""
-		if rep.OwnPassLegacy > 0 || rep.Unopened > 0 {
-			q = "?notice=converted.ownpass&n=" + strconv.Itoa(rep.OwnPassLegacy+rep.Unopened)
+		h, err := s.store.Acquire(r.Context(), rep.Target)
+		if err != nil {
+			kr.Wipe()
+			s.log.Error("opening the imported database failed", "db", rep.Target, "err", err)
+			failed()
+			return
 		}
-		s.redirect(w, r, dbPath(ds.DBName)+"keys"+q)
+		s.dbs.End(ds.ID)
+		s.setCookie(w, dbCookie, "", dbPath(ds.DBName), -1)
+		nds := s.dbs.Create(serverSession(r).ID, rep.Target, h, kr, nil)
+		s.setCookie(w, dbCookie, nds.ID, dbPath(rep.Target), 0)
+		q := "?notice=converted&name=" + url.QueryEscape(ds.DBName)
+		if n := rep.OwnPassLegacy + rep.Unopened; n > 0 {
+			q = "?notice=converted.ownpass&n=" + strconv.Itoa(n)
+		}
+		s.redirect(w, r, dbPath(rep.Target)+"keys"+q)
 		return
 	default:
 	}

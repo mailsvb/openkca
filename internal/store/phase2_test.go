@@ -8,48 +8,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
-	"strings"
 	"testing"
+	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
-
-// schemaSQL returns the sorted DDL of a database file.
-func schemaSQL(t *testing.T, path string) []string {
-	t.Helper()
-	db, err := sql.Open("sqlite", dsn(path, true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := db.Query("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var s string
-		rows.Scan(&s)
-		out = append(out, s)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// gocaDDL is the DDL of a file XCA created and upgraded to schema 8, plus
-// go-ca's tables.
-func gocaDDL(t *testing.T) []string {
-	out := append(schemaSQL(t, filepath.Join(fixtures, "schema8.xdb")),
-		"CREATE TABLE gca_pgp (item INTEGER UNIQUE, fingerprint VARCHAR(64), cert TEXT, FOREIGN KEY (item) REFERENCES items (id))",
-		"CREATE INDEX i_gca_pgp_item ON gca_pgp (item)")
-	sort.Strings(out)
-	return out
-}
 
 func TestCreate(t *testing.T) {
 	s := copyFixtures(t)
@@ -60,23 +26,22 @@ func TestCreate(t *testing.T) {
 	if err := s.Create(ctx, "new-ca", testPassword, vault.Default); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate: %v", err)
 	}
-	for _, bad := range []string{"", ".hidden", "a/b", "ä", strings.Repeat("x", 65)} {
-		if err := s.Create(ctx, bad, nil, vault.Default); !errors.Is(err, ErrBadName) {
+	// an XCA file waiting for import holds its name
+	if err := s.Create(ctx, "sample", testPassword, vault.Default); !errors.Is(err, ErrExists) {
+		t.Fatalf("name of an .xdb file: %v", err)
+	}
+	for _, bad := range []string{"", ".hidden", "a/b", "ä", "x.xdb", "y.GCA", string(bytes.Repeat([]byte("x"), 65))} {
+		if err := s.Create(ctx, bad, testPassword, vault.Default); !errors.Is(err, ErrBadName) {
 			t.Errorf("name %q: %v", bad, err)
 		}
 	}
-	info, err := s.Lookup(ctx, "new-ca")
-	if err != nil || info.Status != Supported || info.Schema != xdb.LockoutSchema || info.GoCA != xdb.CurrentSchema {
-		t.Fatalf("lookup: %+v %v", info, err)
-	}
-	// XCA's schema 8 DDL plus go-ca's tables.
-	got := schemaSQL(t, info.Path)
-	want := gocaDDL(t)
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("DDL differs:\n got %q\nwant %q", got, want)
-	}
 	if err := s.Create(ctx, "short", []byte("1234567"), vault.Default); !errors.Is(err, ErrShortPassword) {
 		t.Fatalf("short password: %v", err)
+	}
+	info, err := s.Lookup(ctx, "new-ca")
+	if err != nil || info.Status != Supported || info.XCA || info.Schema != gcadb.Schema ||
+		filepath.Base(info.Path) != "new-ca.gca" {
+		t.Fatalf("lookup: %+v %v", info, err)
 	}
 	h, snap := load(t, s, "new-ca")
 	if _, ok := snap.Settings["pwhash"]; ok || snap.Settings["kdf"] == "" || snap.Settings["dek"] == "" {
@@ -88,42 +53,54 @@ func TestCreate(t *testing.T) {
 	if _, err := h.Unlock(ctx, []byte("wrong password")); !errors.Is(err, pki.ErrWrongPassword) {
 		t.Fatalf("wrong password: %v", err)
 	}
-	if snap.Settings["legacy-keys-updated"] != "yes" || len(snap.Keys)+len(snap.Certs) != 0 {
-		t.Fatalf("settings %v", snap.Settings)
+	var fk int
+	h.DB.SQL.QueryRow("PRAGMA foreign_keys").Scan(&fk)
+	if fk != 1 {
+		t.Fatal("foreign keys are not enforced")
 	}
-	_ = h
+	if log, _ := h.AuditLog(ctx, 0, 0, 10); len(log) != 1 || log[0].Action != "database.create" {
+		t.Fatalf("audit %+v", log)
+	}
 	if ents, _ := os.ReadDir(s.Dir); len(ents) == 0 {
 		t.Fatal("empty dir")
 	} else {
 		for _, e := range ents {
-			if strings.HasPrefix(e.Name(), ".tmp-") {
+			if len(e.Name()) > 5 && e.Name()[:5] == ".tmp-" {
 				t.Errorf("temp file left: %s", e.Name())
 			}
 		}
 	}
 }
 
-func TestImport(t *testing.T) {
+func TestUpload(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
 	data, _ := os.ReadFile(filepath.Join(fixtures, "sample.xdb"))
-	name, err := s.Import(ctx, `C:\Users\me\My CA.xdb`, bytes.NewReader(data), 1<<20)
-	if err != nil || name != "My_CA" {
-		t.Fatalf("import: %q %v", name, err)
+	name, err := s.Upload(ctx, `C:\Users\me\My CA.xdb`, bytes.NewReader(data), 1<<20)
+	if err != nil || name != "My_CA.xdb" {
+		t.Fatalf("upload: %q %v", name, err)
 	}
-	name, err = s.Import(ctx, "My CA.xdb", bytes.NewReader(data), 1<<20)
-	if err != nil || name != "My_CA-1" {
+	name, err = s.Upload(ctx, "My CA.xdb", bytes.NewReader(data), 1<<20)
+	if err != nil || name != "My_CA-1.xdb" {
 		t.Fatalf("collision: %q %v", name, err)
 	}
-	if _, err := s.Import(ctx, "big.xdb", bytes.NewReader(data), 1000); !errors.Is(err, ErrTooLarge) {
+	if _, err := s.Upload(ctx, "big.xdb", bytes.NewReader(data), 1000); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("size cap: %v", err)
 	}
 	for _, f := range []string{"legacy.xdb", "garbage.xdb", "newer.xdb"} {
 		b, _ := os.ReadFile(filepath.Join(fixtures, f))
 		var rej *RejectedError
-		if _, err := s.Import(ctx, f, bytes.NewReader(b), 1<<20); !errors.As(err, &rej) {
+		if _, err := s.Upload(ctx, f, bytes.NewReader(b), 1<<20); !errors.As(err, &rej) {
 			t.Errorf("%s accepted: %v", f, err)
 		}
+	}
+	// a go-ca database keeps its kind, whatever the file is called
+	if err := s.Create(ctx, "native", testPassword, testKDF); err != nil {
+		t.Fatal(err)
+	}
+	gca, _ := os.ReadFile(filepath.Join(s.Dir, "native.gca"))
+	if name, err := s.Upload(ctx, "copy.xdb", bytes.NewReader(gca), 1<<20); err != nil || name != "copy" {
+		t.Fatalf("go-ca upload: %q %v", name, err)
 	}
 	if got := SanitizeName("../../etc/passwd"); got != "passwd" {
 		t.Errorf("sanitize: %q", got)
@@ -131,79 +108,121 @@ func TestImport(t *testing.T) {
 	if got := SanitizeName("...."); got != "imported" {
 		t.Errorf("sanitize dots: %q", got)
 	}
+	if got := SanitizeName("a.xdb.gca"); got != "a" {
+		t.Errorf("sanitize extensions: %q", got)
+	}
 }
 
-func TestBackupRotation(t *testing.T) {
+func TestBackupRetention(t *testing.T) {
 	s := copyFixtures(t)
-	h, _ := load(t, s, "sample")
+	ctx := context.Background()
+	if err := s.Create(ctx, "bk", testPassword, testKDF); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := load(t, s, "bk")
 	var last string
-	for i := 0; i < KeepBackups+3; i++ {
-		p, err := h.Backup(context.Background())
+	for i := 0; i < DefaultBackupKeep+3; i++ {
+		p, err := h.Backup(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		last = p
 	}
-	all, _ := s.Backups("sample")
-	if len(all) != KeepBackups || all[0] != last {
+	all, _ := s.Backups("bk")
+	if len(all) != DefaultBackupKeep || all[0] != last {
 		t.Fatalf("backups %d, newest %s, want %s", len(all), all[0], last)
 	}
-	if st, _, d := Classify(context.Background(), last, true); st != Upgradable {
+	if st, xca, _, d := Classify(ctx, last, true); st != Supported || xca {
 		t.Fatalf("backup status %s %s", st, d)
+	}
+	if err := h.SetSettings(ctx, map[string]string{"backup_keep": "3"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Backup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ = s.Backups("bk"); len(all) != 3 {
+		t.Fatalf("backup_keep 3: %d backups", len(all))
+	}
+	// age: backups older than backup_days go, the newest always stays
+	old := time.Now().AddDate(0, 0, -40).UTC().Format("20060102150405")
+	for i, p := range all {
+		os.Rename(p, filepath.Join(s.BackupDir(), "bk."+old+"-"+strconv.Itoa(i)+".gca"))
+	}
+	if err := h.SetSettings(ctx, map[string]string{"backup_days": "30"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rotateBackups("bk", 3, 30, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.Backups("bk"); len(all) != 1 {
+		t.Fatalf("after the age limit: %v", all)
+	}
+	if _, err := h.Backup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.Backups("bk"); len(all) != 1 {
+		t.Fatalf("a new backup keeps only itself among old ones: %v", all)
 	}
 }
 
-// TestConvert converts an XCA database: keys under the database password
-// (and XCA's "Bogus" one, and those of deleted items) are sealed with a new
-// DEK, keys with their own password stay until it opens them, and a key
-// the database password does not open keeps its blob and needs its own.
-func TestConvert(t *testing.T) {
+// TestImport imports an XCA database: keys under the database password
+// (and XCA's "Bogus" one, and those of deleted items) are sealed with a
+// new DEK, keys with their own password stay until it opens them, a key
+// the database password does not open keeps its blob and needs its own,
+// deleted items go to the trash, and the .xdb file and its old backups are
+// deleted.
+func TestImport(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	path := filepath.Join(s.Dir, "variants.xdb")
+	src := filepath.Join(s.Dir, "variants.xdb")
 	// Variants the fixture lacks: a "Bogus" key, a deleted item and a key
 	// encrypted with another password.
 	{
-		h, snap := load(t, s, "variants")
-		reencrypt := func(name, from, to string) []byte {
-			for _, k := range snap.Keys {
-				if k.Name == name {
-					blob, _, _ := h.DB.PrivateKey(ctx, k.ID)
-					der, err := legacyDER(blob, k.KeyType, []byte(from))
-					if err != nil {
-						t.Fatal(err)
-					}
-					enc, err := pki.EncryptPKCS8(der, []byte(to))
-					if err != nil {
-						t.Fatal(err)
-					}
-					return enc
-				}
+		db, err := sql.Open("sqlite", dsn(src, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reencrypt := func(item int, typ, from, to string) string {
+			var blob string
+			db.QueryRow("SELECT private FROM private_keys WHERE item=?", item).Scan(&blob)
+			raw, _ := b64.StdEncoding.DecodeString(blob)
+			der, err := legacyDER(raw, typ, []byte(from))
+			if err != nil {
+				t.Fatal(err)
 			}
-			t.Fatalf("no key %s", name)
-			return nil
+			enc, err := pki.EncryptPKCS8(der, []byte(to))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b64.StdEncoding.EncodeToString(enc)
 		}
 		for _, st := range []struct {
 			q    string
 			args []any
 		}{
-			{"UPDATE private_keys SET ownPass=2, private=? WHERE item=14", []any{b64.StdEncoding.EncodeToString(reencrypt("old", "secret", "Bogus"))}},
-			{"UPDATE private_keys SET private=? WHERE item=18", []any{b64.StdEncoding.EncodeToString(reencrypt("pending", "secret", "other"))}},
+			{"UPDATE private_keys SET ownPass=2, private=? WHERE item=14", []any{reencrypt(14, "RSA", "secret", "Bogus")}},
+			{"UPDATE private_keys SET private=? WHERE item=18", []any{reencrypt(18, "EC", "secret", "other")}},
 			{"UPDATE items SET del=1 WHERE id=12", nil},
 		} {
-			if _, err := h.DB.SQL.Exec(st.q, st.args...); err != nil {
+			if _, err := db.Exec(st.q, st.args...); err != nil {
 				t.Fatal(err)
 			}
 		}
-		h.Release()
+		db.Close()
 	}
+	// a backup from go-ca's former format, deleted with the file
+	os.MkdirAll(s.BackupDir(), 0o700)
+	oldBackup := filepath.Join(s.BackupDir(), "variants.20260101000000.xdb")
+	os.WriteFile(oldBackup, []byte("old"), 0o600)
 
-	h, err := s.Acquire(ctx, "variants")
+	if _, err := s.StartImport(ctx, "variants.xdb", []byte("wrong"), testKDF); !errors.Is(err, pki.ErrWrongPassword) {
+		t.Fatalf("wrong password: %v", err)
+	}
+	c, err := s.StartImport(ctx, "variants.xdb", fixturePassword, testKDF)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(h.Release)
-	c := h.StartConversion(fixturePassword, testKDF)
 	<-c.Finished()
 	kr, rep, err := c.Result()
 	if err != nil {
@@ -212,40 +231,39 @@ func TestConvert(t *testing.T) {
 	if done, total := c.Progress(); done != 8 || total != 8 {
 		t.Errorf("progress %d/%d", done, total)
 	}
-	if rep.UpgradedFrom != 7 || rep.Converted != 7 || rep.Unopened != 1 || rep.OwnPassLegacy != 1 || rep.Backup == "" {
+	if rep.Target != "variants" || rep.Converted != 7 || rep.Unopened != 1 || rep.OwnPassLegacy != 1 ||
+		rep.Trashed != 1 || len(rep.Skipped) != 0 || len(rep.Removed) != 2 {
 		t.Fatalf("report %+v", rep)
 	}
-	if !h.DB.Current() {
-		t.Fatal(h.DB.Version())
+	if b, _ := s.Backups("variants"); len(b) != 1 {
+		t.Errorf("backups of the new database: %v", b)
 	}
-	if got := schemaSQL(t, path); strings.Join(got, "\n") != strings.Join(gocaDDL(t), "\n") {
-		t.Fatal("converted DDL differs from a new go-ca database")
+	for _, p := range []string{src, oldBackup, src + ".lock"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still exists", filepath.Base(p))
+		}
 	}
-	if st, v, _ := Classify(ctx, path, true); st != Supported || v.GoCA != xdb.CurrentSchema {
-		t.Fatalf("after conversion: %s %+v", st, v)
-	}
-	if st, _, _ := Classify(ctx, rep.Backup, true); st != Upgradable {
-		t.Fatalf("backup: %s", st)
-	}
-	snap, _ := h.Snapshot(ctx)
-	if _, ok := snap.Settings["pwhash"]; ok {
-		t.Fatal("XCA's password hash is still stored")
-	}
+	h, snap := load(t, s, "variants")
+	setKR(h, kr)
 	if _, err := h.Unlock(ctx, fixturePassword); err != nil {
 		t.Fatal(err)
 	}
+	trash, _ := h.Trash(ctx)
+	if len(trash) != 1 || trash[0].ID != 12 || findKey(snap, 12) != nil {
+		t.Fatalf("trash %+v", trash)
+	}
 
-	rows, _ := h.DB.PrivateKeyRows(ctx, true)
+	rows, _ := h.DB.PrivateKeyRows(ctx)
 	for _, r := range rows {
 		switch r.ID {
 		case 10, 18: // own password: mail (XCA), pending (did not open)
-			if r.OwnPass != xdb.PassPrivate || vault.IsSealed(r.Blob) {
-				t.Errorf("key %d: ownPass %d, sealed %v", r.ID, r.OwnPass, vault.IsSealed(r.Blob))
+			if r.Protection != gcadb.ProtPassword || vault.IsSealed(r.Blob) {
+				t.Errorf("key %d: protection %d, sealed %v", r.ID, r.Protection, vault.IsSealed(r.Blob))
 			}
 			continue
 		}
-		if r.OwnPass != xdb.PassCommon || vault.Mode(r.Blob) != vault.ModeDEK {
-			t.Errorf("key %d: ownPass %d, mode %d", r.ID, r.OwnPass, vault.Mode(r.Blob))
+		if r.Protection != gcadb.ProtDEK || vault.Mode(r.Blob) != vault.ModeDEK {
+			t.Errorf("key %d: protection %d, mode %d", r.ID, r.Protection, vault.Mode(r.Blob))
 			continue
 		}
 		der, err := kr.Open(r.Blob, r.Public)
@@ -259,70 +277,51 @@ func TestConvert(t *testing.T) {
 			continue
 		}
 		if ok, _ := pki.MatchesPublic(priv, r.Public); !ok {
-			t.Errorf("key %d: mismatch after conversion", r.ID)
+			t.Errorf("key %d: mismatch after import", r.ID)
 		}
-		if r.ID == 12 && !r.Deleted {
-			t.Error("the deleted item is listed as live")
-		}
-	}
-	for _, k := range snap.Keys {
-		if k.Name == "www" && k.Stamp != snap.Stamp {
-			t.Errorf("converted key stamp %d, max %d", k.Stamp, snap.Stamp)
+		if r.ID == 12 && !r.Trashed {
+			t.Error("the deleted item is not in the trash")
 		}
 	}
 
 	// Keys with their own password move to go-ca's form once it opens them.
 	for id, pw := range map[int64]string{10: "mailpass", 18: "other"} {
 		k := findKey(snap, id)
-		if _, err := h.unlock(ctx, id, k.KeyType, kr, nil); !errors.Is(err, ErrNeedKeyPassword) {
-			t.Errorf("key %d without password: %v", id, err)
+		if !k.Legacy {
+			t.Errorf("key %d not marked legacy", id)
 		}
 		if _, err := h.unlock(ctx, id, k.KeyType, kr, KeyPasswords{id: []byte("wrong")}); !errors.Is(err, ErrNeedKeyPassword) {
 			t.Errorf("key %d with a wrong password: %v", id, err)
 		}
-		if _, err := h.unlock(ctx, id, k.KeyType, kr, KeyPasswords{id: []byte(pw)}); err != nil {
-			t.Errorf("key %d: %v", id, err)
-		}
-		blob, own, _ := h.DB.PrivateKey(ctx, id)
-		if own != xdb.PassPrivate || vault.Mode(blob) != vault.ModePassword {
-			t.Errorf("key %d not upgraded: ownPass %d, mode %d", id, own, vault.Mode(blob))
-		}
 		if algo, ok, err := h.CheckKey(ctx, k, kr, []byte(pw)); err != nil || !ok || algo == "" {
 			t.Errorf("key %d check: %s %v %v", id, algo, ok, err)
 		}
+		sk, _ := h.DB.StoredPrivateKey(ctx, id)
+		if sk.Protection != gcadb.ProtPassword || vault.Mode(sk.Blob) != vault.ModePassword {
+			t.Errorf("key %d not upgraded: protection %d, mode %d", id, sk.Protection, vault.Mode(sk.Blob))
+		}
 	}
-
-	// A second conversion is the finished one: no new backup.
-	before, _ := s.Backups("variants")
-	if _, _, err := h.Convert(ctx, fixturePassword, testKDF); err != nil {
-		t.Fatal(err)
-	}
-	if after, _ := s.Backups("variants"); len(after) != len(before) {
-		t.Fatal("second conversion took a backup")
+	snap, _ = h.Snapshot(ctx)
+	for _, k := range snap.Keys {
+		if k.Legacy {
+			t.Errorf("key %s still legacy", k.Name)
+		}
 	}
 }
 
-// Every fixture converts, also those with XCA's older password hashes.
-func TestConvertFixtures(t *testing.T) {
+// Every fixture imports, also those with XCA's older password hashes.
+func TestImportFixtures(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
 	for _, name := range []string{"sample", "schema8", "md5"} {
-		h, _ := load(t, s, name)
-		ok, err := h.VerifyLegacyPassword(ctx, fixturePassword)
-		if err != nil || !ok {
-			t.Fatalf("%s: password %v %v", name, ok, err)
-		}
-		if ok, _ := h.VerifyLegacyPassword(ctx, []byte("wrong")); ok {
-			t.Fatalf("%s: wrong password accepted", name)
-		}
-		kr, rep, err := h.Convert(ctx, fixturePassword, testKDF)
+		kr, rep, err := s.Import(ctx, name+".xdb", fixturePassword, testKDF)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if rep.Converted != 10 || rep.Unopened != 0 {
+		if rep.Converted != 10 || rep.Unopened != 0 || rep.Target != name {
 			t.Errorf("%s: report %+v", name, rep)
 		}
-		snap, _ := h.Snapshot(ctx)
+		h, snap := load(t, s, name)
 		for _, k := range snap.Keys {
 			if k.HasPrivate {
 				if _, err := h.unlock(ctx, k.ID, k.KeyType, kr, nil); err != nil {
@@ -333,24 +332,99 @@ func TestConvertFixtures(t *testing.T) {
 	}
 }
 
-// A database from a newer go-ca is refused.
-func TestNewerGoCA(t *testing.T) {
+// A database from go-ca's former XCA based format (go-ca schema 2) keeps
+// its DEK and its sealed keys.
+func TestImportGoCA2(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	if err := s.Create(ctx, "next", testPassword, vault.Default); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.Dir, "next.xdb")
+	path := filepath.Join(s.Dir, "sample.xdb")
 	db, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec("UPDATE settings SET value=? WHERE key_='gca_schema'", strconv.Itoa(xdb.CurrentSchema+1))
+	old := vault.NewKeyring(testKDF)
+	kdf, dek, err := old.Wrap(fixturePassword, testKDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := db.Query(`SELECT p.item, k.type, k."public", p.private FROM private_keys p JOIN public_keys k ON k.item = p.item`)
+	type upd struct {
+		id   int64
+		blob string
+	}
+	var ups []upd
+	for rows.Next() {
+		var id int64
+		var typ, pub, priv string
+		rows.Scan(&id, &typ, &pub, &priv)
+		spki, _ := b64.StdEncoding.DecodeString(pub)
+		raw, _ := b64.StdEncoding.DecodeString(priv)
+		der, err := legacyDER(raw, typ, fixturePassword)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed, _ := old.Seal(der, spki)
+		ups = append(ups, upd{id, b64.StdEncoding.EncodeToString(sealed)})
+	}
+	rows.Close()
+	for _, u := range ups {
+		db.Exec("UPDATE private_keys SET private=? WHERE item=?", u.blob, u.id)
+	}
+	for _, q := range []string{
+		"UPDATE settings SET value='1000' WHERE key_='schema'",
+		"DELETE FROM settings WHERE key_='pwhash'",
+		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '2')",
+		"CREATE TABLE gca_pgp (item INTEGER UNIQUE, fingerprint VARCHAR(64), cert TEXT)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Exec("INSERT INTO settings (key_, value) VALUES ('kdf', ?), ('dek', ?)", kdf, dek)
+	db.Close()
+
+	info, _ := s.Lookup(ctx, "sample.xdb")
+	if info.Status != Upgradable || info.GoCA != 2 {
+		t.Fatalf("lookup %+v", info)
+	}
+	kr, rep, err := s.Import(ctx, "sample.xdb", fixturePassword, testKDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Kept != 10 || rep.Converted != 0 {
+		t.Fatalf("report %+v", rep)
+	}
+	h, snap := load(t, s, "sample")
+	for _, k := range snap.Keys {
+		if !k.HasPrivate {
+			continue
+		}
+		for _, r := range []*vault.Keyring{kr, old} {
+			if _, err := h.unlock(ctx, k.ID, k.KeyType, r, nil); err != nil {
+				t.Errorf("%s: %v", k.Name, err)
+			}
+		}
+	}
+}
+
+// A database from a newer go-ca is refused.
+func TestNewerGoCA(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, "next", testPassword, testKDF); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir, "next.gca")
+	db, err := sql.Open("sqlite", dsn(path, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(gcadb.Schema+1))
 	db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != xdb.LockoutSchema {
+	if st, _, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != gcadb.Schema+1 {
 		t.Fatalf("newer go-ca: %s %+v", st, v)
 	}
 	if _, err := s.Acquire(ctx, "next"); err == nil {

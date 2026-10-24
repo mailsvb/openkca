@@ -48,7 +48,7 @@ func TestPGPGenerateExportImport(t *testing.T) {
 			t.Fatalf("v%d: view %+v", version, v)
 		}
 		sub := findKey(snap, v.KeyIDs[1])
-		if sub.Name != "alice encryption" || sub.KeyType != "X255" || !sub.HasPrivate {
+		if sub.Name != "alice encryption" || sub.KeyType != "X25519" || !sub.HasPrivate {
 			t.Fatalf("v%d: subkey %+v", version, sub)
 		}
 		if w := PGPSubkeyOf(snap, sub.ID); w == nil || w.Primary() != id {

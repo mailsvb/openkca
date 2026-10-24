@@ -1,0 +1,43 @@
+{{template "head" .}}
+<h1>{{T "trash.heading"}}</h1>
+<p class="muted">{{T "trash.intro"}}</p>
+{{$db := .DB.Name}}{{$csrf := .CSRF}}
+{{if .Data.Rows}}
+<div class="tablewrap">
+<table class="list">
+  <thead><tr><th>{{T "col.name"}}</th><th>{{T "trash.col.kind"}}</th><th>{{T "trash.col.trashed"}}</th><th><span class="sr-only">{{T "trash.col.actions"}}</span></th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+  <tr>
+    <td>{{.Name}}</td>
+    <td>{{T (print "kind." .Kind)}}</td>
+    <td>{{time .Trashed}}</td>
+    <td class="actions">
+      <form method="post" action="/db/{{$db}}/trash/{{.ID}}/restore" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="secondary">{{T "trash.restore"}}</button></form>
+      <details class="inline">
+        <summary>{{T "trash.purge"}}</summary>
+        <form method="post" action="/db/{{$db}}/trash/{{.ID}}/purge" class="stack">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <label><input type="checkbox" name="confirm" value="1" required> {{T "trash.purge.confirm"}}</label>
+          <button type="submit" class="danger">{{T "trash.purge"}}</button>
+        </form>
+      </details>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<details class="card">
+  <summary>{{T "trash.empty"}}</summary>
+  <form method="post" action="/db/{{$db}}/trash/empty" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <p class="muted">{{T "trash.empty.warn"}}</p>
+    <label><input type="checkbox" name="confirm" value="1" required> {{T "trash.purge.confirm"}}</label>
+    <button type="submit" class="danger">{{T "trash.empty"}}</button>
+  </form>
+</details>
+{{else}}
+<p class="muted">{{T "trash.none"}}</p>
+{{end}}
+{{template "foot" .}}

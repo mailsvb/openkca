@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
 	"github.com/mailsvb/go-ca/internal/tmpl"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // Additional subject attributes offered besides the explicit ones.
@@ -47,7 +47,7 @@ type editorForm struct {
 	TemplateID int64 // template selected for "apply"
 }
 
-func defaultEditor(kind string, snap *xdb.Snapshot) *editorForm {
+func defaultEditor(kind string, snap *gcadb.Snapshot) *editorForm {
 	f := &editorForm{Kind: kind, KeyMode: "new", NewKey: "EC:P-256", Signer: "self", Hash: snap.Settings["default_hash"],
 		NotBefore: time.Now().UTC().Format("2006-01-02T15:04"), ValidN: 365, ValidUnit: "d",
 		ReqSubject: true, CopyReqExt: true, Ext: pki.ExtSpec{SubKey: true, AuthKey: true}}
@@ -112,7 +112,7 @@ func bitsFromForm(r *http.Request, prefix string, n int) int {
 }
 
 // parseEditor reads the editor's form fields.
-func parseEditor(r *http.Request, kind string, snap *xdb.Snapshot) *editorForm {
+func parseEditor(r *http.Request, kind string, snap *gcadb.Snapshot) *editorForm {
 	f := defaultEditor(kind, snap)
 	g := r.PostFormValue
 	on := func(k string) bool { return g(k) != "" }
@@ -280,10 +280,10 @@ type choice struct {
 	Note  string
 }
 
-func choices(snap *xdb.Snapshot) editorChoices {
+func choices(snap *gcadb.Snapshot) editorChoices {
 	var ch editorChoices
 	used := map[int64]bool{}
-	keyByID := map[int64]*xdb.Key{}
+	keyByID := map[int64]*gcadb.Key{}
 	for _, c := range snap.Certs {
 		used[c.KeyID] = true
 	}
@@ -293,7 +293,7 @@ func choices(snap *xdb.Snapshot) editorChoices {
 	var usedKeys []choice
 	for _, k := range snap.Keys {
 		keyByID[k.ID] = k
-		if !k.HasPrivate || k.OwnPass == xdb.PassPIN {
+		if !k.HasPrivate || k.Protection == gcadb.ProtToken {
 			continue
 		}
 		pk := pki.DescribePublicKey(k.Public)
@@ -331,7 +331,7 @@ func choices(snap *xdb.Snapshot) editorChoices {
 }
 
 // similar prefills the editor from an existing certificate or request.
-func similar(f *editorForm, snap *xdb.Snapshot, id int64) {
+func similar(f *editorForm, snap *gcadb.Snapshot, id int64) {
 	var der []byte
 	for _, c := range snap.Certs {
 		if c.ID == id {
@@ -464,7 +464,7 @@ func (s *Server) templateEditPage(w http.ResponseWriter, r *http.Request) {
 	s.renderEditor(w, r, http.StatusOK, f, snap, "")
 }
 
-func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int, f *editorForm, snap *xdb.Snapshot, errKey string, errArgs ...any) {
+func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int, f *editorForm, snap *gcadb.Snapshot, errKey string, errArgs ...any) {
 	title := "editor.title." + f.Kind
 	tab := "certs"
 	switch f.Kind {
@@ -488,14 +488,14 @@ func (s *Server) renderEditor(w http.ResponseWriter, r *http.Request, status int
 	s.render(w, r, status, "editor", p)
 }
 
-func keyPasswords(r *http.Request, snap *xdb.Snapshot) store.KeyPasswords {
+func keyPasswords(r *http.Request, snap *gcadb.Snapshot) store.KeyPasswords {
 	pw := r.PostFormValue("keypass")
 	if pw == "" {
 		return nil
 	}
 	kp := store.KeyPasswords{}
 	for _, k := range snap.Keys {
-		if k.OwnPass == xdb.PassPrivate {
+		if k.Protection == gcadb.ProtPassword {
 			kp[k.ID] = []byte(pw)
 		}
 	}

@@ -1,5 +1,6 @@
 {{template "head" .}}
 {{$tab := .Tab}}
+{{if .Data.Legacy}}<p class="warn">{{T "list.legacy" .Data.Legacy}} <a href="/db/{{.DB.Name}}/keys?legacy=1">{{T "list.legacy.show"}}</a></p>{{end}}
 <div class="toolbar">
   <form class="filters" method="get" action="/db/{{.DB.Name}}/{{.Tab}}" hx-get="/db/{{.DB.Name}}/{{.Tab}}" hx-target="#rows" hx-push-url="true" hx-trigger="input changed delay:250ms from:input[type=search], change, submit">
     <input type="hidden" name="f" value="1">
@@ -32,7 +33,7 @@
   <tbody id="rows">{{template "rows" .}}</tbody>
 </table>
 </div>
-{{if .Data.Deleted}}<p class="muted small">{{T "list.deleted" .Data.Deleted}}</p>{{end}}
+{{if .Data.Trashed}}<p class="muted small"><a href="/db/{{.DB.Name}}/trash">{{T "list.trashed" .Data.Trashed}}</a></p>{{end}}
 {{template "foot" .}}
 
 {{define "rows"}}{{$cols := .Data.Columns}}{{$db := .DB.Name}}

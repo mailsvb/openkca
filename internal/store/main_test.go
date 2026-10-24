@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"sync"
 	"testing"
@@ -37,8 +38,7 @@ var (
 )
 
 // krOf returns the keyring of an open handle: a database the test created
-// is unlocked with testPassword, an XCA fixture is converted with
-// fixturePassword first.
+// opens with testPassword, an imported XCA fixture with fixturePassword.
 func krOf(t *testing.T, h *Handle) *vault.Keyring {
 	t.Helper()
 	keyringsMu.Lock()
@@ -47,12 +47,9 @@ func krOf(t *testing.T, h *Handle) *vault.Keyring {
 		return kr
 	}
 	ctx := context.Background()
-	var kr *vault.Keyring
-	var err error
-	if h.DB.Current() {
-		kr, err = h.Unlock(ctx, testPassword)
-	} else {
-		kr, _, err = h.Convert(ctx, fixturePassword, testKDF)
+	kr, err := h.Unlock(ctx, testPassword)
+	if err != nil {
+		kr, err = h.Unlock(ctx, fixturePassword)
 	}
 	if err != nil {
 		t.Fatalf("keyring of %s: %v", h.Name, err)
@@ -72,3 +69,5 @@ func setKR(h *Handle, kr *vault.Keyring) {
 	keyrings[h] = kr
 	keyringsMu.Unlock()
 }
+
+func openRO(path string) (*sql.DB, error) { return sql.Open("sqlite", dsn(path, true)) }

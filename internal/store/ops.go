@@ -9,12 +9,13 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // ErrNeedKeyPassword means a key with its own password is involved and the
@@ -25,7 +26,7 @@ var ErrNeedKeyPassword = errors.New("the key's own password is required")
 // item id. The database password covers all other keys.
 type KeyPasswords map[int64][]byte
 
-func findKey(snap *xdb.Snapshot, id int64) *xdb.Key {
+func findKey(snap *gcadb.Snapshot, id int64) *gcadb.Key {
 	for _, k := range snap.Keys {
 		if k.ID == id {
 			return k
@@ -34,7 +35,7 @@ func findKey(snap *xdb.Snapshot, id int64) *xdb.Key {
 	return nil
 }
 
-func findCert(snap *xdb.Snapshot, id int64) *xdb.Cert {
+func findCert(snap *gcadb.Snapshot, id int64) *gcadb.Cert {
 	for _, c := range snap.Certs {
 		if c.ID == id {
 			return c
@@ -43,7 +44,7 @@ func findCert(snap *xdb.Snapshot, id int64) *xdb.Cert {
 	return nil
 }
 
-func findRequest(snap *xdb.Snapshot, id int64) *xdb.Request {
+func findRequest(snap *gcadb.Snapshot, id int64) *gcadb.Request {
 	for _, r := range snap.Requests {
 		if r.ID == id {
 			return r
@@ -59,15 +60,16 @@ func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki
 		return 0, err
 	}
 	var id int64
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
 		id, err = insertGenerated(ctx, tx, name, comment, key, kr)
 		return err
 	})
 	h.changed(ctx)
+	h.auditIf(ctx, err, "key.generate", id, "%s", keySpecText(spec))
 	return id, err
 }
 
-func insertGenerated(ctx context.Context, tx *xdb.Tx, name, comment string, key crypto.Signer, kr *vault.Keyring) (int64, error) {
+func insertGenerated(ctx context.Context, tx *gcadb.Tx, name, comment string, key crypto.Signer, kr *vault.Keyring) (int64, error) {
 	spki, err := pki.MarshalPublicKey(key.Public())
 	if err != nil {
 		return 0, err
@@ -76,9 +78,9 @@ func insertGenerated(ctx context.Context, tx *xdb.Tx, name, comment string, key 
 	if err != nil {
 		return 0, err
 	}
-	typ, bits := pki.StoredKeyType(spki)
-	return tx.InsertKey(ctx, xdb.NewKey{Name: name, Comment: comment, Source: 2, KeyType: typ, Len: bits, SPKI: spki,
-		Private: blob, OwnPass: xdb.PassCommon})
+	typ, bits := keyAlgorithm(spki)
+	return tx.InsertKey(ctx, gcadb.NewKey{Name: name, Comment: comment, Source: gcadb.SourceGenerated, KeyType: typ, Len: bits,
+		SPKI: spki, Private: blob, Protection: gcadb.ProtDEK})
 }
 
 // IssueParams is the certificate editor's input.
@@ -129,7 +131,7 @@ func (h *Handle) Preview(ctx context.Context, p IssueParams) ([]pkix.Extension, 
 
 // subjectAndKey resolves the subject name and public key. With newKey
 // non-nil and p.NewKey set, a placeholder is used for previews.
-func subjectAndKey(snap *xdb.Snapshot, p IssueParams, generated crypto.Signer) (subject, spki []byte, req *x509.CertificateRequest, err error) {
+func subjectAndKey(snap *gcadb.Snapshot, p IssueParams, generated crypto.Signer) (subject, spki []byte, req *x509.CertificateRequest, err error) {
 	settings := snap.Settings
 	if p.FromReqID != 0 && !p.Request {
 		r := findRequest(snap, p.FromReqID)
@@ -171,7 +173,7 @@ func subjectAndKey(snap *xdb.Snapshot, p IssueParams, generated crypto.Signer) (
 
 // extContext gathers what extension values refer to: the signer's key
 // identifier, name and alternative names.
-func extContext(snap *xdb.Snapshot, p IssueParams, subject, spki []byte) (pki.ExtContext, *xdb.Cert, error) {
+func extContext(snap *gcadb.Snapshot, p IssueParams, subject, spki []byte) (pki.ExtContext, *gcadb.Cert, error) {
 	ectx := pki.ExtContext{SubjectSPKI: spki, Subject: subject, Request: p.Request,
 		NoNetscape: snap.Settings["disable_netscape"] == "yes"}
 	if spki == nil {
@@ -207,7 +209,7 @@ func extContext(snap *xdb.Snapshot, p IssueParams, subject, spki []byte) (pki.Ex
 
 // mergeReqExt applies the CSR's extensions over the editor's, replacing
 // those with the same OID (XCA: addV3ext(ext, override=true)).
-func mergeReqExt(snap *xdb.Snapshot, reqID int64, exts []pkix.Extension) []pkix.Extension {
+func mergeReqExt(snap *gcadb.Snapshot, reqID int64, exts []pkix.Extension) []pkix.Extension {
 	r := findRequest(snap, reqID)
 	if r == nil {
 		return exts
@@ -232,7 +234,7 @@ func mergeReqExt(snap *xdb.Snapshot, reqID int64, exts []pkix.Extension) []pkix.
 
 // usedSerials returns the serials a CA must not reuse: its own, those of
 // certificates it issued and its revocations (getUniqueSerial).
-func usedSerials(snap *xdb.Snapshot, ca *xdb.Cert) map[string]bool {
+func usedSerials(snap *gcadb.Snapshot, ca *gcadb.Cert) map[string]bool {
 	used := map[string]bool{ca.Serial: true}
 	for _, c := range snap.Certs {
 		if c.IssuerID == ca.ID {
@@ -352,17 +354,17 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 		source = 2
 	}
 	var id int64
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
 		if generated != nil {
 			if _, err := insertGenerated(ctx, tx, p.Name, "", generated, kr); err != nil {
 				return err
 			}
 		}
 		if p.Request {
-			id, err = tx.InsertRequest(ctx, xdb.NewRequest{Name: p.Name, Comment: p.Comment, Source: source, DER: der})
+			id, err = tx.InsertRequest(ctx, gcadb.NewRequest{Name: p.Name, Comment: p.Comment, Source: source, DER: der})
 			return err
 		}
-		if id, err = tx.InsertCert(ctx, xdb.NewCert{Name: p.Name, Comment: p.Comment, Source: source, DER: der}); err != nil {
+		if id, err = tx.InsertCert(ctx, gcadb.NewCert{Name: p.Name, Comment: p.Comment, Source: source, DER: der}); err != nil {
 			return err
 		}
 		if csr != nil {
@@ -375,18 +377,19 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 			if err := tx.MarkSigned(ctx, r.ID, true); err != nil {
 				return err
 			}
-			if err := tx.Rename(ctx, r.ID, r.Name, xdb.AppendComment(r.Comment, msg)); err != nil {
+			if err := tx.Rename(ctx, r.ID, r.Name, gcadb.AppendComment(r.Comment, msg)); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	h.changed(ctx)
+	h.auditIf(ctx, err, issueAction(p), id, "%s", issueDetail(p))
 	return id, err
 }
 
 // checkMandatory enforces settings.mandatory_dn (comma separated names).
-func checkMandatory(snap *xdb.Snapshot, subject []byte) error {
+func checkMandatory(snap *gcadb.Snapshot, subject []byte) error {
 	present := map[string]bool{}
 	for _, e := range pki.NameAttrs(subject) {
 		present[e.Name] = true
@@ -452,14 +455,15 @@ func (h *Handle) ExtractPublicKey(ctx context.Context, id int64) (int64, error) 
 			return 0, errors.New("this key is already in the database")
 		}
 	}
-	typ, bits := pki.StoredKeyType(spki)
+	typ, bits := keyAlgorithm(spki)
 	var kid int64
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
-		kid, err = tx.InsertKey(ctx, xdb.NewKey{Name: name, Source: 3, KeyType: typ, Len: bits, SPKI: spki,
-			Comment: xdb.AppendComment("", fmt.Sprintf("Extracted from %s '%s'", kind, name))})
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+		kid, err = tx.InsertKey(ctx, gcadb.NewKey{Name: name, Source: 3, KeyType: typ, Len: bits, SPKI: spki,
+			Comment: gcadb.AppendComment("", fmt.Sprintf("Extracted from %s '%s'", kind, name))})
 		return err
 	})
 	h.changed(ctx)
+	h.auditIf(ctx, err, "key.extract", kid, "from item %d", id)
 	return kid, err
 }
 
@@ -497,19 +501,20 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, kr *vault.Keyring,
 		return 0, err
 	}
 	var rid int64
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
-		rid, err = tx.InsertRequest(ctx, xdb.NewRequest{Name: c.Name, Source: 3, DER: der})
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+		rid, err = tx.InsertRequest(ctx, gcadb.NewRequest{Name: c.Name, Source: 3, DER: der})
 		return err
 	})
 	h.changed(ctx)
+	h.auditIf(ctx, err, "request.create", rid, "from certificate %d", id)
 	return rid, err
 }
 
 // ChangeDatabasePassword protects the database with newPass and the
 // Argon2id cost p. It also rotates the DEK: every key under the database
-// password is re-sealed with a fresh DEK, so that an old copy of the file
-// together with the old password reveals nothing about the keys stored
-// from now on. A backup is taken first. It returns the new keyring; other
+// password is re-sealed with a fresh DEK. A backup is taken before; once
+// the change is written, every backup is deleted (they open with the old
+// password) and a new one is taken. It returns the new keyring; other
 // sessions' keyrings no longer open the keys.
 func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []byte, p vault.Params) (*vault.Keyring, error) {
 	if err := p.Valid(); err != nil {
@@ -520,71 +525,92 @@ func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []
 		return nil, err
 	}
 	defer old.Wipe()
-	rows, err := h.DB.PrivateKeyRows(ctx, true)
+	oldParams := old.Params()
+	rows, err := h.DB.PrivateKeyRows(ctx)
 	if err != nil {
 		return nil, err
 	}
 	nk := vault.NewKeyring(p)
+	fail := func(err error) (*vault.Keyring, error) {
+		nk.Wipe()
+		return nil, err
+	}
 	type re struct {
 		id   int64
 		blob []byte
 	}
 	var updates []re
 	for _, r := range rows {
-		if r.OwnPass != xdb.PassCommon {
+		if r.Protection != gcadb.ProtDEK {
 			continue
 		}
 		der, err := old.Open(r.Blob, r.Public)
 		if err != nil {
-			nk.Wipe()
-			return nil, fmt.Errorf("key %d: %w", r.ID, err)
+			return fail(fmt.Errorf("key %d: %w", r.ID, err))
 		}
 		blob, err := nk.Seal(der, r.Public)
 		clear(der)
 		if err != nil {
-			nk.Wipe()
-			return nil, err
+			return fail(err)
 		}
 		updates = append(updates, re{r.ID, blob})
 	}
 	kdf, dek, err := nk.Wrap(newPass, p)
 	if err != nil {
-		nk.Wipe()
-		return nil, err
+		return fail(err)
 	}
 	if _, err := h.Backup(ctx); err != nil {
-		nk.Wipe()
-		return nil, err
+		return fail(err)
 	}
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
+	what := "password"
+	if string(oldPass) == string(newPass) {
+		what = "key derivation"
+	}
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
 		for _, u := range updates {
-			if err := tx.UpdatePrivateKey(ctx, u.id, u.blob, xdb.PassCommon); err != nil {
+			if err := tx.UpdatePrivateKey(ctx, u.id, u.blob, gcadb.ProtDEK); err != nil {
 				return err
 			}
 		}
 		if err := tx.SetSetting(ctx, "kdf", kdf); err != nil {
 			return err
 		}
-		return tx.SetSetting(ctx, "dek", dek)
+		if err := tx.SetSetting(ctx, "dek", dek); err != nil {
+			return err
+		}
+		return tx.Audit(ctx, "database.password", 0, fmt.Sprintf("%s changed, data key replaced, %d keys re-sealed; argon2id %d→%d MiB, %d→%d passes",
+			what, len(updates), oldParams.MemoryMiB(), p.MemoryMiB(), oldParams.Time, p.Time))
 	})
 	if err != nil {
-		nk.Wipe()
-		return nil, err
+		return fail(err)
 	}
 	h.vacuum(ctx)
 	h.changed(ctx)
+	// The backups, the one just taken included, open with the old password.
+	n, err := h.PurgeBackups()
+	if err != nil {
+		slog.Error("deleting backups after a password change failed", "db", h.Name, "err", err)
+	} else if _, err := h.Backup(ctx); err != nil {
+		slog.Error("backup after a password change failed", "db", h.Name, "err", err)
+	} else {
+		h.DB.Audit(ctx, "backup.purge", 0, fmt.Sprintf("%d backups with the old password deleted", n))
+	}
 	return nk, nil
 }
 
 // SetKeyPassword gives a key its own password (ownPass = 1), sealed with
 // the database's Argon2id cost.
 func (h *Handle) SetKeyPassword(ctx context.Context, keyID int64, kr *vault.Keyring, kp KeyPasswords, newPass []byte) error {
-	return h.rekey(ctx, keyID, kr, kp, newPass)
+	err := h.rekey(ctx, keyID, kr, kp, newPass)
+	h.auditIf(ctx, err, "key.password_set", keyID, "")
+	return err
 }
 
 // ResetKeyPassword protects a key with the database's DEK again.
 func (h *Handle) ResetKeyPassword(ctx context.Context, keyID int64, kr *vault.Keyring, kp KeyPasswords) error {
-	return h.rekey(ctx, keyID, kr, kp, nil)
+	err := h.rekey(ctx, keyID, kr, kp, nil)
+	h.auditIf(ctx, err, "key.password_reset", keyID, "")
+	return err
 }
 
 // rekey seals a key under newPass, or under the DEK when newPass is nil.
@@ -603,43 +629,99 @@ func (h *Handle) rekey(ctx context.Context, keyID int64, kr *vault.Keyring, kp K
 	}
 	defer clear(der)
 	var blob []byte
-	own := xdb.PassCommon
+	own := gcadb.ProtDEK
 	if newPass == nil {
 		blob, err = kr.Seal(der, k.Public)
 	} else {
-		own = xdb.PassPrivate
+		own = gcadb.ProtPassword
 		blob, err = vault.SealWithPassword(der, k.Public, newPass, kr.Params())
 	}
 	if err != nil {
 		return err
 	}
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, own) })
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, own) })
 	h.changed(ctx)
 	return err
 }
 
 // Rename, Delete and MarkSigned wrap the single-statement writes.
 func (h *Handle) Rename(ctx context.Context, id int64, name, comment string) error {
-	err := h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.Rename(ctx, id, name, comment) })
+	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.Rename(ctx, id, name, comment) })
+	h.changed(ctx)
+	h.auditIf(ctx, err, "item.rename", id, "%s", name)
+	return err
+}
+
+// Delete moves an item to the trash.
+func (h *Handle) Delete(ctx context.Context, id int64) error {
+	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+		if err := tx.Audit(ctx, "item.trash", id, ""); err != nil {
+			return err
+		}
+		return tx.Trash(ctx, id)
+	})
 	h.changed(ctx)
 	return err
 }
 
-func (h *Handle) Delete(ctx context.Context, id int64) error {
-	err := h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.Delete(ctx, id) })
+// Trash lists the items in the trash.
+func (h *Handle) Trash(ctx context.Context) ([]gcadb.Item, error) { return h.DB.Trash(ctx) }
+
+// Restore takes an item out of the trash.
+func (h *Handle) Restore(ctx context.Context, id int64) error {
+	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+		if err := tx.Restore(ctx, id); err != nil {
+			return err
+		}
+		return tx.Audit(ctx, "item.restore", id, "")
+	})
 	h.changed(ctx)
 	return err
+}
+
+// Purge deletes items in the trash for good (all of them for nil ids)
+// and rebuilds the file, so that nothing of them remains.
+func (h *Handle) Purge(ctx context.Context, ids []int64) (int, error) {
+	if ids == nil {
+		items, err := h.DB.Trash(ctx)
+		if err != nil {
+			return 0, err
+		}
+		for _, it := range items {
+			ids = append(ids, it.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+		for _, id := range ids {
+			if err := tx.Audit(ctx, "item.purge", id, ""); err != nil {
+				return err
+			}
+			if err := tx.Purge(ctx, id); err != nil {
+				return fmt.Errorf("item %d: %w", id, err)
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		h.vacuum(ctx)
+	}
+	h.changed(ctx)
+	return len(ids), err
 }
 
 func (h *Handle) MarkSigned(ctx context.Context, id int64, signed bool) error {
-	err := h.DB.Write(ctx, func(tx *xdb.Tx) error { return tx.MarkSigned(ctx, id, signed) })
+	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.MarkSigned(ctx, id, signed) })
 	h.changed(ctx)
+	h.auditIf(ctx, err, "request.signed", id, "%v", signed)
 	return err
 }
 
 // SetSettings writes options shared with XCA.
 func (h *Handle) SetSettings(ctx context.Context, values map[string]string) error {
-	err := h.DB.Write(ctx, func(tx *xdb.Tx) error {
+	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
 		for k, v := range values {
 			if err := tx.SetSetting(ctx, k, v); err != nil {
 				return err
@@ -648,6 +730,7 @@ func (h *Handle) SetSettings(ctx context.Context, values map[string]string) erro
 		return nil
 	})
 	h.changed(ctx)
+	h.auditIf(ctx, err, "database.options", 0, "%s", settingsText(values))
 	return err
 }
 

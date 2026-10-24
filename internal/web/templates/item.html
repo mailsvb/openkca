@@ -66,12 +66,12 @@
   <h2>{{T "key.heading"}}</h2>
   <dl class="props">
     <dt>{{T "key.algorithm"}}</dt><dd>{{template "pubkey" $d.KeyInfo}}</dd>
-    <dt>{{T "key.private"}}</dt><dd>{{if not $k.HasPrivate}}{{T "private.none"}}{{else if eq $k.OwnPass 1}}{{T "private.own"}}{{else if eq $k.OwnPass 2}}{{T "private.bogus"}}{{else if eq $k.OwnPass 3}}{{T "private.token"}}{{else}}{{T "private.db"}}{{end}}</dd>
+    <dt>{{T "key.private"}}</dt><dd>{{if not $k.HasPrivate}}{{T "private.none"}}{{else if eq $k.Protection 2}}{{T "private.own"}}{{if $k.Legacy}} · {{T "private.legacy"}}{{end}}{{else if eq $k.Protection 3}}{{T "private.token"}}{{else}}{{T "private.db"}}{{end}}</dd>
     <dt>{{T "key.fingerprint"}}</dt><dd class="mono small">{{$d.KeyInfo.SHA256}}</dd>
   </dl>
   {{if $k.HasPrivate}}
   <form class="keycheck" hx-post="/db/{{$db}}/item/{{$k.ID}}/check-key" hx-target="#keycheck" hx-swap="innerHTML">
-    {{if eq $k.OwnPass 1}}
+    {{if eq $k.Protection 2}}
     <label for="kpw">{{T "keycheck.ownpass"}}</label>
     <input type="password" id="kpw" name="password" autocomplete="off" required>
     {{end}}
@@ -125,8 +125,6 @@
 {{if eq $d.Kind "template"}}
 <section class="card">
   <h2>{{T "tmpl.heading"}}</h2>
-  {{if $d.TmplErr}}<p class="warn">{{T "item.parseerror" $d.TmplErr}}</p>{{end}}
-  <dl class="props"><dt>{{T "col.version"}}</dt><dd>{{$d.TmplVer}}</dd></dl>
   {{if $d.Template}}{{$set := $d.Template.Settings}}
   <h3>{{T "tmpl.settings"}}</h3>
   <table class="kv">
@@ -138,6 +136,10 @@
 {{template "subject" $d.Subject}}
 {{end}}
 {{template "actions" .}}
+{{if $d.History}}<section class="card">
+  <h2>{{T "audit.history"}}</h2>
+  {{template "auditrows" $d.History}}
+</section>{{end}}
 {{template "foot" .}}
 
 {{define "actions"}}{{$d := .Data.D}}{{$db := .DB.Name}}{{$csrf := .CSRF}}{{$id := $d.Item.ID}}
@@ -185,16 +187,16 @@
     </form>
   </details>
   {{end}}
-  {{if and (eq $d.Kind "key") $d.Key.HasPrivate (ne $d.Key.OwnPass 3)}}
+  {{if and (eq $d.Kind "key") $d.Key.HasPrivate (ne $d.Key.Protection 3)}}
   <details>
     <summary>{{T "keypw.heading"}}</summary>
     <form method="post" action="/db/{{$db}}/item/{{$id}}/key-password" class="stack">
       <input type="hidden" name="csrf" value="{{$csrf}}">
-      {{if eq $d.Key.OwnPass 1}}<label for="kp-cur">{{T "keypw.current"}}</label><input type="password" id="kp-cur" name="current" autocomplete="off">{{end}}
+      {{if eq $d.Key.Protection 2}}<label for="kp-cur">{{T "keypw.current"}}</label><input type="password" id="kp-cur" name="current" autocomplete="off">{{end}}
       <label for="kp-new">{{T "keypw.new"}}</label><input type="password" id="kp-new" name="new" autocomplete="new-password">
       <label for="kp-new2">{{T "keypw.new2"}}</label><input type="password" id="kp-new2" name="new2" autocomplete="new-password">
       <div class="actionbar"><button type="submit" name="action" value="set">{{T "keypw.set"}}</button>
-      {{if eq $d.Key.OwnPass 1}}<button type="submit" name="action" value="reset" class="secondary">{{T "keypw.reset"}}</button>{{end}}</div>
+      {{if eq $d.Key.Protection 2}}<button type="submit" name="action" value="reset" class="secondary">{{T "keypw.reset"}}</button>{{end}}</div>
       <p class="muted small">{{T "keypw.help"}}</p>
     </form>
   </details>
