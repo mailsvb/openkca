@@ -16,8 +16,12 @@ import (
 )
 
 func (t *Tx) insertItem(ctx context.Context, name string, typ, source int, comment string) (int64, error) {
-	res, err := t.ExecContext(ctx, "INSERT INTO items (type, name, comment, source, created) VALUES (?, ?, ?, ?, ?)",
-		TypeName(typ), name, comment, SourceName(source), fmtTime(time.Now()))
+	id, err := NewUUID()
+	if err != nil {
+		return 0, err
+	}
+	res, err := t.ExecContext(ctx, "INSERT INTO items (uuid, type, name, comment, source, created) VALUES (?, ?, ?, ?, ?, ?)",
+		id, TypeName(typ), name, comment, SourceName(source), fmtTime(time.Now()))
 	if err != nil {
 		return 0, err
 	}
@@ -259,8 +263,10 @@ func (t *Tx) InsertCert(ctx context.Context, n NewCert) (int64, error) {
 	if n.TemplateID != 0 {
 		tmplID = sql.NullInt64{Int64: n.TemplateID, Valid: true}
 	}
-	if _, err := t.ExecContext(ctx, "INSERT INTO authorities (cert, template, crl_days) VALUES (?, ?, ?)",
-		id, tmplID, days); err != nil {
+	// A new CA's authority ID is its certificate's UUID; takeOver may
+	// replace it with the one of the CA it renews.
+	if _, err := t.ExecContext(ctx, `INSERT INTO authorities (cert, uuid, template, crl_days)
+		SELECT ?, uuid, ?, ? FROM items WHERE id=?`, id, tmplID, days, id); err != nil {
 		return 0, err
 	}
 	if err := t.takeOver(ctx, id, c); err != nil {
@@ -272,15 +278,27 @@ func (t *Tx) InsertCert(ctx context.Context, n NewCert) (int64, error) {
 // takeOver: another CA certificate with the same name and key that expires
 // no later than the new one hands over its issued certificates and its
 // revocations (a renewed CA).
+//
+// The new CA also takes over the authority ID (the CA folder) of the one
+// valid longest among them. A CA that hands over its authority ID and is
+// still live when the transaction commits gets a new one (see Tx.settle);
+// one moved to the trash in the same transaction (a renewal replacing the
+// old certificate) keeps it and cannot be restored while the new CA is
+// live.
 func (t *Tx) takeOver(ctx context.Context, newID int64, c *x509.Certificate) error {
 	others, err := t.certsWhere(ctx, "c.ca=1 AND c.item<>? AND c.subject=? AND c.key_fingerprint=?",
 		newID, c.RawSubject, Fingerprint(c.RawSubjectPublicKeyInfo))
 	if err != nil {
 		return err
 	}
-	for _, o := range others {
+	var from *certRow
+	for i := range others {
+		o := &others[i]
 		if !bytes.Equal(o.cert.RawSubjectPublicKeyInfo, c.RawSubjectPublicKeyInfo) || c.NotAfter.Before(o.cert.NotAfter) {
 			continue
+		}
+		if from == nil || o.cert.NotAfter.After(from.cert.NotAfter) || (o.cert.NotAfter.Equal(from.cert.NotAfter) && o.id > from.id) {
+			from = o
 		}
 		children, err := t.certsWhere(ctx, "c.issuer=? AND c.item<>?", o.id, o.id)
 		if err != nil {
@@ -300,7 +318,34 @@ func (t *Tx) takeOver(ctx context.Context, newID int64, c *x509.Certificate) err
 			return err
 		}
 	}
-	return nil
+	if from == nil {
+		return nil
+	}
+	var auth string
+	if err := t.QueryRowContext(ctx, "SELECT uuid FROM authorities WHERE cert=?", from.id).Scan(&auth); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // a CA certificate without an authority row
+		}
+		return err
+	}
+	if _, err := t.ExecContext(ctx, "UPDATE authorities SET uuid=? WHERE cert=?", auth, newID); err != nil {
+		return err
+	}
+	// Every other CA with this authority ID (the one renewed, and CAs it
+	// took the ID over from itself) must give it up if it stays live.
+	rows, err := t.QueryContext(ctx, "SELECT cert FROM authorities WHERE uuid=? AND cert<>?", auth, newID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		t.displaced = append(t.displaced, id)
+	}
+	return rows.Err()
 }
 
 // adoptChildren sets the issuer of live certificates and CRLs that ca
@@ -445,6 +490,11 @@ func (t *Tx) Restore(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	if typ == TypeCert {
+		if err := t.checkAuthorityFree(ctx, id); err != nil {
+			return err
+		}
+	}
 	if _, err := t.ExecContext(ctx, "UPDATE items SET trashed=NULL WHERE id=?", id); err != nil {
 		return err
 	}
@@ -471,6 +521,25 @@ func (t *Tx) Restore(ctx context.Context, id int64) error {
 		if c.BasicConstraintsValid && c.IsCA {
 			return t.adoptChildren(ctx, id, c)
 		}
+	}
+	return nil
+}
+
+// ErrAuthorityInUse: a CA in the trash cannot be restored because a live
+// CA (its renewal) holds its authority ID.
+var ErrAuthorityInUse = errors.New("gcadb: a live CA holds this CA's authority ID")
+
+// checkAuthorityFree fails with ErrAuthorityInUse when another live CA
+// holds the authority ID of certificate id.
+func (t *Tx) checkAuthorityFree(ctx context.Context, id int64) error {
+	var n int
+	err := t.QueryRowContext(ctx, `SELECT COUNT(*) FROM authorities a JOIN authorities o ON o.uuid = a.uuid AND o.cert <> a.cert
+		JOIN items i ON i.id = o.cert WHERE a.cert=? AND i.trashed IS NULL`, id).Scan(&n)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrAuthorityInUse
 	}
 	return nil
 }

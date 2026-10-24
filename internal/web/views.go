@@ -392,6 +392,7 @@ type detail struct {
 	Templates  []link
 	Reasons    []reasonChoice
 	Now        string
+	CADir      string // a CA's folder on disk (index files and other data)
 }
 
 type link struct {
@@ -456,6 +457,9 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 			}
 			if c.Authority != nil && c.Authority.TemplateID != 0 {
 				d.Links["template"] = plk(c.Authority.TemplateID)
+			}
+			if c.CA && c.Authority != nil {
+				d.CADir, _ = ds.Handle.CADir(c.Authority.UUID)
 			}
 			for _, ch := range ix.children[c.ID] {
 				d.Issued = append(d.Issued, lk(ch.ID))

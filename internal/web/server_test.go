@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"html"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -477,7 +478,12 @@ func TestCAPages(t *testing.T) {
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
 		t.Fatalf("renew: %s", loc)
 	}
-	idx, err := os.ReadFile(filepath.Join(srv.store.Dir, "index", "sample", "Example_Issuing_CA", "index.txt"))
+	r, _ = c.Get(ts.URL + "/db/sample/item/5")
+	m := regexp.MustCompile(`class="mono small">([^<]+/ca/sample/[0-9a-f-]{36})</dd>`).FindStringSubmatch(body(t, r))
+	if m == nil || !strings.HasPrefix(html.UnescapeString(m[1]), filepath.Join(srv.store.Dir, "ca", "sample")) {
+		t.Fatalf("CA folder not shown: %v", m)
+	}
+	idx, err := os.ReadFile(filepath.Join(html.UnescapeString(m[1]), "index.txt"))
 	if err != nil || strings.Count(string(idx), "\nR\t")+boolInt(strings.HasPrefix(string(idx), "R\t")) != 3 {
 		t.Fatalf("index file:\n%s %v", idx, err)
 	}

@@ -126,7 +126,8 @@ func Fingerprint(der []byte) []byte {
 
 // Item is one row of the items table.
 type Item struct {
-	ID      int64
+	ID      int64  // row ID, links rows inside the database
+	UUID    string // the item's identity outside the database; never changes
 	Name    string
 	Type    int
 	Source  int
@@ -160,6 +161,7 @@ type Revocation struct {
 
 // Authority holds a CA's bookkeeping.
 type Authority struct {
+	UUID       string    // authority ID: names the CA's folder, kept across renewals
 	TemplateID int64     // 0 = none
 	CRLExpire  time.Time // next update of the last CRL, zero = no CRL yet
 	CRLNo      int64
@@ -284,10 +286,10 @@ func (d *DB) Load(ctx context.Context) (*Snapshot, error) {
 	return s, nil
 }
 
-const itemCols = "i.id, i.name, i.type, i.source, i.created, i.comment, i.stamp, i.trashed"
+const itemCols = "i.id, i.uuid, i.name, i.type, i.source, i.created, i.comment, i.stamp, i.trashed"
 
 func itemDest(it *Item, typ, source, created, trashed *sql.NullString) []any {
-	return []any{&it.ID, &it.Name, typ, source, created, &it.Comment, &it.Stamp, trashed}
+	return []any{&it.ID, &it.UUID, &it.Name, typ, source, created, &it.Comment, &it.Stamp, trashed}
 }
 
 func finishItem(it *Item, typ, source, created, trashed sql.NullString) {
@@ -368,7 +370,7 @@ func loadRequests(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 
 func loadCerts(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 	rows, err := tx.QueryContext(ctx, `SELECT `+itemCols+`, c.serial, li.id, c.ca, c.der, lk.id,
-		a.cert IS NOT NULL, lt.id, a.crl_next, a.crl_number, a.crl_days, a.dn_policy
+		a.cert IS NOT NULL, a.uuid, lt.id, a.crl_next, a.crl_number, a.crl_days, a.dn_policy
 		FROM certs c JOIN items i ON i.id = c.item
 		`+live("li", "c.issuer")+` `+live("lk", "c.key")+`
 		LEFT JOIN authorities a ON a.cert = c.item `+live("lt", "a.template")+`
@@ -379,18 +381,18 @@ func loadCerts(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 	defer rows.Close()
 	for rows.Next() {
 		c := &Cert{}
-		var typ, source, created, trashed, crlNext, dnPolicy sql.NullString
+		var typ, source, created, trashed, authUUID, crlNext, dnPolicy sql.NullString
 		var issuer, key, tmplID, crlNo, crlDays sql.NullInt64
 		var hasAuth bool
 		dest := append(itemDest(&c.Item, &typ, &source, &created, &trashed), &c.Serial, &issuer, &c.CA, &c.DER, &key,
-			&hasAuth, &tmplID, &crlNext, &crlNo, &crlDays, &dnPolicy)
+			&hasAuth, &authUUID, &tmplID, &crlNext, &crlNo, &crlDays, &dnPolicy)
 		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
 		finishItem(&c.Item, typ, source, created, trashed)
 		c.IssuerID, c.KeyID = issuer.Int64, key.Int64
 		if hasAuth {
-			c.Authority = &Authority{TemplateID: tmplID.Int64, CRLExpire: parseTime(crlNext), CRLNo: crlNo.Int64,
+			c.Authority = &Authority{UUID: authUUID.String, TemplateID: tmplID.Int64, CRLExpire: parseTime(crlNext), CRLNo: crlNo.Int64,
 				CRLDays: int(crlDays.Int64), DNPolicy: dnPolicy.String}
 		}
 		s.Certs = append(s.Certs, c)

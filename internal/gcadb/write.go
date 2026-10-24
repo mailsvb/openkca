@@ -3,6 +3,7 @@ package gcadb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +13,8 @@ import (
 // cache reloads when MAX(stamp) changes.
 type Tx struct {
 	*sql.Tx
-	touched []int64
+	touched   []int64
+	displaced []int64 // CAs whose authority ID a renewal took over
 }
 
 // Touch marks an item as changed in this transaction.
@@ -34,6 +36,9 @@ func commitWrite(ctx context.Context, sqlTx *sql.Tx, fn func(*Tx) error) error {
 	if err := fn(tx); err != nil {
 		return err
 	}
+	if err := tx.settle(ctx); err != nil {
+		return err
+	}
 	var stamp int64
 	if err := sqlTx.QueryRowContext(ctx, "SELECT COALESCE(MAX(stamp), 0) + 1 FROM items").Scan(&stamp); err != nil {
 		return err
@@ -47,6 +52,32 @@ func commitWrite(ctx context.Context, sqlTx *sql.Tx, fn func(*Tx) error) error {
 		}
 	}
 	return sqlTx.Commit()
+}
+
+// settle gives CAs whose authority ID a renewal took over and that are
+// still live a new authority ID (a folder of their own), so that at most
+// one live CA holds each authority ID. Those in the trash keep it.
+func (t *Tx) settle(ctx context.Context) error {
+	for _, id := range t.displaced {
+		var live bool
+		err := t.QueryRowContext(ctx, "SELECT trashed IS NULL FROM items WHERE id=?", id).Scan(&live)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !live) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		u, err := NewUUID()
+		if err != nil {
+			return err
+		}
+		if _, err := t.ExecContext(ctx, "UPDATE authorities SET uuid=? WHERE cert=?", u, id); err != nil {
+			return err
+		}
+		t.Touch(id)
+	}
+	t.displaced = nil
+	return nil
 }
 
 // Read runs fn in a transaction that is rolled back: a consistent view
@@ -99,24 +130,26 @@ type AuditEntry struct {
 	At       time.Time
 	Action   string // e.g. "key.generate", "cert.revoke"
 	ItemID   int64  // 0 = the database itself
+	ItemUUID string // "" = the database itself
 	ItemName string
 	Detail   string // short, never secret
 	Client   string
 }
 
 // Audit appends an entry to the audit log in the transaction. The item's
-// name is looked up when name is empty, so the log stays readable after
-// the item has been purged.
+// UUID and name are copied into the entry, so it stays readable and can be
+// matched to the item after the item has been purged.
 func (t *Tx) Audit(ctx context.Context, action string, itemID int64, detail string) error {
 	client, _ := ctx.Value(clientKey{}).(string)
 	var item sql.NullInt64
-	name := ""
+	uid, name := "", ""
 	if itemID != 0 {
 		item = sql.NullInt64{Int64: itemID, Valid: true}
-		t.QueryRowContext(ctx, "SELECT name FROM items WHERE id=?", itemID).Scan(&name)
+		t.QueryRowContext(ctx, "SELECT uuid, name FROM items WHERE id=?", itemID).Scan(&uid, &name)
 	}
-	_, err := t.ExecContext(ctx, "INSERT INTO audit (at, action, item, item_name, detail, client) VALUES (?, ?, ?, ?, ?, ?)",
-		time.Now().UTC().Format(time.RFC3339Nano), action, item, name, strings.TrimSpace(detail), client)
+	_, err := t.ExecContext(ctx, `INSERT INTO audit (at, action, item, item_uuid, item_name, detail, client)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().UTC().Format(time.RFC3339Nano), action, item, uid, name, strings.TrimSpace(detail), client)
 	return err
 }
 
@@ -128,7 +161,7 @@ func (d *DB) Audit(ctx context.Context, action string, itemID int64, detail stri
 // AuditLog returns entries newest first: all of them (itemID 0) or those
 // of one item, at most limit, older than the entry before (0 = newest).
 func (d *DB) AuditLog(ctx context.Context, itemID int64, before int64, limit int) ([]AuditEntry, error) {
-	q := "SELECT id, at, action, item, item_name, detail, client FROM audit WHERE 1=1"
+	q := "SELECT id, at, action, item, item_uuid, item_name, detail, client FROM audit WHERE 1=1"
 	var args []any
 	if itemID != 0 {
 		q += " AND item=?"
@@ -150,7 +183,7 @@ func (d *DB) AuditLog(ctx context.Context, itemID int64, before int64, limit int
 		var e AuditEntry
 		var at string
 		var item sql.NullInt64
-		if err := rows.Scan(&e.ID, &at, &e.Action, &item, &e.ItemName, &e.Detail, &e.Client); err != nil {
+		if err := rows.Scan(&e.ID, &at, &e.Action, &item, &e.ItemUUID, &e.ItemName, &e.Detail, &e.Client); err != nil {
 			return nil, err
 		}
 		e.At, _ = time.Parse(time.RFC3339Nano, at)

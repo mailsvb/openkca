@@ -1,6 +1,7 @@
 // Package index writes an OpenSSL "ca" style certificate index per CA, as
-// used by "openssl ocsp -index": <data-dir>/index/<database>/<CA>/index.txt
-// and index.txt.attr. It is the only package that writes index files.
+// used by "openssl ocsp -index": index.txt and index.txt.attr in the CA's
+// folder, <data-dir>/ca/<database>/<authority ID>/ (package cadir). It is
+// the only package that writes index files.
 package index
 
 import (
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/cadir"
 	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 )
@@ -75,31 +77,24 @@ func subjectOf(c *gcadb.Cert) []byte {
 	return nil
 }
 
-func folderName(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
+// Files are the files this package writes into a CA folder.
+var Files = []string{"index.txt", "index.txt.attr"}
+
+func isIndexFile(name string) bool {
+	for _, f := range Files {
+		if name == f {
+			return true
 		}
 	}
-	s := strings.TrimLeft(b.String(), ".")
-	if s == "" {
-		s = "ca"
-	}
-	if len(s) > 64 {
-		s = s[:64]
-	}
-	return s
+	return false
 }
 
-// Write rewrites the index files of every CA in the snapshot under
-// dir/<db>. Folders of CAs that no longer exist are removed if they hold
-// nothing but index files.
+// Write rewrites the index files of every CA in the snapshot, each in its
+// CA folder (package cadir). Folders of CAs that are no longer live (in the
+// trash or purged) are removed if they hold nothing but index files;
+// other files there are left alone.
 func Write(dir, db string, snap *gcadb.Snapshot) error {
-	base := filepath.Join(dir, "index", db)
+	base := cadir.Base(dir, db)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return err
 	}
@@ -109,19 +104,19 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 	}
 	var cas []*gcadb.Cert
 	for _, c := range snap.Certs {
-		if c.CA {
+		if c.CA && c.Authority != nil {
 			cas = append(cas, c)
 		}
 	}
 	sort.Slice(cas, func(i, j int) bool { return cas[i].ID < cas[j].ID })
-	used := map[string]bool{}
+	live := map[string]bool{}
 	now := time.Now()
 	for _, ca := range cas {
-		name := folderName(ca.Name)
-		if used[name] {
-			name = fmt.Sprintf("%s-%d", name, ca.ID)
+		folder, err := cadir.Path(dir, db, ca.Authority.UUID)
+		if err != nil {
+			return err
 		}
-		used[name] = true
+		live[ca.Authority.UUID] = true
 		var lines []string
 		for _, c := range snap.Certs {
 			if c.IssuerID == ca.ID && c.ID != ca.ID {
@@ -144,7 +139,6 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 				lines = append(lines, fmt.Sprintf("R\t%s\t%s\t%s\tunknown\t%s\n", indexTime(time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)), rf, r.Serial, "/"))
 			}
 		}
-		folder := filepath.Join(base, name)
 		if err := os.MkdirAll(folder, 0o700); err != nil {
 			return err
 		}
@@ -157,14 +151,15 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 	}
 	entries, _ := os.ReadDir(base)
 	for _, e := range entries {
-		if !e.IsDir() || used[e.Name()] {
+		// Only CA folders; anything else in the database's folder is not ours.
+		if !e.IsDir() || !cadir.IsUUID(e.Name()) || live[e.Name()] {
 			continue
 		}
 		folder := filepath.Join(base, e.Name())
 		files, _ := os.ReadDir(folder)
 		onlyIndex := true
 		for _, f := range files {
-			if f.Name() != "index.txt" && f.Name() != "index.txt.attr" {
+			if !isIndexFile(f.Name()) {
 				onlyIndex = false
 			}
 		}

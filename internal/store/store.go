@@ -23,6 +23,7 @@ import (
 	"github.com/gofrs/flock"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
+	"github.com/mailsvb/go-ca/internal/cadir"
 	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/index"
 	"github.com/mailsvb/go-ca/internal/xcaimport"
@@ -145,6 +146,10 @@ func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Vers
 	}
 	if schema > gcadb.Schema {
 		return Newer, v, "", true
+	}
+	if schema == 3 {
+		// Schema 3 had no item UUIDs and is not migrated.
+		return Invalid, v, "go-ca schema 3 (before item UUIDs) is no longer supported", true
 	}
 	if schema < gcadb.Schema {
 		return Invalid, v, "unknown go-ca schema", true
@@ -357,6 +362,15 @@ func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 		slog.Error("writing index files failed", "db", h.Name, "err", err)
 	}
 	return snap, nil
+}
+
+// CADir returns the folder of a CA of this database by its authority ID
+// (gcadb.Authority.UUID): <data-dir>/ca/<database>/<authority ID>/. It
+// holds the CA's index files and is the place for any other file go-ca
+// keeps per CA; a renewal with the same key keeps it. The folder is not
+// created.
+func (h *Handle) CADir(authorityID string) (string, error) {
+	return cadir.Path(h.store.Dir, h.Name, authorityID)
 }
 
 // changed drops the cached snapshot and reloads it at once, which also

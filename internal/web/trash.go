@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -32,8 +33,9 @@ func (s *Server) trashPage(w http.ResponseWriter, r *http.Request) {
 	case "purged":
 		p.Notice, p.NoticeArg = "trash.notice.purged", r.URL.Query().Get("n")
 	}
-	if r.URL.Query().Get("error") == "trash.error" {
-		p.Error = "trash.error"
+	switch e := r.URL.Query().Get("error"); e {
+	case "trash.error", "trash.error.authority":
+		p.Error = e
 	}
 	s.render(w, r, http.StatusOK, "trash", p)
 }
@@ -53,6 +55,10 @@ func (s *Server) restoreItem(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
 	if err := ds.Handle.Restore(r.Context(), id); err != nil {
 		s.log.Warn("restore failed", "db", ds.DBName, "id", id, "err", err)
+		if errors.Is(err, gcadb.ErrAuthorityInUse) {
+			s.toTrash(w, r, "error=trash.error.authority")
+			return
+		}
 		s.toTrash(w, r, "error=trash.error")
 		return
 	}

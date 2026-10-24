@@ -6,6 +6,7 @@
   <dt>{{T "item.type"}}</dt><dd>{{T (print "kind." $d.Kind)}}</dd>
   <dt>{{T "item.source"}}</dt><dd>{{T $d.Source}}</dd>
   <dt>{{T "item.date"}}</dt><dd>{{time $d.Item.Date}}</dd>
+  <dt>{{T "item.uuid"}}</dt><dd class="mono">{{$d.Item.UUID}}</dd>
   {{if $d.Item.Comment}}<dt>{{T "item.comment"}}</dt><dd class="pre">{{$d.Item.Comment}}</dd>{{end}}
 </dl>
 
@@ -38,6 +39,8 @@
     <dt>{{T "ca.crldays"}}</dt><dd>{{$a.CRLDays}}</dd>
     <dt>{{T "ca.crlno"}}</dt><dd>{{$a.CRLNo}}</dd>
     <dt>{{T "ca.crlexpire"}}</dt><dd>{{if eq $a.CRLExpire.Year 9999}}{{T "ca.nocrl"}}{{else}}{{time $a.CRLExpire}}{{end}}</dd>
+    <dt>{{T "ca.authority"}}</dt><dd class="mono">{{$a.UUID}}</dd>
+    {{with $d.CADir}}<dt>{{T "ca.folder"}}</dt><dd class="mono small">{{.}}</dd>{{end}}
   </dl>
   <div class="actionbar">
     {{if $d.KeyPrivate}}<a class="button" href="/db/{{$db}}/item/{{$d.Item.ID}}/crl">{{T "ca.gencrl"}}</a>{{end}}
