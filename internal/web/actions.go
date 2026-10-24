@@ -201,6 +201,13 @@ func kdfFromForm(r *http.Request) (vault.Params, bool) {
 // one.
 func (s *Server) dbPassword(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
+	if c, ok := s.store.ConfiguredDB(ds.DBName); ok && c.Background {
+		// The change would rotate the DEK under the background keyring and
+		// leave the configured password wrong: refused (see dbpw.background).
+		s.log.Warn("database password change refused: kept open in the background", "db", ds.DBName, "ip", clientIP(r))
+		s.render(w, r, http.StatusConflict, "dbpassword", &page{Title: "dbpw.title", Tab: "options", Data: s.dbPasswordData(r)})
+		return
+	}
 	old, n1, n2 := []byte(r.PostFormValue("old")), []byte(r.PostFormValue("new")), []byte(r.PostFormValue("new2"))
 	defer clear(old)
 	defer clear(n1)

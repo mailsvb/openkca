@@ -20,7 +20,7 @@
   </tbody>
 </table>
 <div class="actions"><button type="submit">{{T "options.save"}}</button>
-<a href="/db/{{.DB.Name}}/password">{{T "dbpw.link"}}</a></div>
+{{if not .DB.Background}}<a href="/db/{{.DB.Name}}/password">{{T "dbpw.link"}}</a>{{end}}</div>
 </form>
 <section class="card">
   <h2>{{T "dump.heading"}}</h2>

@@ -30,8 +30,10 @@ type page struct {
 }
 
 type dbHeader struct {
-	Name   string
-	Schema int
+	Name       string // the name in URLs
+	Label      string // the name shown: the configured name, else Name
+	Background bool   // go-ca keeps the database open on its own
+	Schema     int
 }
 
 var tabs = []string{"keys", "requests", "certs", "templates", "crls"}
@@ -145,7 +147,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 		p.CSRF = ss.CSRF
 	}
 	if ds := dbSession(r); ds != nil && p.DB == nil {
-		p.DB = header(ds)
+		p.DB = s.header(ds)
 	}
 	exec := name
 	if frag, ok := p.Data["fragment"].(string); ok && isHTMX(r) {
@@ -162,6 +164,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 	w.Write(buf.Bytes())
 }
 
-func header(ds *session.Session) *dbHeader {
-	return &dbHeader{Name: ds.DBName, Schema: gcadb.Schema}
+func (s *Server) header(ds *session.Session) *dbHeader {
+	h := &dbHeader{Name: ds.DBName, Label: ds.DBName, Schema: gcadb.Schema}
+	if c, ok := s.store.ConfiguredDB(ds.DBName); ok {
+		h.Label, h.Background = c.Label, c.Background
+	}
+	return h
 }
