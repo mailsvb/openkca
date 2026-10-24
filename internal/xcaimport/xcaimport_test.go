@@ -51,15 +51,15 @@ func TestImportFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok, _, _ := src.Unlock(ctx, []byte("wrong")); ok {
+		if ok, _ := src.Unlock(ctx, []byte("wrong")); ok {
 			t.Fatalf("%s: wrong password accepted", name)
 		}
-		ok, kr, err := src.Unlock(ctx, []byte("secret"))
-		if !ok || err != nil || kr != nil {
+		ok, err := src.Unlock(ctx, []byte("secret"))
+		if !ok || err != nil {
 			t.Fatalf("%s: unlock %v %v", name, ok, err)
 		}
 		dst := openDst(t)
-		kr, rep, err := src.Import(ctx, dst, []byte("secret"), nil, cheap, nil, nil)
+		kr, rep, err := src.Import(ctx, dst, []byte("secret"), cheap, nil, nil)
 		src.Close()
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -171,7 +171,7 @@ func TestImportUpgradesDefaults(t *testing.T) {
 	}
 	defer src.Close()
 	dst := openDst(t)
-	if _, _, err := src.Import(ctx, dst, []byte("secret"), nil, cheap, nil, nil); err != nil {
+	if _, _, err := src.Import(ctx, dst, []byte("secret"), cheap, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	db, err := gcadb.Open(ctx, dst)

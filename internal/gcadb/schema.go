@@ -32,11 +32,11 @@ import (
 // ApplicationID is SQLite's application_id of a go-ca database ("gca1").
 const ApplicationID = 0x67636131
 
-// Schema is the version this package writes (the "schema" setting).
-// Versions 1 and 2 were go-ca's XCA based format, read by xcaimport.
-// Version 3 had no item UUIDs; it is not migrated. Version 4 lacked the
-// certificate expiry on revocations and is migrated in place (Migrate).
-const Schema = 5
+// Schema is the version this package writes (the "schema" setting). A
+// database of an older schema is upgraded by Migrate when it is opened.
+// The schema was reset to 1 during development; go-ca databases from
+// before the reset are not supported.
+const Schema = 1
 
 var ddl = []string{
 	`CREATE TABLE settings (
@@ -208,10 +208,29 @@ func (t *Tx) fillRevocationExpiry(ctx context.Context) error {
 	return err
 }
 
-// Migrate upgrades a go-ca database of an older, migratable schema to
-// Schema in one transaction. It reports whether anything changed; before
-// it changes anything, backup is called.
+// A migration step upgrades a database by one schema version, inside the
+// transaction Migrate runs it in.
+type step func(ctx context.Context, t *Tx) error
+
+// steps upgrade schema MinMigratable+i to MinMigratable+i+1. Append a
+// step for every schema change (and raise Schema to match); a reset before
+// the first release empties the list again.
+var steps = []step{}
+
+// MinMigratable is the oldest go-ca schema Migrate upgrades.
+const MinMigratable = 1
+
+// Migrate upgrades a go-ca database of an older schema to Schema, running
+// every step in one transaction. It reports whether anything changed;
+// before it changes anything, backup is called.
 func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error) {
+	return migrate(ctx, db, backup, steps, Schema)
+}
+
+func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step, target int) (bool, error) {
+	if MinMigratable+len(steps) != target {
+		return false, fmt.Errorf("gcadb: %d migration steps do not lead from schema %d to %d", len(steps), MinMigratable, target)
+	}
 	s, gca, err := ReadSchema(ctx, db)
 	if err != nil {
 		return false, err
@@ -220,9 +239,9 @@ func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error)
 		return false, errors.New("gcadb: not a go-ca database")
 	}
 	switch {
-	case s == Schema:
+	case s == target:
 		return false, nil
-	case s < MinMigratable || s > Schema:
+	case s < MinMigratable || s > target:
 		return false, fmt.Errorf("gcadb: schema %d cannot be migrated", s)
 	}
 	if err := backup(); err != nil {
@@ -233,27 +252,17 @@ func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error)
 		return false, err
 	}
 	defer sqlTx.Rollback()
-	if s == 4 {
-		for _, stmt := range []string{
-			`ALTER TABLE revocations ADD COLUMN expires TEXT`,
-			`CREATE INDEX certs_issuer_serial ON certs (issuer_name, serial)`,
-		} {
-			if _, err := sqlTx.ExecContext(ctx, stmt); err != nil {
-				return false, fmt.Errorf("gcadb: migrate 4 to 5: %w", err)
-			}
-		}
-		if err := (&Tx{Tx: sqlTx}).fillRevocationExpiry(ctx); err != nil {
-			return false, err
+	tx := &Tx{Tx: sqlTx}
+	for v := s; v < target; v++ {
+		if err := steps[v-MinMigratable](ctx, tx); err != nil {
+			return false, fmt.Errorf("gcadb: migrate schema %d to %d: %w", v, v+1, err)
 		}
 	}
-	if _, err := sqlTx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(Schema)); err != nil {
+	if _, err := sqlTx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(target)); err != nil {
 		return false, err
 	}
 	return true, sqlTx.Commit()
 }
-
-// MinMigratable is the oldest go-ca schema Migrate upgrades.
-const MinMigratable = 4
 
 // ReadSchema returns the "schema" setting and whether the file carries
 // go-ca's application ID.

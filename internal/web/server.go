@@ -455,7 +455,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
 	if store.IsXCAName(name) {
-		// An XCA (or former go-ca) file is imported into a new go-ca
+		// An XCA file is imported into a new go-ca
 		// database in the background; the session waits for it on the
 		// progress page.
 		conv, err := s.store.StartImport(r.Context(), name, pw, vault.Default)
