@@ -463,7 +463,7 @@ func (s *Server) item(w http.ResponseWriter, r *http.Request) {
 			}
 			if c.CA && c.Authority != nil {
 				d.CADir, _ = ds.Handle.CADir(c.Authority.UUID)
-				d.CRLURLs, d.CertURLs = pki.PublishedURLs(s.cfg.BaseURLs, c.Authority.UUID)
+				d.CRLURLs, d.CertURLs = s.store.PublishedURLs(c)
 				d.AutoCRL = "ca.autocrl." + string(store.AutoCRLState(snap, c))
 				if cfg, ok := s.store.ConfiguredDB(ds.DBName); (!ok || !cfg.Background) && d.AutoCRL == "ca.autocrl.on" {
 					d.AutoCRL = "ca.autocrl.nobg"

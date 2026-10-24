@@ -46,9 +46,6 @@ type Config struct {
 	IdleTimeout  time.Duration
 	MaxUpload    int64 // import size limit in bytes
 	Logger       *slog.Logger
-	// BaseURLs are where CRLs and CA certificates are published
-	// (config crl.base_urls), offered for CDP and AIA.
-	BaseURLs []string
 	// CRLAlerts returns the published CRLs that expire soon or expired.
 	CRLAlerts func() []pubserve.Alert
 }

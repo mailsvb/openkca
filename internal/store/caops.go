@@ -222,6 +222,10 @@ type RenewOptions struct {
 	KeepSerial bool
 	Revoke     *Revocation // revoke the old certificate (not for self-signed)
 	Replace    bool        // delete the old certificate
+	// PubCDP and PubAIA point the renewal's CDP and AIA at the issuer's
+	// published CRL and certificate (replacing earlier published URLs);
+	// unset, the extensions stay as they were. Not for self-signed ones.
+	PubCDP, PubAIA bool
 }
 
 // Renew issues a renewed copy of a certificate.
@@ -278,6 +282,16 @@ func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, kr *va
 	na := o.NotAfter
 	if o.NoExpiry {
 		na = pki.NoExpiry
+	}
+	if !self && (o.PubCDP || o.PubAIA) && len(h.store.BaseURLs) > 0 && signer.Authority != nil {
+		crl, cert := h.store.PublishedURLs(signer)
+		exts, err := pki.ReplacePublished(oc.Extensions, signer.Authority.UUID, crl, cert, o.PubCDP, o.PubAIA)
+		if err != nil {
+			return 0, err
+		}
+		cp := *oc
+		cp.Extensions = exts
+		oc = &cp
 	}
 	der, err := pki.Renew(oc, serial, o.NotBefore, na, issuer, key)
 	if err != nil {

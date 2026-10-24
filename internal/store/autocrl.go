@@ -177,3 +177,61 @@ func (h *Handle) notify() {
 		}
 	}
 }
+
+// PublishedURLs returns where a CA's CRL and certificate are published,
+// nil when no base URLs are configured or ca is not a CA with an
+// authority ID.
+func (s *Store) PublishedURLs(ca *gcadb.Cert) (crl, cert []string) {
+	if ca == nil || !ca.CA || ca.Authority == nil || len(s.BaseURLs) == 0 {
+		return nil, nil
+	}
+	return pki.PublishedURLs(s.BaseURLs, ca.Authority.UUID)
+}
+
+// withPublished resolves spec.PubCDP and spec.PubAIA for issuer ca (nil
+// for self-signed certificates and requests, which get neither) into
+// CRLMirrors and CAIssuers. Free-text entries naming the same URLs are
+// dropped, so a certificate copied into the editor does not list them
+// twice.
+func (s *Store) withPublished(spec pki.ExtSpec, ca *gcadb.Cert) pki.ExtSpec {
+	crl, cert := s.PublishedURLs(ca)
+	if spec.PubCDP && len(crl) > 0 {
+		spec.CRLMirrors = crl
+		spec.CRLDist = dropURIs(spec.CRLDist, crl, "")
+	}
+	if spec.PubAIA && len(cert) > 0 {
+		spec.CAIssuers = cert
+		spec.AuthInfAcc = dropURIs(spec.AuthInfAcc, cert, "caissuers;")
+	}
+	return spec
+}
+
+// dropURIs removes the comma separated entries "[method;]URI:<u>" whose
+// URL is one of urls (and whose method, lower case, is prefix).
+func dropURIs(list string, urls []string, prefix string) string {
+	skip := map[string]bool{}
+	for _, u := range urls {
+		skip[u] = true
+	}
+	var keep []string
+	for _, item := range strings.Split(list, ",") {
+		it := strings.TrimSpace(item)
+		if it == "" {
+			continue
+		}
+		rest := it
+		if prefix != "" {
+			m, loc, ok := strings.Cut(it, ";")
+			if !ok || strings.ToLower(strings.TrimSpace(m))+";" != prefix {
+				keep = append(keep, it)
+				continue
+			}
+			rest = strings.TrimSpace(loc)
+		}
+		if typ, u, ok := strings.Cut(rest, ":"); ok && strings.EqualFold(typ, "URI") && skip[strings.TrimSpace(u)] {
+			continue
+		}
+		keep = append(keep, it)
+	}
+	return strings.Join(keep, ", ")
+}

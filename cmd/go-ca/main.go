@@ -150,6 +150,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	st.BaseURLs = cfg.CRL.BaseURLs
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -186,7 +187,7 @@ func serve(args []string) error {
 	}
 	monitor := &pubserve.Monitor{Dir: st.Dir, Log: log}
 	srv, err := web.New(web.Config{Store: st, PasswordHash: g.PasswordHash, Catalog: cat, IdleTimeout: g.IdleTimeout,
-		MaxUpload: g.MaxUploadMB << 20, Logger: log, BaseURLs: cfg.CRL.BaseURLs, CRLAlerts: monitor.Alerts})
+		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts})
 	if err != nil {
 		return err
 	}

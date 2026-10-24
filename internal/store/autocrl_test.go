@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +145,85 @@ func TestWatch(t *testing.T) {
 	case <-ch:
 		t.Fatal("more than one pending signal")
 	default:
+	}
+}
+
+// TestPublishedExtensions: PubCDP/PubAIA resolve to the issuer's published
+// URLs (dropping free-text duplicates); self-signed certificates get
+// neither; a renewal can point an old certificate at the current URLs.
+func TestPublishedExtensions(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	s.BaseURLs = []string{"http://ext.example", "http://int.lan:8080"}
+	if err := s.Create(ctx, "pub", testPassword, vault.Default); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := load(t, s, "pub")
+	kr := krOf(t, h)
+	rootP := params("Root", 0)
+	rootP.Ext.PubCDP, rootP.Ext.PubAIA = true, true
+	rootID, err := h.Issue(ctx, rootP, kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := h.Snapshot(ctx)
+	root := findCert(snap, rootID)
+	rc, _ := x509.ParseCertificate(root.DER)
+	if len(rc.CRLDistributionPoints) != 0 || len(rc.IssuingCertificateURL) != 0 {
+		t.Fatal("self-signed certificate with CDP/AIA")
+	}
+	id := root.Authority.UUID
+	leafP := params("leaf", rootID)
+	leafP.Ext = pki.ExtSpec{CA: 2, PubCDP: true, PubAIA: true,
+		CRLDist:    "URI:http://ext.example/" + id + ".crl, URI:http://other.example/x.crl",
+		AuthInfAcc: "OCSP;URI:http://ocsp.example"}
+	leafID, err := h.Issue(ctx, leafP, kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = h.Snapshot(ctx)
+	lc, _ := x509.ParseCertificate(findCert(snap, leafID).DER)
+	wantCDP := "http://ext.example/" + id + ".crl http://int.lan:8080/" + id + ".crl http://other.example/x.crl"
+	if got := strings.Join(lc.CRLDistributionPoints, " "); got != wantCDP {
+		t.Fatalf("CDP %s", got)
+	}
+	if got := strings.Join(lc.IssuingCertificateURL, " "); got != "http://ext.example/"+id+".crt http://int.lan:8080/"+id+".crt" {
+		t.Fatalf("AIA %s", got)
+	}
+	if len(lc.OCSPServer) != 1 {
+		t.Fatal("OCSP entry lost")
+	}
+
+	// Unchecked: nothing published.
+	plainP := params("plain", rootID)
+	plainP.Ext = pki.ExtSpec{CA: 2}
+	plainID, _ := h.Issue(ctx, plainP, kr)
+	snap, _ = h.Snapshot(ctx)
+	pc, _ := x509.ParseCertificate(findCert(snap, plainID).DER)
+	if len(pc.CRLDistributionPoints) != 0 || len(pc.IssuingCertificateURL) != 0 {
+		t.Fatal("unchecked boxes added CDP/AIA")
+	}
+
+	// Renewing with the boxes checked after a base URL change.
+	s.BaseURLs = []string{"http://new.example"}
+	newID, err := h.Renew(ctx, leafID, RenewOptions{NotBefore: time.Now(), NotAfter: time.Now().AddDate(1, 0, 0),
+		PubCDP: true, PubAIA: true}, kr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = h.Snapshot(ctx)
+	nc, _ := x509.ParseCertificate(findCert(snap, newID).DER)
+	if got := strings.Join(nc.CRLDistributionPoints, " "); got != "http://new.example/"+id+".crl http://other.example/x.crl" {
+		t.Fatalf("renewed CDP %s", got)
+	}
+	if got := strings.Join(nc.IssuingCertificateURL, " "); got != "http://new.example/"+id+".crt" {
+		t.Fatalf("renewed AIA %s", got)
+	}
+	// Unchecked: copied as it was.
+	keptID, _ := h.Renew(ctx, leafID, RenewOptions{NotBefore: time.Now(), NotAfter: time.Now().AddDate(1, 0, 0)}, kr, nil)
+	snap, _ = h.Snapshot(ctx)
+	kc, _ := x509.ParseCertificate(findCert(snap, keptID).DER)
+	if strings.Join(kc.CRLDistributionPoints, " ") != wantCDP {
+		t.Fatal("renewal without the boxes changed the CDP")
 	}
 }

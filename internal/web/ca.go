@@ -315,7 +315,7 @@ func (s *Server) renewPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "renew", &page{Title: "renew.title", Tab: "certs", Error: r.URL.Query().Get("error"), Data: map[string]any{
 		"C": c, "Self": c.IssuerID == c.ID, "Reasons": reasonChoices(), "Now": nowLocal(),
 		"NotBefore": now.Format("2006-01-02T15:04"), "NotAfter": now.AddDate(0, 0, days).Format("2006-01-02T15:04"),
-		"NoExpiry": info.NoExpiry,
+		"NoExpiry": info.NoExpiry, "Published": s.published() && c.IssuerID != c.ID && c.IssuerID != 0,
 	}})
 }
 
@@ -327,7 +327,8 @@ func (s *Server) renewSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	ds := dbSession(r)
 	g := r.PostFormValue
-	o := store.RenewOptions{NoExpiry: g("noexpiry") != "", KeepSerial: g("keepserial") != "", Replace: g("replace") != ""}
+	o := store.RenewOptions{NoExpiry: g("noexpiry") != "", KeepSerial: g("keepserial") != "", Replace: g("replace") != "",
+		PubCDP: g("pubcdp") != "", PubAIA: g("pubaia") != ""}
 	var err error
 	if o.NotBefore, err = parseLocal(g("notbefore")); err == nil {
 		o.NotAfter, err = parseLocal(g("notafter"))

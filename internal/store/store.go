@@ -185,6 +185,10 @@ type Store struct {
 	// afterwards.
 	conf      map[string]Configured
 	confNames []string // in the order of the configuration
+
+	// BaseURLs are where CRLs and CA certificates are published (config
+	// crl.base_urls); set before the store is used.
+	BaseURLs []string
 }
 
 // Configured is a database listed in the configuration file.

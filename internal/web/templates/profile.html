@@ -49,6 +49,13 @@
       {{if and .Data.CAOnly (not $c.Signers)}}<span class="warn small">{{T "profile.noca"}} <a href="/db/{{$db}}/create/root-ca">{{T "profile.root-ca"}}</a></span>{{end}}
     </div>
     {{end}}
+    {{if and .Data.Published (not .Data.SelfOnly)}}
+    <div class="field">
+      <span>{{T "editor.published"}}</span>
+      <label><input type="checkbox" name="pubcdp" value="1"{{if $q.PubCDP}} checked{{end}}> {{T "editor.pubcdp"}}</label>
+      <label><input type="checkbox" name="pubaia" value="1"{{if $q.PubAIA}} checked{{end}}> {{T "editor.pubaia"}}</label>
+    </div>
+    {{end}}
     <div class="field">
       <label for="validity">{{T "profile.validity"}}</label>
       <select id="validity" name="validity">{{range .Data.Validities}}<option value="{{.Value}}"{{if eq .Value $q.Validity}} selected{{end}}>{{.Label}}</option>{{end}}</select>

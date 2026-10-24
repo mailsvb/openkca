@@ -86,3 +86,54 @@ func TestMirrorExtensions(t *testing.T) {
 		}
 	}
 }
+
+// TestReplacePublished: a renewal swaps the issuer's published URLs (old
+// base URLs included) for the current ones and keeps other entries.
+func TestReplacePublished(t *testing.T) {
+	const id = "0f0e0d0c-0b0a-4908-8706-050403020100"
+	old, err := BuildExtensions(ExtSpec{
+		CRLMirrors: []string{"http://old.example/" + id + ".crl"},
+		CRLDist:    "URI:http://other.example/y.crl",
+		CAIssuers:  []string{"http://old.example/" + id + ".crt"},
+		AuthInfAcc: "OCSP;URI:http://ocsp.example, caIssuers;URI:http://keep.example/ca.crt",
+	}, ExtContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crl, cert := PublishedURLs([]string{"http://new.example", "http://int.lan"}, id)
+	exts, err := ReplacePublished(old, id, crl, cert, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := BuildExtensions(ExtSpec{
+		CRLMirrors: crl, CRLDist: "URI:http://other.example/y.crl",
+		CAIssuers: cert, AuthInfAcc: "OCSP;URI:http://ocsp.example, caIssuers;URI:http://keep.example/ca.crt",
+	}, ExtContext{})
+	if len(exts) != len(want) {
+		t.Fatalf("%d extensions, want %d", len(exts), len(want))
+	}
+	for i := range want {
+		if !exts[i].Id.Equal(want[i].Id) || string(exts[i].Value) != string(want[i].Value) {
+			t.Fatalf("extension %v differs", want[i].Id)
+		}
+	}
+	// Only AIA: the CDP stays as it was.
+	exts, _ = ReplacePublished(old, id, crl, cert, false, true)
+	for i, e := range exts {
+		if e.Id.Equal(oidCRLDP) && string(e.Value) != string(old[i].Value) {
+			t.Fatal("CDP changed")
+		}
+	}
+	// Without base URLs, the published entries are removed; with nothing
+	// left, the extension goes.
+	onlyPub, _ := BuildExtensions(ExtSpec{CRLMirrors: []string{"http://old.example/" + id + ".crl"}}, ExtContext{})
+	exts, _ = ReplacePublished(onlyPub, id, nil, nil, true, true)
+	if len(exts) != 0 {
+		t.Fatalf("left %v", exts)
+	}
+	// A certificate without CDP/AIA gets them.
+	exts, _ = ReplacePublished(nil, id, crl, cert, true, true)
+	if len(exts) != 2 {
+		t.Fatalf("added %d", len(exts))
+	}
+}

@@ -50,9 +50,9 @@ func (f *editorForm) applyProfile(p *profile, snap *gcadb.Snapshot) {
 	if f.KeyMode != "existing" && f.FromReq == 0 {
 		f.NewKey = p.Key
 	}
-	san := f.Ext.SubAltName
+	san, pubCDP, pubAIA := f.Ext.SubAltName, f.Ext.PubCDP, f.Ext.PubAIA
 	f.Ext = p.ext(f.keyAlgorithm(snap))
-	f.Ext.SubAltName = san
+	f.Ext.SubAltName, f.Ext.PubCDP, f.Ext.PubAIA = san, pubCDP, pubAIA
 	v := p.defaultValidity()
 	f.ValidN, f.ValidUnit, f.NotAfter, f.Midnight, f.NoExpiry = v.N, v.Unit, "", false, false
 	f.Hash = store.Hash(snap)
@@ -120,10 +120,10 @@ func (f *editorForm) summaries(t func(string, ...any) string, snap *gcadb.Snapsh
 	if len(e.EKU) > 0 {
 		parts = append(parts, strings.Join(e.EKU, ", "))
 	}
-	if e.CRLDist != "" {
+	if e.CRLDist != "" || e.PubCDP && f.Kind != "request" {
 		parts = append(parts, "CRL")
 	}
-	if e.AuthInfAcc != "" {
+	if e.AuthInfAcc != "" || e.PubAIA && f.Kind != "request" {
 		parts = append(parts, "AIA")
 	}
 	s.Ext = strings.Join(parts, " · ")

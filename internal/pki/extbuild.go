@@ -36,6 +36,11 @@ type ExtSpec struct {
 	NSBaseURL, NSRevocationURL, NSCARevocationURL, NSRenewalURL, NSCAPolicyURL, NSSSLServerName string
 	AdvExt                                                                                      string // "adv_ext": further extensions in OpenSSL config syntax
 
+	// PubCDP and PubAIA ask for the issuer's CRL and certificate as go-ca
+	// publishes them (config crl.base_urls); store resolves them into
+	// CRLMirrors and CAIssuers when the issuer is known.
+	PubCDP, PubAIA bool
+
 	// CRLMirrors are URLs of one CRL, put as mirrors into one distribution
 	// point ahead of CRLDist's (go-ca's published CRL of the issuer).
 	CRLMirrors []string
