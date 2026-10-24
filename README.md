@@ -108,15 +108,17 @@ XCA.
 
 - Export in every format XCA offers except the OpenVPN tls-auth key:
   certificates as PEM, PEM chain, PEM with key (plain or PKCS#8), DER,
-  PKCS#7 (single, selected, chain), PKCS#12 (with or without chain, using
-  the `pkcs12_enc_algo` option: AES-256-CBC by default, PBE-SHA1-3DES and
-  RC2-40 for old Windows and Java), OpenVPN inline tags, OpenSSL config,
+  PKCS#7 (single, selected, chain), PKCS#12 (with or without chain, every
+  certificate under its name, using the `pkcs12_enc_algo` option:
+  AES-256-CBC by default, PBE-SHA1-3DES and RC2-40 for old Windows and
+  Java), OpenVPN inline tags, OpenSSL config,
   vCalendar reminders, JSON Web Key and the OpenSSL index; keys as PEM
   (public, private, encrypted), DER, PKCS#8, SSH, PVK and JWK; requests,
   CRLs and templates in their formats. Only the formats that can hold a
-  key are offered: PKCS#12 takes RSA, NIST ECDSA, Ed25519 and ML-DSA keys,
-  encrypted traditional PEM RSA, EC and DSA keys; keys without a
-  traditional form are written as PKCS#8, as OpenSSL 3 does.
+  key are offered: encrypted traditional PEM takes RSA, EC and DSA keys;
+  keys without a traditional form are written as PKCS#8, as OpenSSL 3
+  does. PKCS#12 takes every key type; OpenSSL reads the post-quantum ones
+  from version 3.5 on, and nothing outside go-ca reads composite keys yet.
 - Beyond XCA, keys also export as OpenSSH private keys with their comment
   (plain or passphrase protected, as ssh-keygen writes them), as PuTTY
   private keys (`.ppk` version 3 or 2, plain or encrypted) and as RFC 4716
@@ -126,7 +128,9 @@ XCA.
   Argon2 and AES-256-OCB for v6) and as revocation certificates. Select
   several items in a list to export them together; text formats can be
   shown and copied.
-- Import PEM (any number of blocks), DER, PKCS#7, PKCS#8, PKCS#12, SSH
+- Import PEM (any number of blocks), DER, PKCS#7, PKCS#8, PKCS#12 (any
+  number of keys and certificates, also certificates or a key alone; a key
+  of an unknown type is reported and its certificate still imported), SSH
   keys (`authorized_keys` lines, RFC 4716 public keys, OpenSSH private
   keys in any cipher ssh-keygen offers except 3DES and ChaCha20, PuTTY
   `.ppk` files of version 2 and 3), OpenPGP keys (armored or binary, any

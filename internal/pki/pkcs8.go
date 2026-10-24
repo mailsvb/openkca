@@ -90,30 +90,85 @@ func DecryptPKCS8(blob, password []byte) ([]byte, error) {
 	if !epki.Algo.Algorithm.Equal(oidPBES2) {
 		return nil, fmt.Errorf("pkcs8: unsupported encryption %v", epki.Algo.Algorithm)
 	}
+	plain, err := PBES2Decrypt(epki.Algo.Parameters.FullBytes, epki.EncryptedData, password)
+	if err != nil {
+		return nil, err
+	}
+	// A wrong password usually fails the padding check; make sure the
+	// result is DER as well.
+	var raw asn1.RawValue
+	if rest, err := asn1.Unmarshal(plain, &raw); err != nil || len(rest) > 0 {
+		clear(plain)
+		return nil, ErrWrongPassword
+	}
+	return plain, nil
+}
+
+// OIDPBES2 identifies PBES2 (RFC 8018) in an AlgorithmIdentifier.
+var OIDPBES2 = oidPBES2
+
+// PBKDF2Params are parsed PBKDF2-params (RFC 8018 A.2).
+type PBKDF2Params struct {
+	Salt       []byte
+	Iterations int
+	KeyLength  int // 0 when the parameters do not state it
+	PRF        func() hash.Hash
+}
+
+// Key derives keyLen bytes from password.
+func (p *PBKDF2Params) Key(password []byte, keyLen int) []byte {
+	return pbkdf2.Key(password, p.Salt, p.Iterations, keyLen, p.PRF)
+}
+
+// ParsePBKDF2 reads DER PBKDF2-params with an HMAC-SHA-1 or SHA-2 PRF and a
+// plausible iteration count.
+func ParsePBKDF2(params []byte) (*PBKDF2Params, error) {
+	var kdf pbkdf2Params
+	if rest, err := asn1.Unmarshal(params, &kdf); err != nil || len(rest) > 0 {
+		return nil, fmt.Errorf("PBKDF2 parameters: %v", err)
+	}
+	prf := sha1.New // the default
+	if alg := kdf.PRF.Algorithm; len(alg) > 0 {
+		if prf = HMACHash(alg); prf == nil {
+			return nil, fmt.Errorf("unsupported PBKDF2 PRF %v", alg)
+		}
+	}
+	if kdf.IterationCount < 1 || kdf.IterationCount > 10_000_000 {
+		return nil, errors.New("implausible PBKDF2 iteration count")
+	}
+	return &PBKDF2Params{Salt: kdf.Salt, Iterations: kdf.IterationCount, KeyLength: kdf.KeyLength, PRF: prf}, nil
+}
+
+// HMACHash returns the hash of an hmacWithSHA* AlgorithmIdentifier OID.
+func HMACHash(alg asn1.ObjectIdentifier) func() hash.Hash {
+	switch {
+	case alg.Equal(oidHMACSHA1):
+		return sha1.New
+	case alg.Equal(oidHMACSHA224):
+		return sha256.New224
+	case alg.Equal(oidHMACSHA256):
+		return sha256.New
+	case alg.Equal(oidHMACSHA384):
+		return sha512.New384
+	case alg.Equal(oidHMACSHA512):
+		return sha512.New
+	}
+	return nil
+}
+
+// PBES2Decrypt decrypts data with DER PBES2-params (PBKDF2 with AES-CBC or
+// 3DES-CBC) and removes the padding. A padding error is ErrWrongPassword.
+func PBES2Decrypt(params, data, password []byte) ([]byte, error) {
 	var p pbes2Params
-	if _, err := asn1.Unmarshal(epki.Algo.Parameters.FullBytes, &p); err != nil {
+	if _, err := asn1.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("pkcs8: PBES2 parameters: %w", err)
 	}
 	if !p.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
 		return nil, fmt.Errorf("pkcs8: unsupported key derivation %v", p.KeyDerivationFunc.Algorithm)
 	}
-	var kdf pbkdf2Params
-	if _, err := asn1.Unmarshal(p.KeyDerivationFunc.Parameters.FullBytes, &kdf); err != nil {
-		return nil, fmt.Errorf("pkcs8: PBKDF2 parameters: %w", err)
-	}
-	prf := sha1.New
-	switch alg := kdf.PRF.Algorithm; {
-	case len(alg) == 0 || alg.Equal(oidHMACSHA1):
-	case alg.Equal(oidHMACSHA224):
-		prf = sha256.New224
-	case alg.Equal(oidHMACSHA256):
-		prf = sha256.New
-	case alg.Equal(oidHMACSHA384):
-		prf = sha512.New384
-	case alg.Equal(oidHMACSHA512):
-		prf = sha512.New
-	default:
-		return nil, fmt.Errorf("pkcs8: unsupported PRF %v", alg)
+	kdf, err := ParsePBKDF2(p.KeyDerivationFunc.Parameters.FullBytes)
+	if err != nil {
+		return nil, fmt.Errorf("pkcs8: %w", err)
 	}
 	var keyLen int
 	var newCipher func([]byte) (cipher.Block, error)
@@ -133,20 +188,10 @@ func DecryptPKCS8(blob, password []byte) ([]byte, error) {
 	if _, err := asn1.Unmarshal(p.EncryptionScheme.Parameters.FullBytes, &iv); err != nil {
 		return nil, fmt.Errorf("pkcs8: IV: %w", err)
 	}
-	if kdf.IterationCount < 1 || kdf.IterationCount > 10_000_000 {
-		return nil, errors.New("pkcs8: implausible iteration count")
-	}
-	key := pbkdf2.Key(password, kdf.Salt, kdf.IterationCount, keyLen, prf)
+	key := kdf.Key(password, keyLen)
 	defer clear(key)
-	plain, err := cbcDecrypt(newCipher, key, iv, epki.EncryptedData)
+	plain, err := cbcDecrypt(newCipher, key, iv, data)
 	if err != nil {
-		return nil, ErrWrongPassword
-	}
-	// A wrong password usually fails the padding check above; make sure the
-	// result is DER as well.
-	var raw asn1.RawValue
-	if rest, err := asn1.Unmarshal(plain, &raw); err != nil || len(rest) > 0 {
-		clear(plain)
 		return nil, ErrWrongPassword
 	}
 	return plain, nil
