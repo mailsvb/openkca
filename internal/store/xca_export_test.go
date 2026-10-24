@@ -17,14 +17,14 @@ func TestExportForXCA(t *testing.T) {
 	}
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
+	pw := testPassword
 	p := buildSet(t, s, "xport", pw)
 	snap, _ := p.h.Snapshot(ctx)
 	out := dir + "/export"
 	os.MkdirAll(out, 0o755)
 	for _, id := range []int64{p.root, p.sub, p.leaf, p.edLeaf, p.req, p.crl, p.leafKey, p.edKey, p.tmpl, p.pubK} {
 		for _, f := range ExportFormats(snap, []int64{id}) {
-			res, err := p.h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), PEMComment: true, DBPass: pw})
+			res, err := p.h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), PEMComment: true, Keyring: krOf(t, p.h)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -36,7 +36,7 @@ func TestExportForXCA(t *testing.T) {
 	}
 	for _, algo := range []string{"AES-256-CBC", "PBE-SHA1-RC2-40"} {
 		p.h.SetSettings(ctx, map[string]string{"pkcs12_enc_algo": algo})
-		res, err := p.h.Export(ctx, ExportRequest{Format: 14, IDs: []int64{p.leaf}, Password: []byte("export"), DBPass: pw})
+		res, err := p.h.Export(ctx, ExportRequest{Format: 14, IDs: []int64{p.leaf}, Password: []byte("export"), Keyring: krOf(t, p.h)})
 		if err != nil {
 			t.Fatal(err)
 		}

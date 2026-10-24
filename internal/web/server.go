@@ -13,14 +13,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/auth"
 	"github.com/mailsvb/go-ca/internal/i18n"
+	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/session"
 	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/xdbpass"
+	"github.com/mailsvb/go-ca/internal/vault"
 )
 
 //go:embed templates/*.html
@@ -46,17 +48,18 @@ type Config struct {
 
 // Server is the HTTP handler.
 type Server struct {
-	cfg       Config
-	store     *store.Store
-	auth      *auth.Sessions
-	dbs       *session.Manager
-	srvLimit  *auth.Limiter // server password, per client IP
-	dbLimit   *auth.Limiter // database passwords, per database
-	keyLimit  *auth.Limiter // own key passwords, per database session
-	dh        dhJobs
-	templates map[string]*template.Template // by language tag
-	log       *slog.Logger
-	mux       *http.ServeMux
+	cfg        Config
+	store      *store.Store
+	auth       *auth.Sessions
+	dbs        *session.Manager
+	srvLimit   *auth.Limiter // server password, per client IP
+	dbLimit    *auth.Limiter // database passwords, per database
+	keyLimit   *auth.Limiter // own key passwords, per database session
+	loginSlots chan struct{} // concurrent server password checks
+	dh         dhJobs
+	templates  map[string]*template.Template // by language tag
+	log        *slog.Logger
+	mux        *http.ServeMux
 }
 
 // New builds the server.
@@ -71,14 +74,15 @@ func New(cfg Config) (*Server, error) {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{
-		cfg:      cfg,
-		store:    cfg.Store,
-		auth:     auth.NewSessions(cfg.IdleTimeout),
-		dbs:      session.NewManager(cfg.IdleTimeout),
-		srvLimit: auth.NewLimiter(5, time.Minute),
-		dbLimit:  auth.NewLimiter(5, time.Minute),
-		keyLimit: auth.NewLimiter(5, time.Minute),
-		log:      cfg.Logger,
+		cfg:        cfg,
+		store:      cfg.Store,
+		auth:       auth.NewSessions(cfg.IdleTimeout),
+		dbs:        session.NewManager(cfg.IdleTimeout),
+		srvLimit:   auth.NewLimiter(5, time.Minute),
+		dbLimit:    auth.NewLimiter(5, time.Minute),
+		keyLimit:   auth.NewLimiter(5, time.Minute),
+		loginSlots: make(chan struct{}, 2),
+		log:        cfg.Logger,
 	}
 	s.dh.m = map[string]*dhJob{}
 	s.auth.OnEnd = s.dbs.EndServer
@@ -122,7 +126,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /dh/cancel", s.requireServer(s.dhCancel))
 	m.HandleFunc("GET /dh/download", s.requireServer(s.dhDownload))
 	m.HandleFunc("POST /db/{name}/login", s.requireServer(s.dbLogin))
-	m.HandleFunc("POST /db/{name}/logout", s.requireServer(s.requireDB(s.dbLogout)))
+	m.HandleFunc("POST /db/{name}/logout", s.requireServer(s.requireDBSession(s.dbLogout)))
+	m.HandleFunc("GET /db/{name}/converting", s.requireServer(s.requireDBSession(s.convertingPage)))
 	m.HandleFunc("GET /db/{name}/{$}", s.requireServer(s.requireDB(s.dbHome)))
 	m.HandleFunc("GET /db/{name}/options", s.requireServer(s.requireDB(s.options)))
 	m.HandleFunc("GET /db/{name}/item/{id}", s.requireServer(s.requireDB(s.item)))
@@ -259,8 +264,9 @@ func (s *Server) requireServer(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// requireDB resolves the database session from the cookie scoped to /db/{name}/.
-func (s *Server) requireDB(next http.HandlerFunc) http.HandlerFunc {
+// requireDBSession resolves the database session from the cookie scoped
+// to /db/{name}/, also while the database is still being converted.
+func (s *Server) requireDBSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		var ds *session.Session
@@ -278,6 +284,26 @@ func (s *Server) requireDB(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxDB, ds)))
 	}
+}
+
+// requireDB is requireDBSession for sessions that have their keyring: a
+// session whose database is still being converted is sent to the progress
+// page.
+func (s *Server) requireDB(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireDBSession(func(w http.ResponseWriter, r *http.Request) {
+		ds := dbSession(r)
+		if !ds.Ready() {
+			target := dbPath(ds.DBName) + "converting"
+			if isHTMX(r) {
+				w.Header().Set("HX-Redirect", target)
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			http.Redirect(w, r, target, http.StatusSeeOther)
+			return
+		}
+		next(w, r)
+	})
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value, path string, maxAge int) {
@@ -303,10 +329,21 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusTooManyRequests, "login", p)
 		return
 	}
+	// Argon2id takes 64 MiB per run: limit the runs in parallel, and count
+	// the attempt before hashing so that parallel requests cannot pass the
+	// rate limit together.
+	select {
+	case s.loginSlots <- struct{}{}:
+		defer func() { <-s.loginSlots }()
+	default:
+		p.Error = "login.error.busy"
+		s.render(w, r, http.StatusTooManyRequests, "login", p)
+		return
+	}
+	s.srvLimit.Fail(ip)
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
 	if !auth.CheckPassword(s.cfg.PasswordHash, pw) {
-		s.srvLimit.Fail(ip)
 		s.log.Warn("server login failed", "ip", ip)
 		p.Error = "login.error.password"
 		s.render(w, r, http.StatusUnauthorized, "login", p)
@@ -338,7 +375,7 @@ func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 	open := s.dbs.OpenDatabases(serverSession(r).ID)
 	p := &page{Title: "databases.title", Data: map[string]any{
 		"Databases": infos, "Open": open, "Selected": r.URL.Query().Get("db"),
-		"MaxUploadMB": s.cfg.MaxUpload >> 20,
+		"MaxUploadMB": s.cfg.MaxUpload >> 20, "MinLen": store.MinPasswordLen,
 	}}
 	q := r.URL.Query()
 	if e := q.Get("error"); strings.HasPrefix(e, "dblogin.error.") || strings.HasPrefix(e, "create.error.") || strings.HasPrefix(e, "import.error.") {
@@ -371,52 +408,111 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Count the attempt before the (slow) check, as for the server login.
+	s.dbLimit.Fail(name)
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
-	stored, err := h.DB.Setting(r.Context(), "pwhash")
-	if err != nil {
-		h.Release()
-		s.fail(w, r, err)
-		return
-	}
-	ok, upgrade := xdbpass.Verify(stored, pw)
-	if !ok {
-		h.Release()
-		s.dbLimit.Fail(name)
-		s.log.Warn("database login failed", "db", name, "ip", clientIP(r))
-		back("dblogin.error.password")
-		return
+	var kr *vault.Keyring
+	var conv *store.Conversion
+	if h.DB.Current() {
+		kr, err = h.Unlock(r.Context(), pw)
+		if errors.Is(err, pki.ErrWrongPassword) {
+			h.Release()
+			s.log.Warn("database login failed", "db", name, "ip", clientIP(r))
+			back("dblogin.error.password")
+			return
+		}
+		if err != nil {
+			h.Release()
+			s.log.Error("database unlock failed", "db", name, "err", err)
+			back("dblogin.error.unsupported")
+			return
+		}
+	} else {
+		ok, err := h.VerifyLegacyPassword(r.Context(), pw)
+		if err != nil {
+			h.Release()
+			s.fail(w, r, err)
+			return
+		}
+		if !ok {
+			h.Release()
+			s.log.Warn("database login failed", "db", name, "ip", clientIP(r))
+			back("dblogin.error.password")
+			return
+		}
+		// The conversion re-encrypts every key with a new DEK in the
+		// background; the session waits for it on the progress page.
+		conv = h.StartConversion(pw, vault.Default)
+		s.log.Info("database conversion started", "db", name, "ip", clientIP(r))
 	}
 	s.dbLimit.Reset(name)
-	if upgrade {
-		// XCA replaces S and MD5 hashes with the T form after a correct login.
-		if err := h.DB.SetSetting(r.Context(), "pwhash", xdbpass.NewHash(pw)); err != nil {
-			s.log.Error("password hash upgrade failed", "db", name, "err", err)
-		} else {
-			s.log.Info("password hash upgraded to T form", "db", name)
-		}
-	}
-	rep, err := h.PrepareAfterLogin(r.Context(), pw)
-	if err != nil {
-		h.Release()
-		s.log.Error("database preparation failed", "db", name, "err", err)
-		back("dblogin.error.upgrade")
-		return
-	}
-	if rep.Backup != "" {
-		s.log.Info("database prepared", "db", name, "backup", rep.Backup, "upgraded_from", rep.UpgradedFrom,
-			"converted_keys", rep.ConvertedKeys, "strengthened_keys", rep.Strengthened)
-	}
-	if rep.OwnPassLegacy > 0 {
-		s.log.Warn("legacy keys with their own password left unconverted", "db", name, "count", rep.OwnPassLegacy)
-	}
 	if c, err := r.Cookie(dbCookie); err == nil {
 		s.dbs.End(c.Value)
 	}
-	ds := s.dbs.Create(serverSession(r).ID, name, h, pw)
+	ds := s.dbs.Create(serverSession(r).ID, name, h, kr, conv)
 	s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
 	s.log.Info("database opened", "db", name, "ip", clientIP(r))
+	if conv != nil {
+		http.Redirect(w, r, dbPath(name)+"converting", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, dbPath(name), http.StatusSeeOther)
+}
+
+// convertingPage shows the progress of a database conversion; htmx polls
+// it. When the conversion has finished, the session takes its keyring and
+// the browser continues to the database; when it failed, the session ends.
+func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
+	ds := dbSession(r)
+	if ds.Ready() {
+		s.redirect(w, r, dbPath(ds.DBName))
+		return
+	}
+	conv := ds.Conversion()
+	if conv == nil {
+		s.dbs.End(ds.ID)
+		s.redirect(w, r, "/?db="+url.QueryEscape(ds.DBName)+"&error=dblogin.error.upgrade")
+		return
+	}
+	// Small databases convert in well under a second: wait a moment
+	// instead of showing the progress page at once.
+	wait := time.NewTimer(time.Second)
+	defer wait.Stop()
+	select {
+	case <-conv.Finished():
+	case <-wait.C:
+	}
+	select {
+	case <-conv.Finished():
+		kr, rep, err := conv.Result()
+		if err != nil {
+			s.dbs.End(ds.ID)
+			s.redirect(w, r, "/?db="+url.QueryEscape(ds.DBName)+"&error=dblogin.error.upgrade")
+			return
+		}
+		ds.SetKeyring(kr)
+		q := ""
+		if rep.OwnPassLegacy > 0 || rep.Unopened > 0 {
+			q = "?notice=converted.ownpass&n=" + strconv.Itoa(rep.OwnPassLegacy+rep.Unopened)
+		}
+		s.redirect(w, r, dbPath(ds.DBName)+"keys"+q)
+		return
+	default:
+	}
+	done, total := conv.Progress()
+	s.render(w, r, http.StatusOK, "converting", &page{Title: "converting.title",
+		Data: map[string]any{"Name": ds.DBName, "Done": done, "Total": total, "fragment": "convstatus"}})
+}
+
+// redirect sends the browser on, with HX-Redirect for htmx requests.
+func (s *Server) redirect(w http.ResponseWriter, r *http.Request, target string) {
+	if isHTMX(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func (s *Server) dbLogout(w http.ResponseWriter, r *http.Request) {

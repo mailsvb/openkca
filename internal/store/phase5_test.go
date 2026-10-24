@@ -53,7 +53,7 @@ func TestXCATemplatesApply(t *testing.T) {
 		p := IssueParams{Name: "from " + st.Name, Subject: []pki.DNAttr{{Name: "CN", Value: "tmpl.example.org"}},
 			NewKey: &pki.KeySpec{Type: "EC", Curve: "P-256"}, NotBefore: time.Now(), NotAfter: time.Now().AddDate(1, 0, 0),
 			Hash: "sha256", Ext: d.Ext}
-		id, err := h.Issue(ctx, p, []byte("secret"))
+		id, err := h.Issue(ctx, p, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: %v", st.Name, err)
 		}

@@ -13,8 +13,8 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// PBKDF2Iterations is the iteration count for new encrypted keys, both in
-// the database and in encrypted PKCS#8 exports. The scheme is OpenSSL's
+// PBKDF2Iterations is the iteration count for encrypted PKCS#8 exports
+// (keys in the database are sealed by package vault). The scheme is OpenSSL's
 // (PBES2, PBKDF2-HMAC-SHA256, AES-256-CBC), but OpenSSL and XCA write only
 // 2048 iterations, which is far too cheap to guess passwords against today.
 // 600 000 follows OWASP's recommendation for PBKDF2-HMAC-SHA256; OpenSSL,

@@ -151,9 +151,8 @@ func (s *Server) newPGPKey(w http.ResponseWriter, r *http.Request) {
 	if sub := subkeySpec(*spec); subkey && sub != nil {
 		subs = append(subs, store.PGPSubkey{Spec: sub, Name: s.printer(r).T("pgpkey.subkey.name", name), Usage: codec.PGPEncrypt})
 	}
-	pw := ds.Password()
-	defer clear(pw)
-	id, err := ds.Handle.GeneratePGPKey(r.Context(), name, "", *spec, subs, p, pw)
+	kr := ds.Keyring()
+	id, err := ds.Handle.GeneratePGPKey(r.Context(), name, "", *spec, subs, p, kr)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -347,9 +346,8 @@ func (s *Server) pgpCreate(w http.ResponseWriter, r *http.Request) {
 				subs = append(subs, store.PGPSubkey{Spec: spec, Name: s.printer(r).T("pgpkey.subkey.name", f.Key.Name), Usage: codec.PGPEncrypt})
 			}
 		}
-		pw := ds.Password()
-		defer clear(pw)
-		if err := ds.Handle.CreatePGP(r.Context(), f.Key.ID, subs, p, pw, keyPasswords(r, snap)); err != nil {
+		kr := ds.Keyring()
+		if err := ds.Handle.CreatePGP(r.Context(), f.Key.ID, subs, p, kr, keyPasswords(r, snap)); err != nil {
 			return "", "", err
 		}
 		s.log.Info("OpenPGP certificate created", "db", ds.DBName, "id", f.Key.ID, "version", p.Version)
@@ -387,9 +385,8 @@ func (s *Server) pgpAddSubkey(w http.ResponseWriter, r *http.Request) {
 			}
 			sub.KeyID = id
 		}
-		pw := ds.Password()
-		defer clear(pw)
-		if err := ds.Handle.AddPGPSubkey(r.Context(), f.Key.ID, sub, pw, keyPasswords(r, snap)); err != nil {
+		kr := ds.Keyring()
+		if err := ds.Handle.AddPGPSubkey(r.Context(), f.Key.ID, sub, kr, keyPasswords(r, snap)); err != nil {
 			return "", "", err
 		}
 		s.log.Info("OpenPGP subkey added", "db", ds.DBName, "id", f.Key.ID, "subkey", sub.KeyID, "usage", usage)
@@ -456,9 +453,8 @@ func (s *Server) pgpKeyDownload(w http.ResponseWriter, r *http.Request) {
 		fail("export.error.ratelimit", "")
 		return
 	}
-	dbPass := ds.Password()
-	defer clear(dbPass)
-	req := store.ExportRequest{IDs: []int64{f.Key.ID}, Password: pw, DBPass: dbPass, Keys: keyPasswords(r, snap), T: s.printer(r).T}
+	kr := ds.Keyring()
+	req := store.ExportRequest{IDs: []int64{f.Key.ID}, Password: pw, Keyring: kr, Keys: keyPasswords(r, snap), T: s.printer(r).T}
 	var res *store.ExportResult
 	switch f.Flavor {
 	case "bundle":

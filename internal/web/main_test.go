@@ -6,6 +6,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 )
 
 // TestMain lowers the PBKDF2 iteration count for new encrypted keys and
@@ -15,5 +16,6 @@ import (
 func TestMain(m *testing.M) {
 	pki.PBKDF2Iterations = 2048
 	codec.PKCS12Iterations = 2048
+	vault.Default = vault.Params{MemoryKiB: 64, Time: 1, Threads: 1}
 	os.Exit(m.Run())
 }

@@ -25,8 +25,8 @@ func TestPGPKeyPages(t *testing.T) {
 		}
 		return r
 	}
-	post("/", url.Values{"name": {"pk"}, "password": {"pw"}, "password2": {"pw"}})
-	post("/db/pk/login", url.Values{"password": {"pw"}})
+	post("/", url.Values{"name": {"pk"}, "password": {"password1"}, "password2": {"password1"}})
+	post("/db/pk/login", url.Values{"password": {"password1"}})
 	r, _ := c.Get(ts.URL + "/db/pk/keys")
 	if b := body(t, r); !strings.Contains(b, `href="/db/pk/new/pgpkey"`) {
 		t.Fatal("no New OpenPGP key button")

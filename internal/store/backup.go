@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -111,4 +112,13 @@ func (s *Store) rotateBackups(name string) error {
 		}
 	}
 	return nil
+}
+
+// vacuum rebuilds the database file after keys were re-encrypted, so that
+// no page of the file holds an old ciphertext. Failure is logged: the data
+// is intact either way.
+func (h *Handle) vacuum(ctx context.Context) {
+	if _, err := h.DB.SQL.ExecContext(ctx, "VACUUM"); err != nil {
+		slog.Warn("vacuum failed", "db", h.Name, "err", err)
+	}
 }

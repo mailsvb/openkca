@@ -579,9 +579,8 @@ func (s *Server) editorSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.KeyPass = keyPasswords(r, snap)
-	pw := ds.Password()
-	defer clear(pw)
-	id, err := ds.Handle.Issue(r.Context(), p, pw)
+	kr := ds.Keyring()
+	id, err := ds.Handle.Issue(r.Context(), p, kr)
 	var miss *store.MissingAttrError
 	switch {
 	case errors.Is(err, store.ErrNeedKeyPassword):
@@ -614,9 +613,8 @@ func (s *Server) newKey(w http.ResponseWriter, r *http.Request) {
 			Error: "newkey.error.input", Data: data})
 		return
 	}
-	pw := ds.Password()
-	defer clear(pw)
-	id, err := ds.Handle.GenerateKey(r.Context(), name, "", *spec, pw)
+	kr := ds.Keyring()
+	id, err := ds.Handle.GenerateKey(r.Context(), name, "", *spec, kr)
 	if err != nil {
 		s.fail(w, r, err)
 		return

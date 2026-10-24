@@ -25,8 +25,12 @@
 <section class="card">
   <h2>{{T "dump.heading"}}</h2>
   <p class="muted">{{T "dump.help"}}</p>
-  <form method="post" action="/db/{{.DB.Name}}/dump" class="inline">
+  <form method="post" action="/db/{{.DB.Name}}/dump" class="stack">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="dump-pw">{{T "dump.password"}}</label>
+    <input type="password" id="dump-pw" name="password" autocomplete="new-password" required>
+    <label for="dump-pw2">{{T "dump.password2"}}</label>
+    <input type="password" id="dump-pw2" name="password2" autocomplete="new-password" required>
     <button type="submit" class="secondary">{{T "dump.button"}}</button>
   </form>
 </section>

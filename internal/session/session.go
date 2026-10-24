@@ -1,6 +1,8 @@
 // Package session keeps the database sessions: which browser has which
-// database open with which password. Passwords live only in memory and are
-// zeroed when a session ends.
+// database open with which keyring. A keyring (the database's unwrapped
+// DEK) lives only in memory and is wiped when its session ends. A session
+// whose database is still being converted has a conversion instead and
+// no keyring yet.
 package session
 
 import (
@@ -9,6 +11,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/auth"
 	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/go-ca/internal/vault"
 )
 
 // Session is one open database in one browser.
@@ -18,10 +21,11 @@ type Session struct {
 	DBName   string
 	Handle   *store.Handle
 
-	mu       sync.Mutex
-	password []byte
-	lastSeen time.Time
-	pending  Wipeable
+	mu         sync.Mutex
+	keyring    *vault.Keyring
+	conversion *store.Conversion
+	lastSeen   time.Time
+	pending    Wipeable
 }
 
 // Wipeable is per-session state that holds secrets (an import in review
@@ -45,25 +49,43 @@ func (s *Session) SetPending(v Wipeable) {
 	s.mu.Unlock()
 }
 
-// Password returns a copy of the database password; the caller should clear it.
-func (s *Session) Password() []byte {
+// Keyring returns the session's keyring, nil while the database is being
+// converted.
+func (s *Session) Keyring() *vault.Keyring {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]byte(nil), s.password...)
+	return s.keyring
 }
 
-// SetPassword replaces the stored database password.
-func (s *Session) SetPassword(pw []byte) {
+// SetKeyring replaces the keyring (after a password change, or when a
+// conversion has finished), wiping the previous one.
+func (s *Session) SetKeyring(kr *vault.Keyring) {
 	s.mu.Lock()
-	clear(s.password)
-	s.password = append([]byte(nil), pw...)
+	if s.keyring != nil && s.keyring != kr {
+		s.keyring.Wipe()
+	}
+	s.keyring = kr
+	s.conversion = nil
 	s.mu.Unlock()
 }
 
+// Conversion returns the conversion the session waits for, if any.
+func (s *Session) Conversion() *store.Conversion {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conversion
+}
+
+// Ready reports whether the session has its keyring.
+func (s *Session) Ready() bool { return s.Keyring() != nil }
+
 func (s *Session) wipe() {
 	s.mu.Lock()
-	clear(s.password)
-	s.password = nil
+	if s.keyring != nil {
+		s.keyring.Wipe()
+		s.keyring = nil
+	}
+	s.conversion = nil
 	if s.pending != nil {
 		s.pending.Wipe()
 		s.pending = nil
@@ -85,10 +107,10 @@ func NewManager(idle time.Duration) *Manager {
 }
 
 // Create starts a session. It takes ownership of h (released on End) and
-// copies password.
-func (m *Manager) Create(serverID, dbName string, h *store.Handle, password []byte) *Session {
+// of kr, or, for a database being converted, waits for conv.
+func (m *Manager) Create(serverID, dbName string, h *store.Handle, kr *vault.Keyring, conv *store.Conversion) *Session {
 	s := &Session{ID: auth.NewID(), ServerID: serverID, DBName: dbName, Handle: h,
-		password: append([]byte(nil), password...), lastSeen: time.Now()}
+		keyring: kr, conversion: conv, lastSeen: time.Now()}
 	m.mu.Lock()
 	m.m[s.ID] = s
 	m.mu.Unlock()

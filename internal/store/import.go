@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -92,7 +92,7 @@ var importOrder = map[int]int{xdb.TypeKey: 0, xdb.TypeCert: 1, xdb.TypeRequest: 
 // transaction: keys first so that certificates and requests link to them,
 // CRLs after the certificates so that revocations reach their CA. Names
 // are taken from the plans, which the caller may have edited.
-func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int, dbPass []byte, t Translator) ([]ImportResult, error) {
+func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int, kr *vault.Keyring, t Translator) ([]ImportResult, error) {
 	if t == nil {
 		t = func(k string, a ...any) string { return k }
 	}
@@ -116,9 +116,9 @@ func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int,
 				r.ID = p.Existing.ID
 			case ImportComplete:
 				r.ID = p.Existing.ID
-				err = h.completeKey(ctx, tx, p, dbPass, t)
+				err = h.completeKey(ctx, tx, p, kr, t)
 			default:
-				r.ID, err = insertObject(ctx, tx, p.Object, dbPass)
+				r.ID, err = insertObject(ctx, tx, p.Object, kr)
 			}
 			if err == nil && p.PGP != nil && r.ID != 0 {
 				err = setPGPCert(ctx, tx, r.ID, p.PGP)
@@ -134,8 +134,8 @@ func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int,
 	return results, err
 }
 
-func (h *Handle) completeKey(ctx context.Context, tx *xdb.Tx, p ImportPlan, dbPass []byte, t Translator) error {
-	blob, err := pki.EncryptPKCS8(p.Private, dbPass)
+func (h *Handle) completeKey(ctx context.Context, tx *xdb.Tx, p ImportPlan, kr *vault.Keyring, t Translator) error {
+	blob, err := kr.Seal(p.Private, p.Object.DER)
 	if err != nil {
 		return err
 	}
@@ -153,12 +153,12 @@ func (h *Handle) completeKey(ctx context.Context, tx *xdb.Tx, p ImportPlan, dbPa
 
 const sourceImported = 1
 
-func insertObject(ctx context.Context, tx *xdb.Tx, o codec.Object, dbPass []byte) (int64, error) {
+func insertObject(ctx context.Context, tx *xdb.Tx, o codec.Object, kr *vault.Keyring) (int64, error) {
 	switch o.Type {
 	case xdb.TypeKey:
 		k := xdb.NewKey{Name: o.Name, Comment: o.Comment, Source: sourceImported, KeyType: o.KeyType, Len: o.KeyBits, SPKI: o.DER}
 		if o.Private != nil {
-			blob, err := pki.EncryptPKCS8(o.Private, dbPass)
+			blob, err := kr.Seal(o.Private, o.DER)
 			if err != nil {
 				return 0, err
 			}

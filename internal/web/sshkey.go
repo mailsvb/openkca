@@ -46,9 +46,8 @@ func (s *Server) newSSHKey(w http.ResponseWriter, r *http.Request) {
 			Error: "newkey.error.input", Data: data})
 		return
 	}
-	pw := ds.Password()
-	defer clear(pw)
-	id, err := ds.Handle.GenerateKey(r.Context(), name, comment, *spec, pw)
+	kr := ds.Keyring()
+	id, err := ds.Handle.GenerateKey(r.Context(), name, comment, *spec, kr)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -151,10 +150,9 @@ func (s *Server) sshKeyDownload(w http.ResponseWriter, r *http.Request) {
 		fail("export.error.ratelimit")
 		return
 	}
-	dbPass := ds.Password()
-	defer clear(dbPass)
+	kr := ds.Keyring()
 	res, err := ds.Handle.SSHPair(r.Context(), f.Flavor, store.ExportRequest{IDs: []int64{f.Key.ID}, Password: pw,
-		DBPass: dbPass, Keys: keyPasswords(r, snap), T: s.printer(r).T})
+		Keyring: kr, Keys: keyPasswords(r, snap), T: s.printer(r).T})
 	switch {
 	case errors.Is(err, store.ErrNeedKeyPassword):
 		if r.PostFormValue("keypass") != "" {

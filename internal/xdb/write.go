@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // XCASchema is the newest XCA schema; XCA databases are upgraded to it
@@ -18,8 +20,10 @@ const XCASchema = 8
 const LockoutSchema = 1000
 
 // CurrentSchema is go-ca's own schema version (the "gca_schema" setting),
-// the one this package creates and upgrades to.
-const CurrentSchema = 1
+// the one this package creates and upgrades to. Schema 2 stores private
+// keys with envelope encryption (package vault): the "kdf" and "dek"
+// settings replace XCA's "pwhash".
+const CurrentSchema = 2
 
 // upgradeSteps are XCA's schema steps (lib/database_schema.cpp, schemas[5]
 // to schemas[7]) keyed by the version they start from; B64_BLOB is TEXT for
@@ -52,6 +56,12 @@ var gocaSteps = map[int][]string{
 		"CREATE INDEX i_gca_pgp_item ON gca_pgp (item)",
 		"UPDATE settings SET value='1000' WHERE key_='schema'",
 		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '1')",
+	},
+	// Schema 2: the caller of Convert re-encrypts every private key and
+	// stores the "kdf" and "dek" settings in the same transaction.
+	1: {
+		"DELETE FROM settings WHERE key_='pwhash'",
+		"UPDATE settings SET value='2' WHERE key_='gca_schema'",
 	},
 }
 
@@ -91,9 +101,9 @@ func applyGoCASteps(ctx context.Context, tx *sql.Tx, from int) error {
 }
 
 // Create writes a new, empty database: XCA's schema 7 DDL and initial
-// settings, XCA's step to schema 8 and go-ca's steps, all in one
-// transaction.
-func Create(ctx context.Context, db *sql.DB, pwhash string) error {
+// settings, XCA's step to schema 8, go-ca's steps and then settings (the
+// "kdf" and "dek" of package vault), all in one transaction.
+func Create(ctx context.Context, db *sql.DB, settings map[string]string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -104,7 +114,7 @@ func Create(ctx context.Context, db *sql.DB, pwhash string) error {
 			return fmt.Errorf("xdb: create: %w", err)
 		}
 	}
-	for _, kv := range [][2]string{{"schema", "7"}, {"pwhash", pwhash}, {"legacy-keys-updated", "yes"}} {
+	for _, kv := range [][2]string{{"schema", "7"}, {"legacy-keys-updated", "yes"}} {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO settings (key_, value) VALUES (?, ?)", kv[0], kv[1]); err != nil {
 			return err
 		}
@@ -115,49 +125,58 @@ func Create(ctx context.Context, db *sql.DB, pwhash string) error {
 	if err := applyGoCASteps(ctx, tx, 0); err != nil {
 		return err
 	}
+	for k, v := range settings {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO settings (key_, value) VALUES (?, ?)", k, v); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
 // Current reports whether the database is a go-ca database of
 // CurrentSchema.
 func (d *DB) Current() bool {
-	return d.Schema == LockoutSchema && d.GoCA == CurrentSchema
+	s, g := d.Version()
+	return s == LockoutSchema && g == CurrentSchema
 }
 
-// Upgrade brings an XCA database (schema 5 to 8) or an older go-ca
-// database to CurrentSchema in one transaction. It returns the schema it
-// started from: the XCA schema, or LockoutSchema for a go-ca database.
-func (d *DB) Upgrade(ctx context.Context) (int, error) {
-	from := d.Schema
+// Convert brings an XCA database (schema 5 to 8) or an older go-ca
+// database to CurrentSchema and runs fn, all in one transaction: fn
+// re-encrypts the private keys and stores the "kdf" and "dek" settings. It
+// returns the schema it started from: the XCA schema, or LockoutSchema for
+// a go-ca database.
+func (d *DB) Convert(ctx context.Context, fn func(*Tx) error) (int, error) {
+	from, goca := d.Version()
 	if d.Current() {
-		return from, nil
+		return from, errors.New("xdb: the database is already current")
 	}
-	tx, err := d.SQL.BeginTx(ctx, nil)
+	sqlTx, err := d.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return from, err
 	}
-	defer tx.Rollback()
+	defer sqlTx.Rollback()
 	var s string
-	if err := tx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_='schema'").Scan(&s); err != nil {
+	if err := sqlTx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_='schema'").Scan(&s); err != nil {
 		return from, err
 	}
 	if v, err := strconv.Atoi(s); err != nil || v != from {
 		return from, fmt.Errorf("xdb: schema changed underneath (%q)", s)
 	}
-	goca := d.GoCA
 	if from != LockoutSchema {
-		if _, err := applySteps(ctx, tx, from); err != nil {
+		if _, err := applySteps(ctx, sqlTx, from); err != nil {
 			return from, err
 		}
 		goca = 0
 	}
-	if err := applyGoCASteps(ctx, tx, goca); err != nil {
+	if err := applyGoCASteps(ctx, sqlTx, goca); err != nil {
 		return from, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commitWrite(ctx, sqlTx, fn); err != nil {
 		return from, err
 	}
-	d.Schema, d.GoCA = LockoutSchema, CurrentSchema
+	d.mu.Lock()
+	d.schema, d.goca = LockoutSchema, CurrentSchema
+	d.mu.Unlock()
 	return from, nil
 }
 
@@ -178,8 +197,12 @@ func (d *DB) Write(ctx context.Context, fn func(*Tx) error) error {
 	if err != nil {
 		return err
 	}
-	tx := &Tx{Tx: sqlTx}
 	defer sqlTx.Rollback()
+	return commitWrite(ctx, sqlTx, fn)
+}
+
+func commitWrite(ctx context.Context, sqlTx *sql.Tx, fn func(*Tx) error) error {
+	tx := &Tx{Tx: sqlTx}
 	if err := fn(tx); err != nil {
 		return err
 	}
@@ -224,18 +247,34 @@ func (t *Tx) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
-// PrivateKeyRow is one stored private key (id, key type, ownPass, blob).
+// DeleteSetting removes a settings value inside the transaction.
+func (t *Tx) DeleteSetting(ctx context.Context, key string) error {
+	_, err := t.ExecContext(ctx, "DELETE FROM settings WHERE key_=?", key)
+	return err
+}
+
+// PrivateKeyRow is one stored private key.
 type PrivateKeyRow struct {
 	ID      int64
 	KeyType string
 	OwnPass int
 	Blob    []byte
+	Public  []byte // DER SubjectPublicKeyInfo
+	Deleted bool
 }
 
-// PrivateKeyRows returns every private key of live items.
-func (d *DB) PrivateKeyRows(ctx context.Context) ([]PrivateKeyRow, error) {
-	rows, err := d.SQL.QueryContext(ctx, `SELECT p.item, k.type, p.ownPass, p.private FROM private_keys p
-		JOIN public_keys k ON k.item = p.item JOIN items i ON i.id = p.item WHERE `+d.liveCond("i"))
+// PrivateKeyRows returns every private key of live items, and with
+// deleted also those of items marked deleted (which XCA keeps in the file).
+func (d *DB) PrivateKeyRows(ctx context.Context, deleted bool) ([]PrivateKeyRow, error) {
+	cond, del := d.liveCond("i"), "0"
+	if deleted {
+		cond = "1=1"
+		if d.schemaVersion() >= 7 {
+			del = "i.del<>0"
+		}
+	}
+	rows, err := d.SQL.QueryContext(ctx, `SELECT p.item, k.type, p.ownPass, p.private, k."public", `+del+` FROM private_keys p
+		JOIN public_keys k ON k.item = p.item JOIN items i ON i.id = p.item WHERE `+cond)
 	if err != nil {
 		return nil, err
 	}
@@ -243,14 +282,17 @@ func (d *DB) PrivateKeyRows(ctx context.Context) ([]PrivateKeyRow, error) {
 	var out []PrivateKeyRow
 	for rows.Next() {
 		var r PrivateKeyRow
-		var typ, priv sql.NullString
+		var typ, priv, pub sql.NullString
 		var own sql.NullInt64
-		if err := rows.Scan(&r.ID, &typ, &own, &priv); err != nil {
+		if err := rows.Scan(&r.ID, &typ, &own, &priv, &pub, &r.Deleted); err != nil {
 			return nil, err
 		}
-		r.KeyType, r.OwnPass = typ.String, int(own.Int64)
+		r.KeyType, r.OwnPass = strings.TrimSpace(typ.String), int(own.Int64)
 		if r.Blob, err = b64(priv); err != nil {
 			return nil, fmt.Errorf("private key %d: %w", r.ID, err)
+		}
+		if r.Public, err = b64(pub); err != nil {
+			return nil, fmt.Errorf("public key %d: %w", r.ID, err)
 		}
 		out = append(out, r)
 	}

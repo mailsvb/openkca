@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -31,7 +33,7 @@ type pkiSet struct {
 func buildSet(t *testing.T, s *Store, name string, pw []byte) pkiSet {
 	t.Helper()
 	ctx := context.Background()
-	if err := s.Create(ctx, name, pw); err != nil {
+	if err := s.Create(ctx, name, pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, name)
@@ -45,26 +47,26 @@ func buildSet(t *testing.T, s *Store, name string, pw []byte) pkiSet {
 		}
 		return id
 	}
-	p.root = must(h.Issue(ctx, params("Root CA", 0), pw))
-	p.sub = must(h.Issue(ctx, params("Sub CA", p.root), pw))
+	p.root = must(h.Issue(ctx, params("Root CA", 0), krOf(t, h)))
+	p.sub = must(h.Issue(ctx, params("Sub CA", p.root), krOf(t, h)))
 	lp := params("www.example.org", p.sub)
 	lp.NewKey = &pki.KeySpec{Type: "RSA", Bits: 2048}
 	lp.Ext = pki.ExtSpec{CA: 2, SubKey: true, AuthKey: true, KeyUse: 5, EKU: []string{"serverAuth"}, SubAltName: "DNS:copycn, IP:192.0.2.1"}
-	p.leaf = must(h.Issue(ctx, lp, pw))
+	p.leaf = must(h.Issue(ctx, lp, krOf(t, h)))
 	ep := params("ed", p.sub)
 	ep.NewKey = &pki.KeySpec{Type: "Ed25519"}
 	ep.Ext = pki.ExtSpec{CA: 2}
-	p.edLeaf = must(h.Issue(ctx, ep, pw))
+	p.edLeaf = must(h.Issue(ctx, ep, krOf(t, h)))
 	rp := params("request", 0)
 	rp.Request = true
-	p.req = must(h.Issue(ctx, rp, pw))
+	p.req = must(h.Issue(ctx, rp, krOf(t, h)))
 	if err = h.Revoke(ctx, p.edLeaf, Revocation{Reason: 1}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ := h.Snapshot(ctx)
-	p.crl = must(h.GenerateCRL(ctx, p.sub, DefaultCRLOptions(snap, findCert(snap, p.sub)), pw, nil))
+	p.crl = must(h.GenerateCRL(ctx, p.sub, DefaultCRLOptions(snap, findCert(snap, p.sub)), krOf(t, h), nil))
 	p.tmpl = must(h.TemplateFromItem(ctx, p.leaf))
-	p.pubK = must(h.GenerateKey(ctx, "spare", "", pki.KeySpec{Type: "EC", Curve: "P-384"}, pw))
+	p.pubK = must(h.GenerateKey(ctx, "spare", "", pki.KeySpec{Type: "EC", Curve: "P-384"}, krOf(t, h)))
 	snap, _ = h.Snapshot(ctx)
 	p.leafKey = findCert(snap, p.leaf).KeyID
 	p.edKey = findCert(snap, p.edLeaf).KeyID
@@ -75,7 +77,7 @@ func buildSet(t *testing.T, s *Store, name string, pw []byte) pkiSet {
 func TestExportAllFormats(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
+	pw := testPassword
 	p := buildSet(t, s, "ex", pw)
 	snap, _ := p.h.Snapshot(ctx)
 	dir := t.TempDir()
@@ -86,7 +88,7 @@ func TestExportAllFormats(t *testing.T) {
 			t.Fatalf("no formats for item %d", id)
 		}
 		for _, f := range formats {
-			res, err := p.h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), PEMComment: true, DBPass: pw})
+			res, err := p.h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), PEMComment: true, Keyring: krOf(t, p.h)})
 			if err != nil {
 				t.Fatalf("item %d format %d (%s): %v", id, f.ID, f.Label, err)
 			}
@@ -103,15 +105,15 @@ func TestExportAllFormats(t *testing.T) {
 		if f.Flags&codec.FSingle != 0 {
 			t.Fatalf("single format %d offered for a selection", f.ID)
 		}
-		if _, err := p.h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{p.leaf, p.edLeaf, p.sub}, DBPass: pw}); err != nil {
+		if _, err := p.h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{p.leaf, p.edLeaf, p.sub}, Keyring: krOf(t, p.h)}); err != nil {
 			t.Fatalf("multi format %d: %v", f.ID, err)
 		}
 	}
 	// Formats that are not offered are refused
-	if _, err := p.h.Export(ctx, ExportRequest{Format: 26, IDs: []int64{p.edKey}, DBPass: pw}); err == nil {
+	if _, err := p.h.Export(ctx, ExportRequest{Format: 26, IDs: []int64{p.edKey}, Keyring: krOf(t, p.h)}); err == nil {
 		t.Fatal("PVK of an Ed25519 key")
 	}
-	if _, err := p.h.Export(ctx, ExportRequest{Format: 15, IDs: []int64{p.leaf}, DBPass: pw}); err != ErrNeedExportPassword {
+	if _, err := p.h.Export(ctx, ExportRequest{Format: 15, IDs: []int64{p.leaf}, Keyring: krOf(t, p.h)}); err != ErrNeedExportPassword {
 		t.Fatalf("PKCS#12 without password: %v", err)
 	}
 
@@ -171,7 +173,7 @@ func TestExportAllFormats(t *testing.T) {
 	}
 	for _, algo := range codec.PKCS12Algorithms {
 		p.h.SetSettings(ctx, map[string]string{"pkcs12_enc_algo": algo})
-		res, err := p.h.Export(ctx, ExportRequest{Format: 14, IDs: []int64{p.leaf}, Password: []byte("export"), DBPass: pw})
+		res, err := p.h.Export(ctx, ExportRequest{Format: 14, IDs: []int64{p.leaf}, Password: []byte("export"), Keyring: krOf(t, p.h)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +189,7 @@ func TestExportAllFormats(t *testing.T) {
 	}
 	// the pkcs12_iterations setting, as OpenSSL reports it
 	p.h.SetSettings(ctx, map[string]string{"pkcs12_enc_algo": "AES-256-CBC", "pkcs12_iterations": "3000"})
-	res, err := p.h.Export(ctx, ExportRequest{Format: 15, IDs: []int64{p.leaf}, Password: []byte("export"), DBPass: pw})
+	res, err := p.h.Export(ctx, ExportRequest{Format: 15, IDs: []int64{p.leaf}, Password: []byte("export"), Keyring: krOf(t, p.h)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,17 +230,17 @@ func TestExportAllFormats(t *testing.T) {
 func TestSSHExportImport(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
-	if err := s.Create(ctx, "sshc", pw); err != nil {
+	pw := testPassword
+	if err := s.Create(ctx, "sshc", pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, "sshc")
-	id, err := h.GenerateKey(ctx, "laptop", "user@laptop  key\nsecond line", pki.KeySpec{Type: "Ed25519"}, pw)
+	id, err := h.GenerateKey(ctx, "laptop", "user@laptop  key\nsecond line", pki.KeySpec{Type: "Ed25519"}, krOf(t, h))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []int{23, 100, 102, 106} {
-		res, err := h.Export(ctx, ExportRequest{Format: f, IDs: []int64{id}, DBPass: pw})
+		res, err := h.Export(ctx, ExportRequest{Format: f, IDs: []int64{id}, Keyring: krOf(t, h)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,11 +249,11 @@ func TestSSHExportImport(t *testing.T) {
 			t.Fatalf("format %d: %+v\n%s", f, r, res.Data)
 		}
 	}
-	if _, err := h.Export(ctx, ExportRequest{Format: 103, IDs: []int64{id}, DBPass: pw}); err != ErrNeedExportPassword {
+	if _, err := h.Export(ctx, ExportRequest{Format: 103, IDs: []int64{id}, Keyring: krOf(t, h)}); err != ErrNeedExportPassword {
 		t.Fatalf("encrypted PPK without password: %v", err)
 	}
 	// into another database: the public key, then the PuTTY file completes it
-	if err := s.Create(ctx, "sshd", pw); err != nil {
+	if err := s.Create(ctx, "sshd", pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	dst, _ := load(t, s, "sshd")
@@ -259,7 +261,7 @@ func TestSSHExportImport(t *testing.T) {
 		format int
 		action string
 	}{{106, ImportNew}, {103, ImportComplete}} {
-		res, err := h.Export(ctx, ExportRequest{Format: c.format, IDs: []int64{id}, Password: []byte("export"), DBPass: pw})
+		res, err := h.Export(ctx, ExportRequest{Format: c.format, IDs: []int64{id}, Password: []byte("export"), Keyring: krOf(t, h)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,7 +270,7 @@ func TestSSHExportImport(t *testing.T) {
 		if err != nil || len(plans) != 1 || plans[0].Action != c.action {
 			t.Fatalf("format %d: %v %+v", c.format, err, plans)
 		}
-		if _, err := dst.Import(ctx, plans, []int{0}, pw, nil); err != nil {
+		if _, err := dst.Import(ctx, plans, []int{0}, krOf(t, dst), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -283,17 +285,17 @@ func itoa(n int) string { return strconv.Itoa(n) }
 func TestImportRoundTrip(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
+	pw := testPassword
 	p := buildSet(t, s, "src", pw)
 	export := func(format int, ids ...int64) []byte {
 		t.Helper()
-		res, err := p.h.Export(ctx, ExportRequest{Format: format, IDs: ids, Password: []byte("export"), DBPass: pw, PEMComment: true})
+		res, err := p.h.Export(ctx, ExportRequest{Format: format, IDs: ids, Password: []byte("export"), Keyring: krOf(t, p.h), PEMComment: true})
 		if err != nil {
 			t.Fatalf("export %d: %v", format, err)
 		}
 		return res.Data
 	}
-	if err := s.Create(ctx, "dst", pw); err != nil {
+	if err := s.Create(ctx, "dst", pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, "dst")
@@ -311,7 +313,7 @@ func TestImportRoundTrip(t *testing.T) {
 		for i := range sel {
 			sel[i] = i
 		}
-		res, err := h.Import(ctx, plans, sel, pw, nil)
+		res, err := h.Import(ctx, plans, sel, krOf(t, h), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -361,7 +363,7 @@ func TestImportRoundTrip(t *testing.T) {
 	// keys are re-encrypted with the database password
 	for _, k := range snap.Keys {
 		if k.HasPrivate {
-			if _, err := h.unlock(ctx, k.ID, k.KeyType, pw, nil); err != nil {
+			if _, err := h.unlock(ctx, k.ID, k.KeyType, krOf(t, h), nil); err != nil {
 				t.Fatalf("key %s: %v", k.Name, err)
 			}
 		}
@@ -382,10 +384,17 @@ func TestImportRoundTrip(t *testing.T) {
 func TestDump(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
+	pw := testPassword
 	p := buildSet(t, s, "dump", pw)
+	// A key with its own password in go-ca's form cannot be dumped.
+	if err := p.h.SetKeyPassword(ctx, p.pubK, krOf(t, p.h), nil, []byte("own")); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.h.Dump(ctx, io.Discard, krOf(t, p.h), nil); err == nil {
+		t.Fatal("dump without a password")
+	}
 	var buf bytes.Buffer
-	if err := p.h.Dump(ctx, &buf, pw); err != nil {
+	if err := p.h.Dump(ctx, &buf, krOf(t, p.h), []byte("export")); err != nil {
 		t.Fatal(err)
 	}
 	z, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
@@ -397,13 +406,24 @@ func TestDump(t *testing.T) {
 		names[f.Name] = true
 	}
 	for _, want := range []string{"dump/certificates/Root_CA.crt", "dump/certificates/www.example.org.crt", "dump/keys/www.example.org.pem",
-		"dump/requests/request.csr", "dump/crls/Sub_CA.crl", "dump/templates/www.example.org.xca", "dump/keys/spare.pem"} {
+		"dump/requests/request.csr", "dump/crls/Sub_CA.crl", "dump/templates/www.example.org.xca", "dump/keys/spare.pem",
+		"dump/keys/OWN-PASSWORD.txt"} {
 		if !names[want] {
 			t.Fatalf("%s missing in %v", want, names)
 		}
 	}
-	// a key file decrypts with the database password
+	// a key file decrypts with the export password; the key with its own
+	// password is listed and has only its public key
 	for _, f := range z.File {
+		if f.Name == "dump/keys/OWN-PASSWORD.txt" || f.Name == "dump/keys/spare.pem" {
+			r, _ := f.Open()
+			var b bytes.Buffer
+			b.ReadFrom(r)
+			if f.Name == "dump/keys/spare.pem" && !bytes.Contains(b.Bytes(), []byte("BEGIN PUBLIC KEY")) ||
+				f.Name != "dump/keys/spare.pem" && !bytes.Contains(b.Bytes(), []byte("\nspare\n")) {
+				t.Errorf("%s:\n%s", f.Name, b.Bytes())
+			}
+		}
 		if f.Name == "dump/keys/www.example.org.pem" {
 			r, _ := f.Open()
 			var b bytes.Buffer
@@ -411,7 +431,7 @@ func TestDump(t *testing.T) {
 			if !bytes.Contains(b.Bytes(), []byte("BEGIN ENCRYPTED PRIVATE KEY")) || bytes.Contains(b.Bytes(), []byte("DEK-Info")) {
 				t.Fatalf("dumped key is not encrypted PKCS#8:\n%s", b.Bytes())
 			}
-			res := codec.Probe(f.Name, b.Bytes(), codec.ProbeOptions{Password: pw})
+			res := codec.Probe(f.Name, b.Bytes(), codec.ProbeOptions{Password: []byte("export")})
 			if len(res.Objects) != 1 || res.Objects[0].Private == nil {
 				t.Fatalf("dumped key: %+v", res)
 			}

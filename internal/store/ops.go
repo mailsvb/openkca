@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
-	"github.com/mailsvb/go-ca/internal/xdbpass"
 )
 
 // ErrNeedKeyPassword means a key with its own password is involved and the
@@ -24,30 +24,6 @@ var ErrNeedKeyPassword = errors.New("the key's own password is required")
 // KeyPasswords supplies passwords for keys with their own password, by key
 // item id. The database password covers all other keys.
 type KeyPasswords map[int64][]byte
-
-// unlock decrypts the private key of item keyID.
-func (h *Handle) unlock(ctx context.Context, keyID int64, keyType string, dbPass []byte, kp KeyPasswords) (crypto.Signer, error) {
-	blob, own, err := h.DB.PrivateKey(ctx, keyID)
-	if err != nil {
-		return nil, fmt.Errorf("the key has no private part: %w", err)
-	}
-	pw := dbPass
-	switch own {
-	case xdb.PassPrivate:
-		if pw = kp[keyID]; len(pw) == 0 {
-			return nil, ErrNeedKeyPassword
-		}
-	case xdb.PassBogus:
-		pw = []byte("Bogus")
-	case xdb.PassPIN:
-		return nil, errors.New("the key is on a security token, which go-ca does not access")
-	}
-	key, _, err := pki.DecryptPrivateKey(blob, keyType, pw)
-	if errors.Is(err, pki.ErrWrongPassword) && own == xdb.PassPrivate {
-		return nil, ErrNeedKeyPassword
-	}
-	return key, err
-}
 
 func findKey(snap *xdb.Snapshot, id int64) *xdb.Key {
 	for _, k := range snap.Keys {
@@ -76,28 +52,27 @@ func findRequest(snap *xdb.Snapshot, id int64) *xdb.Request {
 	return nil
 }
 
-// GenerateKey creates a key with a comment, encrypted with the database
-// password.
-func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki.KeySpec, dbPass []byte) (int64, error) {
+// GenerateKey creates a key with a comment, sealed with the database's DEK.
+func (h *Handle) GenerateKey(ctx context.Context, name, comment string, spec pki.KeySpec, kr *vault.Keyring) (int64, error) {
 	key, err := pki.GenerateKey(spec)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
-		id, err = insertGenerated(ctx, tx, name, comment, key, dbPass)
+		id, err = insertGenerated(ctx, tx, name, comment, key, kr)
 		return err
 	})
 	h.changed(ctx)
 	return id, err
 }
 
-func insertGenerated(ctx context.Context, tx *xdb.Tx, name, comment string, key crypto.Signer, dbPass []byte) (int64, error) {
+func insertGenerated(ctx context.Context, tx *xdb.Tx, name, comment string, key crypto.Signer, kr *vault.Keyring) (int64, error) {
 	spki, err := pki.MarshalPublicKey(key.Public())
 	if err != nil {
 		return 0, err
 	}
-	blob, err := pki.EncryptPrivateKey(key, dbPass)
+	blob, err := sealKey(kr, key, spki)
 	if err != nil {
 		return 0, err
 	}
@@ -274,7 +249,7 @@ func usedSerials(snap *xdb.Snapshot, ca *xdb.Cert) map[string]bool {
 
 // Issue creates a certificate or CSR as the editor describes and stores it
 // (with a generated key, if requested) in one transaction.
-func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64, error) {
+func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (int64, error) {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return 0, err
@@ -318,7 +293,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 		if k == nil || !k.HasPrivate {
 			return 0, errors.New("the selected key has no private part")
 		}
-		if subjectKey, err = h.unlock(ctx, k.ID, k.KeyType, dbPass, p.KeyPass); err != nil {
+		if subjectKey, err = h.unlock(ctx, k.ID, k.KeyType, kr, p.KeyPass); err != nil {
 			return 0, err
 		}
 	}
@@ -350,7 +325,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 			if ca.KeyID == 0 || cak == nil || !cak.HasPrivate {
 				return 0, errors.New("the private key of the CA is not in the database")
 			}
-			if cr.SignerKey, err = h.unlock(ctx, cak.ID, cak.KeyType, dbPass, p.KeyPass); err != nil {
+			if cr.SignerKey, err = h.unlock(ctx, cak.ID, cak.KeyType, kr, p.KeyPass); err != nil {
 				return 0, err
 			}
 			if cr.Issuer, err = pki.ParseCertificate(ca.DER); err != nil {
@@ -379,7 +354,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, dbPass []byte) (int64
 	var id int64
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
 		if generated != nil {
-			if _, err := insertGenerated(ctx, tx, p.Name, "", generated, dbPass); err != nil {
+			if _, err := insertGenerated(ctx, tx, p.Name, "", generated, kr); err != nil {
 				return err
 			}
 		}
@@ -490,7 +465,7 @@ func (h *Handle) ExtractPublicKey(ctx context.Context, id int64) (int64, error) 
 
 // CertToRequest creates a CSR from a certificate and its key
 // (db_x509::toRequest): same subject, hash and extensions without AKI/IAN.
-func (h *Handle) CertToRequest(ctx context.Context, id int64, dbPass []byte, kp KeyPasswords) (int64, error) {
+func (h *Handle) CertToRequest(ctx context.Context, id int64, kr *vault.Keyring, kp KeyPasswords) (int64, error) {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return 0, err
@@ -503,7 +478,7 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, dbPass []byte, kp 
 	if k == nil || !k.HasPrivate {
 		return 0, errors.New("the private key of the certificate is not in the database")
 	}
-	key, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, kp)
+	key, err := h.unlock(ctx, k.ID, k.KeyType, kr, kp)
 	if err != nil {
 		return 0, err
 	}
@@ -530,20 +505,26 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, dbPass []byte, kp 
 	return rid, err
 }
 
-// ChangeDatabasePassword re-encrypts every key protected by the database
-// password and stores a new password hash, after a backup.
-func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []byte) error {
-	stored, err := h.DB.Setting(ctx, "pwhash")
+// ChangeDatabasePassword protects the database with newPass and the
+// Argon2id cost p. It also rotates the DEK: every key under the database
+// password is re-sealed with a fresh DEK, so that an old copy of the file
+// together with the old password reveals nothing about the keys stored
+// from now on. A backup is taken first. It returns the new keyring; other
+// sessions' keyrings no longer open the keys.
+func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []byte, p vault.Params) (*vault.Keyring, error) {
+	if err := p.Valid(); err != nil {
+		return nil, err
+	}
+	old, err := h.Unlock(ctx, oldPass)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if ok, _ := xdbpass.Verify(stored, oldPass); !ok {
-		return pki.ErrWrongPassword
-	}
-	rows, err := h.DB.PrivateKeyRows(ctx)
+	defer old.Wipe()
+	rows, err := h.DB.PrivateKeyRows(ctx, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	nk := vault.NewKeyring(p)
 	type re struct {
 		id   int64
 		blob []byte
@@ -553,18 +534,27 @@ func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []
 		if r.OwnPass != xdb.PassCommon {
 			continue
 		}
-		key, _, err := pki.DecryptPrivateKey(r.Blob, r.KeyType, oldPass)
+		der, err := old.Open(r.Blob, r.Public)
 		if err != nil {
-			return fmt.Errorf("key %d: %w", r.ID, err)
+			nk.Wipe()
+			return nil, fmt.Errorf("key %d: %w", r.ID, err)
 		}
-		blob, err := pki.EncryptPrivateKey(key, newPass)
+		blob, err := nk.Seal(der, r.Public)
+		clear(der)
 		if err != nil {
-			return err
+			nk.Wipe()
+			return nil, err
 		}
 		updates = append(updates, re{r.ID, blob})
 	}
+	kdf, dek, err := nk.Wrap(newPass, p)
+	if err != nil {
+		nk.Wipe()
+		return nil, err
+	}
 	if _, err := h.Backup(ctx); err != nil {
-		return err
+		nk.Wipe()
+		return nil, err
 	}
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
 		for _, u := range updates {
@@ -572,24 +562,33 @@ func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []
 				return err
 			}
 		}
-		return tx.SetSetting(ctx, "pwhash", xdbpass.NewHash(newPass))
+		if err := tx.SetSetting(ctx, "kdf", kdf); err != nil {
+			return err
+		}
+		return tx.SetSetting(ctx, "dek", dek)
 	})
+	if err != nil {
+		nk.Wipe()
+		return nil, err
+	}
+	h.vacuum(ctx)
 	h.changed(ctx)
-	return err
+	return nk, nil
 }
 
-// SetKeyPassword gives a key its own password (ownPass = 1). current is
-// the key's present password: the database password or its own.
-func (h *Handle) SetKeyPassword(ctx context.Context, keyID int64, dbPass []byte, kp KeyPasswords, newPass []byte) error {
-	return h.rekey(ctx, keyID, dbPass, kp, newPass, xdb.PassPrivate)
+// SetKeyPassword gives a key its own password (ownPass = 1), sealed with
+// the database's Argon2id cost.
+func (h *Handle) SetKeyPassword(ctx context.Context, keyID int64, kr *vault.Keyring, kp KeyPasswords, newPass []byte) error {
+	return h.rekey(ctx, keyID, kr, kp, newPass)
 }
 
-// ResetKeyPassword protects a key with the database password again.
-func (h *Handle) ResetKeyPassword(ctx context.Context, keyID int64, dbPass []byte, kp KeyPasswords) error {
-	return h.rekey(ctx, keyID, dbPass, kp, dbPass, xdb.PassCommon)
+// ResetKeyPassword protects a key with the database's DEK again.
+func (h *Handle) ResetKeyPassword(ctx context.Context, keyID int64, kr *vault.Keyring, kp KeyPasswords) error {
+	return h.rekey(ctx, keyID, kr, kp, nil)
 }
 
-func (h *Handle) rekey(ctx context.Context, keyID int64, dbPass []byte, kp KeyPasswords, newPass []byte, own int) error {
+// rekey seals a key under newPass, or under the DEK when newPass is nil.
+func (h *Handle) rekey(ctx context.Context, keyID int64, kr *vault.Keyring, kp KeyPasswords, newPass []byte) error {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return err
@@ -598,11 +597,19 @@ func (h *Handle) rekey(ctx context.Context, keyID int64, dbPass []byte, kp KeyPa
 	if k == nil || !k.HasPrivate {
 		return errors.New("the key has no private part")
 	}
-	key, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, kp)
+	der, err := h.keyDER(ctx, k.ID, k.KeyType, kr, kp)
 	if err != nil {
 		return err
 	}
-	blob, err := pki.EncryptPrivateKey(key, newPass)
+	defer clear(der)
+	var blob []byte
+	own := xdb.PassCommon
+	if newPass == nil {
+		blob, err = kr.Seal(der, k.Public)
+	} else {
+		own = xdb.PassPrivate
+		blob, err = vault.SealWithPassword(der, k.Public, newPass, kr.Params())
+	}
 	if err != nil {
 		return err
 	}

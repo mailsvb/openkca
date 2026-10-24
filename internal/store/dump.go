@@ -3,6 +3,7 @@ package store
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -11,18 +12,22 @@ import (
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // Dump writes every item of the database as a ZIP archive laid out like
 // XCA's "Dump database": folders keys, requests, certificates, crls and
 // templates with one PEM file per item, named after the item
-// (get_dump_filename). Private keys are written encrypted with the
-// database password, as XCA does but as encrypted PKCS#8; keys with their
-// own password keep it.
+// (get_dump_filename). Private keys are written as encrypted PKCS#8 under
+// exportPass; keys with their own password that cannot be written that
+// way are listed in keys/OWN-PASSWORD.txt with only their public key.
 // OpenPGP certificates are written next to their primary keys as armored
 // public keys.
-func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
+func (h *Handle) Dump(ctx context.Context, w io.Writer, kr *vault.Keyring, exportPass []byte) error {
+	if len(exportPass) == 0 {
+		return errors.New("the dump needs a password for the private keys")
+	}
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return err
@@ -50,12 +55,24 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
 			return err
 		}
 	}
+	var ownPass []string
 	for _, k := range snap.Keys {
-		data, err := h.dumpKey(ctx, k, dbPass)
+		data, own, err := h.dumpKey(ctx, k, kr, exportPass)
 		if err != nil {
 			return err
 		}
+		if own {
+			ownPass = append(ownPass, k.Name)
+		}
 		if err := file("keys", k.Name, ".pem", data); err != nil {
+			return err
+		}
+	}
+	if len(ownPass) > 0 {
+		note := "These keys have their own password and are stored in a form only go-ca reads.\n" +
+			"Their files hold the public key only; export each key on its own with its password.\n\n" +
+			strings.Join(ownPass, "\n") + "\n"
+		if err := file("keys", "OWN-PASSWORD", ".txt", []byte(note)); err != nil {
 			return err
 		}
 	}
@@ -99,31 +116,31 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, dbPass []byte) error {
 	return z.Close()
 }
 
-// dumpKey writes a private key encrypted with the database password, as
-// XCA's pki_evp::writeDefault does, but as encrypted PKCS#8 (PBES2 with
-// pki.PBKDF2Iterations) instead of XCA's traditional PEM: that one derives
-// its key with a single MD5 round, which would make the dump an easy way to
-// guess the database password. A stored key that is already encrypted that
-// way is written as it is, without decrypting it; keys with their own
-// password keep it.
-func (h *Handle) dumpKey(ctx context.Context, k *xdb.Key, dbPass []byte) ([]byte, error) {
+// dumpKey writes a private key under the export password as encrypted
+// PKCS#8 (PBES2 with pki.PBKDF2Iterations), as XCA's "Dump database" does
+// with the database password. A key with its own password is written as
+// it is when that is a standard encrypted PKCS#8 file; otherwise (go-ca's
+// own format, or XCA's legacy form, which no other program reads) only its
+// public key is written and ownPass reports it.
+func (h *Handle) dumpKey(ctx context.Context, k *xdb.Key, kr *vault.Keyring, exportPass []byte) (data []byte, ownPass bool, err error) {
 	if !k.HasPrivate || k.Token {
-		return codec.PEM(codec.PEMPublicKey, k.Public), nil
+		return codec.PEM(codec.PEMPublicKey, k.Public), false, nil
 	}
 	blob, own, err := h.DB.PrivateKey(ctx, k.ID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if own == xdb.PassPrivate {
-		return codec.PEM(codec.PEMEncrypted, blob), nil
+		if pki.IsEncryptedPKCS8(blob) {
+			return codec.PEM(codec.PEMEncrypted, blob), false, nil
+		}
+		return codec.PEM(codec.PEMPublicKey, k.Public), true, nil
 	}
-	if n, ok := pki.PKCS8Iterations(blob); ok && n >= pki.PBKDF2Iterations && own == xdb.PassCommon {
-		return codec.PEM(codec.PEMEncrypted, blob), nil
-	}
-	der, err := h.privateDER(ctx, k, dbPass, nil)
+	der, err := h.privateDER(ctx, k, kr, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer clear(der)
-	return codec.PKCS8PEM(der, dbPass)
+	data, err = codec.PKCS8PEM(der, exportPass)
+	return data, false, err
 }

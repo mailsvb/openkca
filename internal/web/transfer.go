@@ -126,10 +126,9 @@ func (s *Server) exportSubmit(w http.ResponseWriter, r *http.Request) {
 		fail("export.error.ratelimit")
 		return
 	}
-	dbPass := ds.Password()
-	defer clear(dbPass)
+	kr := ds.Keyring()
 	res, err := ds.Handle.Export(r.Context(), store.ExportRequest{Format: f.Format, IDs: f.IDs, Password: pw, PEMComment: f.Comment,
-		DBPass: dbPass, Keys: keyPasswords(r, snap), T: s.printer(r).T})
+		Keyring: kr, Keys: keyPasswords(r, snap), T: s.printer(r).T})
 	switch {
 	case errors.Is(err, store.ErrNeedKeyPassword):
 		if r.PostFormValue("keypass") != "" {
@@ -368,9 +367,8 @@ func (s *Server) importCommit(w http.ResponseWriter, r *http.Request) {
 		s.importRedirect(w, r, "error=importitems.error.noselection")
 		return
 	}
-	dbPass := ds.Password()
-	defer clear(dbPass)
-	res, err := ds.Handle.Import(r.Context(), plans, sel, dbPass, s.printer(r).T)
+	kr := ds.Keyring()
+	res, err := ds.Handle.Import(r.Context(), plans, sel, kr, s.printer(r).T)
 	if err != nil {
 		s.log.Error("import failed", "db", ds.DBName, "err", err)
 		s.importRedirect(w, r, "error=importitems.error.failed")
@@ -385,10 +383,16 @@ func (s *Server) importCommit(w http.ResponseWriter, r *http.Request) {
 // dump downloads the whole database as a ZIP archive of PEM files.
 func (s *Server) dump(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
-	dbPass := ds.Password()
-	defer clear(dbPass)
+	kr := ds.Keyring()
+	pw, pw2 := []byte(r.PostFormValue("password")), []byte(r.PostFormValue("password2"))
+	defer clear(pw)
+	defer clear(pw2)
+	if len(pw) == 0 || string(pw) != string(pw2) {
+		http.Redirect(w, r, dbPath(ds.DBName)+"options?error=dump.error.password", http.StatusSeeOther)
+		return
+	}
 	var buf bytes.Buffer
-	if err := ds.Handle.Dump(r.Context(), &buf, dbPass); err != nil {
+	if err := ds.Handle.Dump(r.Context(), &buf, kr, pw); err != nil {
 		s.fail(w, r, err)
 		return
 	}

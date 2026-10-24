@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -145,7 +146,7 @@ func DefaultCRLOptions(snap *xdb.Snapshot, ca *xdb.Cert) CRLOptions {
 }
 
 // GenerateCRL signs a CRL over all revocations of the CA and stores it.
-func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, dbPass []byte, kp KeyPasswords) (int64, error) {
+func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, kr *vault.Keyring, kp KeyPasswords) (int64, error) {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return 0, err
@@ -158,7 +159,7 @@ func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, dbPa
 	if k == nil || !k.HasPrivate {
 		return 0, errors.New("the private key of the CA is not in the database")
 	}
-	key, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, kp)
+	key, err := h.unlock(ctx, k.ID, k.KeyType, kr, kp)
 	if err != nil {
 		return 0, err
 	}
@@ -220,7 +221,7 @@ type RenewOptions struct {
 }
 
 // Renew issues a renewed copy of a certificate.
-func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, dbPass []byte, kp KeyPasswords) (int64, error) {
+func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, kr *vault.Keyring, kp KeyPasswords) (int64, error) {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return 0, err
@@ -240,7 +241,7 @@ func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, dbPass
 	if k == nil || !k.HasPrivate {
 		return 0, errors.New("the private key of the issuer is not in the database")
 	}
-	key, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, kp)
+	key, err := h.unlock(ctx, k.ID, k.KeyType, kr, kp)
 	if err != nil {
 		return 0, err
 	}
