@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -120,7 +120,7 @@ func TestNewKeyTypes(t *testing.T) {
 			t.Fatalf("%s: CRL: %v", name, err)
 		}
 		snap, _ = h.Snapshot(ctx)
-		var crl *gcadb.CRL
+		var crl *db.CRL
 		for _, l := range snap.CRLs {
 			if l.ID == crlID {
 				crl = l
@@ -185,7 +185,7 @@ func TestNewKeyTypesExport(t *testing.T) {
 				// what go-ca writes, it reads back
 				if f.Flags&(codec.FPKCS8|codec.FPKCS12) != 0 || f.ID == 20 || f.ID == 21 || f.ID == 25 {
 					r := codec.Probe("x."+f.Ext, res.Data, codec.ProbeOptions{Password: []byte("export")})
-					if len(r.Objects) == 0 || r.Objects[0].Type == gcadb.TypeKey && !bytes.Equal(r.Objects[0].DER, findKey(snap, keyID).Public) {
+					if len(r.Objects) == 0 || r.Objects[0].Type == db.TypeKey && !bytes.Equal(r.Objects[0].DER, findKey(snap, keyID).Public) {
 						t.Errorf("%s: format %d does not read back: %v", name, f.ID, r.Unrecognized)
 					}
 				}

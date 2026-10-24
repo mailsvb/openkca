@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -127,7 +127,7 @@ func (t *Tx) PutRaw(ctx context.Context, r RawItem) error {
 		}
 		_, err = t.ExecContext(ctx, "INSERT INTO templates (item, data) VALUES (?, ?)", r.ID, j)
 	default:
-		return errors.New("gcadb: raw item without its content")
+		return errors.New("db: raw item without its content")
 	}
 	if err != nil {
 		return fmt.Errorf("item %d: %w", r.ID, err)

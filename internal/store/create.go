@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/vault"
 )
 
@@ -126,14 +126,14 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	tmp := f.Name()
 	f.Close()
 	defer os.Remove(tmp)
-	db, err := sql.Open("sqlite", dsn(tmp, false))
+	sqldb, err := sql.Open("sqlite", dsn(tmp, false))
 	if err != nil {
 		return err
 	}
-	err = gcadb.Create(ctx, db, map[string]string{"kdf": kdf, "dek": dek}, func(tx *gcadb.Tx) error {
+	err = db.Create(ctx, sqldb, map[string]string{"kdf": kdf, "dek": dek}, func(tx *db.Tx) error {
 		return tx.Audit(ctx, "database.create", 0, "")
 	})
-	if cerr := db.Close(); err == nil {
+	if cerr := sqldb.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {

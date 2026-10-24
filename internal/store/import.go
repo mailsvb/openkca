@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -25,7 +25,7 @@ const (
 type ImportPlan struct {
 	codec.Object
 	Action   string
-	Existing *gcadb.Duplicate
+	Existing *db.Duplicate
 }
 
 // PlanImport checks found objects against the database and each other,
@@ -35,10 +35,10 @@ type ImportPlan struct {
 func (h *Handle) PlanImport(ctx context.Context, objs []codec.Object) ([]ImportPlan, error) {
 	plans := make([]ImportPlan, len(objs))
 	seen := map[string]int{}
-	err := h.DB.Read(ctx, func(tx *gcadb.Tx) error {
+	err := h.DB.Read(ctx, func(tx *db.Tx) error {
 		for i, o := range objs {
 			p := ImportPlan{Object: o, Action: ImportNew}
-			if o.Type != gcadb.TypeTemplate {
+			if o.Type != db.TypeTemplate {
 				d, err := tx.FindDuplicate(ctx, o.Type, o.DER)
 				if err != nil {
 					return err
@@ -46,7 +46,7 @@ func (h *Handle) PlanImport(ctx context.Context, objs []codec.Object) ([]ImportP
 				if d != nil {
 					p.Existing = d
 					p.Action = ImportExists
-					if o.Type == gcadb.TypeKey && !d.HasPrivate && o.Private != nil {
+					if o.Type == db.TypeKey && !d.HasPrivate && o.Private != nil {
 						p.Action = ImportComplete
 					} else if o.PGP != nil {
 						cur, err := tx.PGPCert(ctx, d.ID)
@@ -61,7 +61,7 @@ func (h *Handle) PlanImport(ctx context.Context, objs []codec.Object) ([]ImportP
 				// the same object twice in this import: keep the better one
 				k := string(rune(o.Type)) + string(o.DER)
 				if j, ok := seen[k]; ok {
-					if o.Type == gcadb.TypeKey && o.Private != nil && plans[j].Private == nil {
+					if o.Type == db.TypeKey && o.Private != nil && plans[j].Private == nil {
 						plans[j].Action = ImportExists
 					} else {
 						p.Action = ImportExists
@@ -86,7 +86,7 @@ type ImportResult struct {
 	Err    error
 }
 
-var importOrder = map[int]int{gcadb.TypeKey: 0, gcadb.TypeCert: 1, gcadb.TypeRequest: 2, gcadb.TypeCRL: 3, gcadb.TypeTemplate: 4}
+var importOrder = map[int]int{db.TypeKey: 0, db.TypeCert: 1, db.TypeRequest: 2, db.TypeCRL: 3, db.TypeTemplate: 4}
 
 // Import stores the selected plans (indexes into plans) in one
 // transaction: keys first so that certificates and requests link to them,
@@ -101,7 +101,7 @@ func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int,
 		return importOrder[plans[order[a]].Type] < importOrder[plans[order[b]].Type]
 	})
 	var results []ImportResult
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err := h.DB.Write(ctx, func(tx *db.Tx) error {
 		results = results[:0]
 		for _, i := range order {
 			if i < 0 || i >= len(plans) {
@@ -135,7 +135,7 @@ func (h *Handle) Import(ctx context.Context, plans []ImportPlan, selected []int,
 	return results, err
 }
 
-func (h *Handle) completeKey(ctx context.Context, tx *gcadb.Tx, p ImportPlan, kr *vault.Keyring, t Translator) error {
+func (h *Handle) completeKey(ctx context.Context, tx *db.Tx, p ImportPlan, kr *vault.Keyring, t Translator) error {
 	blob, err := kr.Seal(p.Private, p.Object.DER)
 	if err != nil {
 		return err
@@ -145,32 +145,32 @@ func (h *Handle) completeKey(ctx context.Context, tx *gcadb.Tx, p ImportPlan, kr
 		return err
 	}
 	date := p.Existing.Date.UTC().Format(time.DateTime)
-	comment = gcadb.AppendComment(comment, t("import.key_extended", date, p.Name))
-	return tx.CompleteKey(ctx, p.Existing.ID, blob, gcadb.ProtDEK, comment)
+	comment = db.AppendComment(comment, t("import.key_extended", date, p.Name))
+	return tx.CompleteKey(ctx, p.Existing.ID, blob, db.ProtDEK, comment)
 }
 
 const sourceImported = 1
 
-func insertObject(ctx context.Context, tx *gcadb.Tx, o codec.Object, kr *vault.Keyring) (int64, error) {
+func insertObject(ctx context.Context, tx *db.Tx, o codec.Object, kr *vault.Keyring) (int64, error) {
 	switch o.Type {
-	case gcadb.TypeKey:
-		k := gcadb.NewKey{Name: o.Name, Comment: o.Comment, Source: sourceImported, KeyType: pki.KeyTypeText(o.KeyType), Len: o.KeyBits, SPKI: o.DER}
+	case db.TypeKey:
+		k := db.NewKey{Name: o.Name, Comment: o.Comment, Source: sourceImported, KeyType: pki.KeyTypeText(o.KeyType), Len: o.KeyBits, SPKI: o.DER}
 		if o.Private != nil {
 			blob, err := kr.Seal(o.Private, o.DER)
 			if err != nil {
 				return 0, err
 			}
-			k.Private, k.Protection = blob, gcadb.ProtDEK
+			k.Private, k.Protection = blob, db.ProtDEK
 		}
 		return tx.InsertKey(ctx, k)
-	case gcadb.TypeCert:
-		return tx.InsertCert(ctx, gcadb.NewCert{Name: o.Name, Comment: o.Comment, Source: sourceImported, DER: o.DER})
-	case gcadb.TypeRequest:
-		return tx.InsertRequest(ctx, gcadb.NewRequest{Name: o.Name, Comment: o.Comment, Source: sourceImported, DER: o.DER})
-	case gcadb.TypeCRL:
+	case db.TypeCert:
+		return tx.InsertCert(ctx, db.NewCert{Name: o.Name, Comment: o.Comment, Source: sourceImported, DER: o.DER})
+	case db.TypeRequest:
+		return tx.InsertRequest(ctx, db.NewRequest{Name: o.Name, Comment: o.Comment, Source: sourceImported, DER: o.DER})
+	case db.TypeCRL:
 		id, _, err := tx.InsertImportedCRL(ctx, o.Name, o.Comment, o.DER)
 		return id, err
-	case gcadb.TypeTemplate:
+	case db.TypeTemplate:
 		return tx.InsertTemplate(ctx, o.Name, o.Comment, sourceImported, o.Template)
 	}
 	return 0, errors.New("unsupported item type")

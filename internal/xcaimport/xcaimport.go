@@ -26,7 +26,7 @@ import (
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/tmpl"
 	"github.com/mailsvb/openkca/internal/vault"
@@ -117,23 +117,23 @@ func Inspect(ctx context.Context, path string, deep bool) (Info, error) {
 	if string(head[:n]) != "SQLite format 3\x00" {
 		return info, errors.New("not an SQLite database")
 	}
-	db, err := sql.Open("sqlite", dsn(path))
+	xdb, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return info, err
 	}
-	defer db.Close()
+	defer xdb.Close()
 	check := "PRAGMA quick_check"
 	if deep {
 		check = "PRAGMA integrity_check"
 	}
 	var res string
-	if err := db.QueryRowContext(ctx, check).Scan(&res); err != nil {
+	if err := xdb.QueryRowContext(ctx, check).Scan(&res); err != nil {
 		return info, err
 	}
 	if res != "ok" {
 		return info, errors.New("integrity check: " + res)
 	}
-	s, err := setting(ctx, db, "schema")
+	s, err := setting(ctx, xdb, "schema")
 	if err != nil || s == "" {
 		return info, errors.New("no schema setting")
 	}
@@ -151,16 +151,16 @@ func Inspect(ctx context.Context, path string, deep bool) (Info, error) {
 		info.Kind = KindXCA
 	}
 	if info.Importable() {
-		if pw, _ := setting(ctx, db, "pwhash"); pw == "" {
+		if pw, _ := setting(ctx, xdb, "pwhash"); pw == "" {
 			return info, errors.New("no password hash")
 		}
 	}
 	return info, nil
 }
 
-func setting(ctx context.Context, db *sql.DB, key string) (string, error) {
+func setting(ctx context.Context, xdb *sql.DB, key string) (string, error) {
 	var v sql.NullString
-	err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_=?", key).Scan(&v)
+	err := xdb.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_=?", key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -170,7 +170,7 @@ func setting(ctx context.Context, db *sql.DB, key string) (string, error) {
 // Source is an open source database.
 type Source struct {
 	Info
-	db *sql.DB
+	xdb *sql.DB
 }
 
 // Open opens an importable .xdb file read-only.
@@ -182,20 +182,20 @@ func Open(ctx context.Context, path string) (*Source, error) {
 	if !info.Importable() {
 		return nil, fmt.Errorf("xcaimport: %s cannot be imported (%s)", path, info.Kind)
 	}
-	db, err := sql.Open("sqlite", dsn(path))
+	xdb, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	return &Source{Info: info, db: db}, nil
+	xdb.SetMaxOpenConns(1)
+	return &Source{Info: info, xdb: xdb}, nil
 }
 
 // Close closes the source.
-func (s *Source) Close() error { return s.db.Close() }
+func (s *Source) Close() error { return s.xdb.Close() }
 
 // Unlock checks the database password; a wrong password returns false.
 func (s *Source) Unlock(ctx context.Context, password []byte) (bool, error) {
-	stored, err := setting(ctx, s.db, "pwhash")
+	stored, err := setting(ctx, s.xdb, "pwhash")
 	if err != nil {
 		return false, err
 	}
@@ -250,7 +250,7 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 		return nil, rep, err
 	}
 	settings := map[string]string{}
-	rows, err := s.db.QueryContext(ctx, "SELECT key_, value FROM settings")
+	rows, err := s.xdb.QueryContext(ctx, "SELECT key_, value FROM settings")
 	if err != nil {
 		return fail(err)
 	}
@@ -294,9 +294,9 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 		switch it.own {
 		case -1: // public key only
 		case passPIN:
-			k.Protection = gcadb.ProtToken
+			k.Protection = db.ProtToken
 		case passPrivate:
-			k.Protection, k.Private = gcadb.ProtPassword, it.blob
+			k.Protection, k.Private = db.ProtPassword, it.blob
 			if !vault.IsSealed(it.blob) {
 				rep.OwnPassLegacy++
 			}
@@ -312,7 +312,7 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 			}
 			if err != nil {
 				// keep it, for whoever knows its password
-				k.Protection, k.Private = gcadb.ProtPassword, it.blob
+				k.Protection, k.Private = db.ProtPassword, it.blob
 				rep.Unopened++
 				break
 			}
@@ -321,15 +321,15 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 			if err != nil {
 				return fail(err)
 			}
-			k.Protection, k.Private = gcadb.ProtDEK, sealed
+			k.Protection, k.Private = db.ProtDEK, sealed
 			rep.Converted++
 		}
 	}
 	if progress != nil {
 		progress(total, total)
 	}
-	err = gcadb.Create(ctx, dst, settings, func(tx *gcadb.Tx) error {
-		all := make([]gcadb.RawItem, 0, len(items.all))
+	err = db.Create(ctx, dst, settings, func(tx *db.Tx) error {
+		all := make([]db.RawItem, 0, len(items.all))
 		for _, it := range items.keys {
 			all = append(all, it.raw)
 		}
@@ -372,7 +372,7 @@ func legacyDER(blob []byte, keyType string, password []byte) ([]byte, error) {
 }
 
 type keyItem struct {
-	raw     gcadb.RawItem
+	raw     db.RawItem
 	own     int // XCA's ownPass, -1 without a private key
 	blob    []byte
 	xcaType string
@@ -380,14 +380,14 @@ type keyItem struct {
 
 type contents struct {
 	keys        []keyItem
-	all         []gcadb.RawItem // everything but keys
-	revocations []gcadb.Revocation
+	all         []db.RawItem // everything but keys
+	revocations []db.Revocation
 	skipped     []string
 }
 
 func (s *Source) hasTable(ctx context.Context, name string) bool {
 	var n int
-	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&n)
+	s.xdb.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&n)
 	return n > 0
 }
 
@@ -400,13 +400,13 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 	}
 	now := time.Now()
 	types := map[int64]int{}
-	base := map[int64]gcadb.Item{}
-	rows, err := s.db.QueryContext(ctx, "SELECT i.id, i.name, i.type, i.source, i.date, i.comment, "+del+" FROM items i ORDER BY i.id")
+	base := map[int64]db.Item{}
+	rows, err := s.xdb.QueryContext(ctx, "SELECT i.id, i.name, i.type, i.source, i.date, i.comment, "+del+" FROM items i ORDER BY i.id")
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var it gcadb.Item
+		var it db.Item
 		var name, date, comment sql.NullString
 		var typ, source, deleted sql.NullInt64
 		if err := rows.Scan(&it.ID, &name, &typ, &source, &date, &comment, &deleted); err != nil {
@@ -441,7 +441,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 	// Keys
 	tokens := map[int64]bool{}
 	if s.hasTable(ctx, "tokens") {
-		trows, err := s.db.QueryContext(ctx, "SELECT item FROM tokens")
+		trows, err := s.xdb.QueryContext(ctx, "SELECT item FROM tokens")
 		if err != nil {
 			return nil, err
 		}
@@ -452,7 +452,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 		}
 		trows.Close()
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT k.item, k.type, k."public", p.ownPass, p.private, p.item IS NOT NULL
+	rows, err = s.xdb.QueryContext(ctx, `SELECT k.item, k.type, k."public", p.ownPass, p.private, p.item IS NOT NULL
 		FROM public_keys k LEFT JOIN private_keys p ON p.item = k.item ORDER BY k.item`)
 	if err != nil {
 		return nil, err
@@ -478,7 +478,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 			continue
 		}
 		code, bits := pki.StoredKeyType(spki)
-		ki := keyItem{raw: gcadb.RawItem{Item: base[id], Key: &gcadb.RawKey{Algorithm: pki.KeyTypeText(code), Bits: bits, SPKI: spki}},
+		ki := keyItem{raw: db.RawItem{Item: base[id], Key: &db.RawKey{Algorithm: pki.KeyTypeText(code), Bits: bits, SPKI: spki}},
 			own: -1, xcaType: strings.TrimSpace(typ.String)}
 		switch {
 		case tokens[id] || own.Int64 == passPIN:
@@ -490,13 +490,13 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 			}
 			ki.own = int(own.Int64)
 		}
-		ki.raw.Type = gcadb.TypeKey
+		ki.raw.Type = db.TypeKey
 		c.keys = append(c.keys, ki)
 	}
 	rows.Close()
 
 	// Templates
-	rows, err = s.db.QueryContext(ctx, "SELECT item, version, template FROM templates ORDER BY item")
+	rows, err = s.xdb.QueryContext(ctx, "SELECT item, version, template FROM templates ORDER BY item")
 	if err != nil {
 		return nil, err
 	}
@@ -520,13 +520,13 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 			skip(id, "template", err)
 			continue
 		}
-		c.all = append(c.all, gcadb.RawItem{Item: withType(base[id], gcadb.TypeTemplate), Template: t})
+		c.all = append(c.all, db.RawItem{Item: withType(base[id], db.TypeTemplate), Template: t})
 	}
 	rows.Close()
 
 	// Requests and certificates link to keys through x509super.
 	pkey := map[int64]sql.NullInt64{}
-	rows, err = s.db.QueryContext(ctx, "SELECT item, pkey FROM x509super")
+	rows, err = s.xdb.QueryContext(ctx, "SELECT item, pkey FROM x509super")
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +538,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 	}
 	rows.Close()
 
-	rows, err = s.db.QueryContext(ctx, "SELECT item, signed, request FROM requests ORDER BY item")
+	rows, err = s.xdb.QueryContext(ctx, "SELECT item, signed, request FROM requests ORDER BY item")
 	if err != nil {
 		return nil, err
 	}
@@ -561,18 +561,18 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 			skip(id, "request", err)
 			continue
 		}
-		c.all = append(c.all, gcadb.RawItem{Item: withType(base[id], gcadb.TypeRequest),
-			Request: &gcadb.RawRequest{DER: b, KeyID: ref(pkey[id], xcaKey), Signed: signed.Int64 != 0}})
+		c.all = append(c.all, db.RawItem{Item: withType(base[id], db.TypeRequest),
+			Request: &db.RawRequest{DER: b, KeyID: ref(pkey[id], xcaKey), Signed: signed.Int64 != 0}})
 	}
 	rows.Close()
 
 	type certIn struct {
 		id     int64
 		issuer sql.NullInt64
-		raw    gcadb.RawItem
+		raw    db.RawItem
 	}
 	var certs []certIn
-	rows, err = s.db.QueryContext(ctx, `SELECT c.item, c.issuer, c.cert, a.item IS NOT NULL, a.template, a.crlExpire,
+	rows, err = s.xdb.QueryContext(ctx, `SELECT c.item, c.issuer, c.cert, a.item IS NOT NULL, a.template, a.crlExpire,
 		a.crlNo, a.crlDays, a.dnPolicy FROM certs c LEFT JOIN authority a ON a.item = c.item ORDER BY c.item`)
 	if err != nil {
 		return nil, err
@@ -597,12 +597,12 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 			skip(id, "certificate", err)
 			continue
 		}
-		rc := &gcadb.RawCert{DER: b, KeyID: ref(pkey[id], xcaKey)}
+		rc := &db.RawCert{DER: b, KeyID: ref(pkey[id], xcaKey)}
 		if hasAuth {
-			rc.Authority = &gcadb.Authority{TemplateID: ref(tmplID, xcaTemplate), CRLExpire: parseXCATime(crlExpire),
+			rc.Authority = &db.Authority{TemplateID: ref(tmplID, xcaTemplate), CRLExpire: parseXCATime(crlExpire),
 				CRLNo: crlNo.Int64, CRLDays: int(crlDays.Int64), DNPolicy: dnPolicy.String}
 		}
-		certs = append(certs, certIn{id, issuer, gcadb.RawItem{Item: withType(base[id], gcadb.TypeCert), Cert: rc}})
+		certs = append(certs, certIn{id, issuer, db.RawItem{Item: withType(base[id], db.TypeCert), Cert: rc}})
 	}
 	rows.Close()
 	// issuers are resolved once every certificate that could be one is known
@@ -611,7 +611,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 		c.all = append(c.all, ci.raw)
 	}
 
-	rows, err = s.db.QueryContext(ctx, "SELECT item, num, issuer, crl FROM crls ORDER BY item")
+	rows, err = s.xdb.QueryContext(ctx, "SELECT item, num, issuer, crl FROM crls ORDER BY item")
 	if err != nil {
 		return nil, err
 	}
@@ -634,12 +634,12 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 			skip(id, "CRL", err)
 			continue
 		}
-		c.all = append(c.all, gcadb.RawItem{Item: withType(base[id], gcadb.TypeCRL),
-			CRL: &gcadb.RawCRL{DER: b, IssuerID: ref(issuer, xcaCert), Number: num.Int64}})
+		c.all = append(c.all, db.RawItem{Item: withType(base[id], db.TypeCRL),
+			CRL: &db.RawCRL{DER: b, IssuerID: ref(issuer, xcaCert), Number: num.Int64}})
 	}
 	rows.Close()
 
-	rows, err = s.db.QueryContext(ctx, "SELECT caId, serial, date, invaldate, crlNo, reasonBit FROM revocations")
+	rows, err = s.xdb.QueryContext(ctx, "SELECT caId, serial, date, invaldate, crlNo, reasonBit FROM revocations")
 	if err != nil {
 		return nil, err
 	}
@@ -657,7 +657,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 		if d.IsZero() {
 			d = now
 		}
-		c.revocations = append(c.revocations, gcadb.Revocation{CAID: ca.Int64, Serial: strings.ToUpper(strings.TrimSpace(serial.String)),
+		c.revocations = append(c.revocations, db.Revocation{CAID: ca.Int64, Serial: strings.ToUpper(strings.TrimSpace(serial.String)),
 			Date: d, InvalDate: parseXCATime(inval), CRLNo: crlNo.Int64, ReasonBit: int(reason.Int64)})
 	}
 	rows.Close()
@@ -665,7 +665,7 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 	return c, nil
 }
 
-func withType(it gcadb.Item, typ int) gcadb.Item {
+func withType(it db.Item, typ int) db.Item {
 	it.Type = typ
 	return it
 }

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -20,7 +20,7 @@ import (
 // PGPView is a stored OpenPGP certificate with its keys mapped to the
 // key items holding them.
 type PGPView struct {
-	Cert   *gcadb.PGPCert
+	Cert   *db.PGPCert
 	Info   *codec.PGPInfo
 	KeyIDs []int64 // per Info.Keys: the key item, 0 if the key is not stored
 }
@@ -32,9 +32,9 @@ func (v *PGPView) Primary() int64 { return v.KeyIDs[0] }
 var ErrNoPGP = errors.New("the key has no OpenPGP certificate")
 
 func samePublic(a, b crypto.PublicKey) bool {
-	if da, ok := a.(*dsa.PublicKey); ok {
-		db, ok := b.(*dsa.PublicKey)
-		return ok && da.Y.Cmp(db.Y) == 0 && da.P.Cmp(db.P) == 0 && da.G.Cmp(db.G) == 0
+	if ka, ok := a.(*dsa.PublicKey); ok {
+		kb, ok := b.(*dsa.PublicKey)
+		return ok && ka.Y.Cmp(kb.Y) == 0 && ka.P.Cmp(kb.P) == 0 && ka.G.Cmp(kb.G) == 0
 	}
 	type equaler interface{ Equal(crypto.PublicKey) bool }
 	e, ok := a.(equaler)
@@ -43,7 +43,7 @@ func samePublic(a, b crypto.PublicKey) bool {
 
 // pgpViews describes every stored certificate. A certificate that does not
 // parse is left out.
-func pgpViews(snap *gcadb.Snapshot) []*PGPView {
+func pgpViews(snap *db.Snapshot) []*PGPView {
 	pubs := make(map[int64]crypto.PublicKey, len(snap.Keys))
 	for _, k := range snap.Keys {
 		if p, err := codec.ParsePublic(k.Public); err == nil {
@@ -75,10 +75,10 @@ func pgpViews(snap *gcadb.Snapshot) []*PGPView {
 }
 
 // PGPOf returns the certificate whose primary key is keyID, or nil.
-func PGPOf(snap *gcadb.Snapshot, keyID int64) *PGPView {
+func PGPOf(snap *db.Snapshot, keyID int64) *PGPView {
 	for _, c := range snap.PGP {
 		if c.KeyID == keyID {
-			for _, v := range pgpViews(&gcadb.Snapshot{Keys: snap.Keys, PGP: []*gcadb.PGPCert{c}}) {
+			for _, v := range pgpViews(&db.Snapshot{Keys: snap.Keys, PGP: []*db.PGPCert{c}}) {
 				return v
 			}
 		}
@@ -87,7 +87,7 @@ func PGPOf(snap *gcadb.Snapshot, keyID int64) *PGPView {
 }
 
 // PGPSubkeyOf returns the certificate in which keyID is a subkey, or nil.
-func PGPSubkeyOf(snap *gcadb.Snapshot, keyID int64) *PGPView {
+func PGPSubkeyOf(snap *db.Snapshot, keyID int64) *PGPView {
 	for _, v := range pgpViews(snap) {
 		for _, id := range v.KeyIDs[1:] {
 			if id == keyID {
@@ -122,7 +122,7 @@ func (h *Handle) GeneratePGPKey(ctx context.Context, name, comment string, spec 
 		p.Created = time.Now()
 	}
 	var id int64
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		if id, err = insertGenerated(ctx, tx, name, comment, primary, kr); err != nil {
 			return err
 		}
@@ -158,7 +158,7 @@ func (h *Handle) CreatePGP(ctx context.Context, keyID int64, subs []PGPSubkey, p
 	if p.Created.IsZero() {
 		p.Created = time.Now()
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		return certifyPGP(ctx, tx, keyID, primary, subs, keys, p, kr)
 	})
 	h.changed(ctx)
@@ -194,7 +194,7 @@ func (h *Handle) pgpSubkeys(ctx context.Context, subs []PGPSubkey, kr *vault.Key
 
 // certifyPGP stores the generated subkeys, builds the certificate and
 // stores it for primaryID.
-func certifyPGP(ctx context.Context, tx *gcadb.Tx, primaryID int64, primary crypto.Signer, subs []PGPSubkey, keys []crypto.Signer, p codec.PGPParams, kr *vault.Keyring) error {
+func certifyPGP(ctx context.Context, tx *db.Tx, primaryID int64, primary crypto.Signer, subs []PGPSubkey, keys []crypto.Signer, p codec.PGPParams, kr *vault.Keyring) error {
 	var bind []codec.PGPSubkey
 	for i, s := range subs {
 		if s.Spec != nil {
@@ -211,12 +211,12 @@ func certifyPGP(ctx context.Context, tx *gcadb.Tx, primaryID int64, primary cryp
 	return setPGPCert(ctx, tx, primaryID, cert)
 }
 
-func setPGPCert(ctx context.Context, tx *gcadb.Tx, keyID int64, cert []byte) error {
+func setPGPCert(ctx context.Context, tx *db.Tx, keyID int64, cert []byte) error {
 	info, err := codec.ParsePGPCert(cert)
 	if err != nil {
 		return err
 	}
-	return tx.SetPGPCert(ctx, gcadb.PGPCert{KeyID: keyID, Fingerprint: info.Keys[0].Fingerprint, Cert: cert})
+	return tx.SetPGPCert(ctx, db.PGPCert{KeyID: keyID, Fingerprint: info.Keys[0].Fingerprint, Cert: cert})
 }
 
 // AddPGPSubkey binds a stored key, for example an SSH key as
@@ -254,7 +254,7 @@ func (h *Handle) AddPGPSubkey(ctx context.Context, primaryID int64, sub PGPSubke
 	if err != nil {
 		return err
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		if sub.Spec != nil {
 			if _, err := insertGenerated(ctx, tx, sub.Name, "", keys[0], kr); err != nil {
 				return err
@@ -269,7 +269,7 @@ func (h *Handle) AddPGPSubkey(ctx context.Context, primaryID int64, sub PGPSubke
 
 // DeletePGP removes the OpenPGP certificate of a key; the keys stay.
 func (h *Handle) DeletePGP(ctx context.Context, keyID int64) error {
-	err := h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.DeletePGPCert(ctx, keyID) })
+	err := h.DB.Write(ctx, func(tx *db.Tx) error { return tx.DeletePGPCert(ctx, keyID) })
 	h.changed(ctx)
 	h.auditIf(ctx, err, "pgp.remove", keyID, "")
 	return err
@@ -278,7 +278,7 @@ func (h *Handle) DeletePGP(ctx context.Context, keyID int64) error {
 // pgpSecrets unlocks the secret of every stored key of a certificate; a
 // key not stored, without private part or on a token stays nil, except the
 // primary key, which is required.
-func (h *Handle) pgpSecrets(ctx context.Context, snap *gcadb.Snapshot, v *PGPView, kr *vault.Keyring, kp KeyPasswords) ([]crypto.Signer, error) {
+func (h *Handle) pgpSecrets(ctx context.Context, snap *db.Snapshot, v *PGPView, kr *vault.Keyring, kp KeyPasswords) ([]crypto.Signer, error) {
 	keys := make([]crypto.Signer, len(v.KeyIDs))
 	for i, id := range v.KeyIDs {
 		k := findKey(snap, id)

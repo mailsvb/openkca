@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/mailsvb/openkca/internal/auth"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/i18n"
 	"github.com/mailsvb/openkca/internal/store"
 )
@@ -178,12 +178,12 @@ func TestServerLoginFlow(t *testing.T) {
 	if loc := finishConversion(t, ts, c, "variants.xdb"); loc != "/db/variants/keys?notice=converted.ownpass&n=1" {
 		t.Fatalf("variants conversion: %q", loc)
 	}
-	for _, db := range []string{"sample", "variants"} {
+	for _, dbName := range []string{"sample", "variants"} {
 		for _, tab := range append(tabs, "options") {
-			r, _ = c.Get(ts.URL + "/db/" + db + "/" + tab)
+			r, _ = c.Get(ts.URL + "/db/" + dbName + "/" + tab)
 			b := body(t, r)
 			if r.StatusCode != http.StatusOK || strings.Contains(b, "[") && regexp.MustCompile(`\[[a-z]+\.[a-z.]+\]`).MatchString(b) {
-				t.Errorf("%s/%s: status %d or untranslated key", db, tab, r.StatusCode)
+				t.Errorf("%s/%s: status %d or untranslated key", dbName, tab, r.StatusCode)
 			}
 		}
 	}
@@ -297,7 +297,7 @@ func TestCreateImportUpgrade(t *testing.T) {
 	}
 	finishConversion(t, ts, c, "uploaded.xdb")
 	info, _ := srv.store.Lookup(context.Background(), "uploaded")
-	if info.Status != store.Supported || info.Schema != gcadb.Schema || info.XCA {
+	if info.Status != store.Supported || info.Schema != db.Schema || info.XCA {
 		t.Fatalf("after login: %+v", info)
 	}
 	if _, err := srv.store.Lookup(context.Background(), "uploaded.xdb"); err == nil {

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -73,7 +73,7 @@ func TestScan(t *testing.T) {
 
 // load opens a database by name; an XCA fixture of that name is imported
 // first (with fixturePassword).
-func load(t *testing.T, s *Store, name string) (*Handle, *gcadb.Snapshot) {
+func load(t *testing.T, s *Store, name string) (*Handle, *db.Snapshot) {
 	t.Helper()
 	ctx := context.Background()
 	var kr *vault.Keyring
@@ -123,7 +123,7 @@ func TestImportedSnapshot(t *testing.T) {
 		}
 		var fpr, subject, issuer []byte
 		h.DB.SQL.QueryRow("SELECT fingerprint, subject, issuer_name FROM certs WHERE item=?", c.ID).Scan(&fpr, &subject, &issuer)
-		if !bytes.Equal(fpr, gcadb.Fingerprint(c.DER)) || !bytes.Equal(subject, cert.RawSubject) || !bytes.Equal(issuer, cert.RawIssuer) {
+		if !bytes.Equal(fpr, db.Fingerprint(c.DER)) || !bytes.Equal(subject, cert.RawSubject) || !bytes.Equal(issuer, cert.RawIssuer) {
 			t.Errorf("cert %s: stored columns differ", c.Name)
 		}
 	}
@@ -170,14 +170,14 @@ func TestDecryptAllKeys(t *testing.T) {
 			n++
 			var kp KeyPasswords
 			if p, ok := tc.ownPass[k.Name]; ok {
-				if k.Protection != gcadb.ProtPassword || !k.Legacy {
+				if k.Protection != db.ProtPassword || !k.Legacy {
 					t.Errorf("%s/%s: protection %d legacy %v", tc.db, k.Name, k.Protection, k.Legacy)
 				}
 				if _, err := h.unlock(ctx, k.ID, k.KeyType, kr, nil); !errors.Is(err, ErrNeedKeyPassword) {
 					t.Errorf("%s/%s: opened without its password: %v", tc.db, k.Name, err)
 				}
 				kp = KeyPasswords{k.ID: []byte(p)}
-			} else if k.Protection != gcadb.ProtDEK {
+			} else if k.Protection != db.ProtDEK {
 				t.Errorf("%s/%s: protection %d", tc.db, k.Name, k.Protection)
 			}
 			priv, err := h.unlock(ctx, k.ID, k.KeyType, kr, kp)

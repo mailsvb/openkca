@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/store"
 )
@@ -135,7 +135,7 @@ func splitHosts(s string) []string {
 }
 
 // keyAlgorithm is the key type the profile's extensions depend on.
-func (q *quickForm) keyAlgorithm(snap *gcadb.Snapshot) string {
+func (q *quickForm) keyAlgorithm(snap *db.Snapshot) string {
 	fromReq := int64(0)
 	if q.KeyMode == "request" {
 		fromReq = q.FromReq
@@ -146,7 +146,7 @@ func (q *quickForm) keyAlgorithm(snap *gcadb.Snapshot) string {
 // editor turns the short form into the editor's form. With strict set it
 // also checks that the profile's fields are filled; the message key of
 // the first problem is returned.
-func (q *quickForm) editor(snap *gcadb.Snapshot, strict bool) (*editorForm, string) {
+func (q *quickForm) editor(snap *db.Snapshot, strict bool) (*editorForm, string) {
 	p := q.Profile
 	f := defaultEditor("cert", snap)
 	f.Profile = p.ID
@@ -204,7 +204,7 @@ func (q *quickForm) editor(snap *gcadb.Snapshot, strict bool) (*editorForm, stri
 	return f, problem
 }
 
-func (q *quickForm) check(snap *gcadb.Snapshot) string {
+func (q *quickForm) check(snap *db.Snapshot) string {
 	p := q.Profile
 	if p.has(fieldHosts) && len(splitHosts(q.Hosts)) == 0 {
 		return "profile.error.hosts"
@@ -233,7 +233,7 @@ func (q *quickForm) check(snap *gcadb.Snapshot) string {
 	return ""
 }
 
-func isSigner(snap *gcadb.Snapshot, id int64) bool {
+func isSigner(snap *db.Snapshot, id int64) bool {
 	for _, c := range choices(snap).Signers {
 		if c.ID == id {
 			return true
@@ -249,7 +249,7 @@ type summaryRow struct {
 }
 
 // quickSummary describes what the form would create, for the side panel.
-func (s *Server) quickSummary(r *http.Request, snap *gcadb.Snapshot, q *quickForm) map[string]any {
+func (s *Server) quickSummary(r *http.Request, snap *db.Snapshot, q *quickForm) map[string]any {
 	pr := s.printer(r)
 	ds := dbSession(r)
 	f, _ := q.editor(snap, false)
@@ -300,7 +300,7 @@ func (s *Server) quickSummary(r *http.Request, snap *gcadb.Snapshot, q *quickFor
 	}
 	var signerSPKI []byte
 	signerName := ""
-	var signerCert *gcadb.Cert
+	var signerCert *db.Cert
 	if id, err := strconv.ParseInt(q.Issuer, 10, 64); err == nil {
 		for _, c := range snap.Certs {
 			if c.ID == id {
@@ -460,7 +460,7 @@ func (q *quickForm) fromRequest(cn string, dns []string, ips []net.IP, emails []
 	}
 }
 
-func (s *Server) renderQuick(w http.ResponseWriter, r *http.Request, status int, snap *gcadb.Snapshot, q *quickForm, errKey string, errArgs ...any) {
+func (s *Server) renderQuick(w http.ResponseWriter, r *http.Request, status int, snap *db.Snapshot, q *quickForm, errKey string, errArgs ...any) {
 	ds := dbSession(r)
 	var vals []map[string]string
 	pr := s.printer(r)

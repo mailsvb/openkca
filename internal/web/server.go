@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/openkca/internal/auth"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/i18n"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/pubserve"
@@ -277,7 +277,7 @@ func (s *Server) requireServer(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		ctx := gcadb.WithClient(context.WithValue(r.Context(), ctxServer, ss), clientIP(r))
+		ctx := db.WithClient(context.WithValue(r.Context(), ctxServer, ss), clientIP(r))
 		next(w, r.WithContext(ctx))
 	}
 }

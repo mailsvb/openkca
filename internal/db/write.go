@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -98,7 +98,7 @@ func (t *Tx) UpdatePrivateKey(ctx context.Context, id int64, blob []byte, protec
 		return err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return fmt.Errorf("gcadb: key %d not found", id)
+		return fmt.Errorf("db: key %d not found", id)
 	}
 	t.Touch(id)
 	return nil

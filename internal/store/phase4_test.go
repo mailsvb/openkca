@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -52,7 +52,7 @@ func TestCAOperations(t *testing.T) {
 		t.Fatal("a self-signed certificate was revoked")
 	}
 	// A serial that is not in the database is refused.
-	if err := h.SetRevocation(ctx, subID, "0x0A:BC", Revocation{Reason: 5}); !errors.Is(err, gcadb.ErrUnknownCert) {
+	if err := h.SetRevocation(ctx, subID, "0x0A:BC", Revocation{Reason: 5}); !errors.Is(err, db.ErrUnknownCert) {
 		t.Fatalf("unknown serial: %v", err)
 	}
 	// A known serial entered by hand (lower case with colons), then edited
@@ -222,7 +222,7 @@ func TestCAOperations(t *testing.T) {
 		!strings.Contains(string(b), "\t"+nl.Serial+"\t") {
 		t.Fatalf("index of the renewed CA: %q %v", b, err)
 	}
-	if err := h.Restore(ctx, subID); !errors.Is(err, gcadb.ErrAuthorityInUse) {
+	if err := h.Restore(ctx, subID); !errors.Is(err, db.ErrAuthorityInUse) {
 		t.Fatalf("restored the replaced CA: %v", err)
 	}
 }

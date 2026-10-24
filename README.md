@@ -228,10 +228,10 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 The go-ca schema was reset to 1 during development: `.gca` files from
 earlier development versions are not supported; import them again from
 XCA. From schema 1 on, every schema change comes with a migration step
-(`internal/gcadb`, `steps`) that upgrades older databases when they are
+(`internal/db`, `steps`) that upgrades older databases when they are
 opened.
 
-A go-ca database is an SQLite file with its own schema (`internal/gcadb`)
+A go-ca database is an SQLite file with its own schema (`internal/db`)
 and SQLite's application ID `gca1`: every item with a UUID (version 7)
 next to its row ID, DER objects as BLOBs with SHA-256
 fingerprints, links as foreign keys, templates as JSON, a trash and an

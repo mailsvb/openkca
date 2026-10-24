@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -40,7 +40,7 @@ func TestCreate(t *testing.T) {
 		t.Fatalf("short password: %v", err)
 	}
 	info, err := s.Lookup(ctx, "new-ca")
-	if err != nil || info.Status != Supported || info.XCA || info.Schema != gcadb.Schema ||
+	if err != nil || info.Status != Supported || info.XCA || info.Schema != db.Schema ||
 		filepath.Base(info.Path) != "new-ca.gca" {
 		t.Fatalf("lookup: %+v %v", info, err)
 	}
@@ -180,13 +180,13 @@ func TestImport(t *testing.T) {
 	// Variants the fixture lacks: a "Bogus" key, a deleted item and a key
 	// encrypted with another password.
 	{
-		db, err := sql.Open("sqlite", dsn(src, false))
+		sqldb, err := sql.Open("sqlite", dsn(src, false))
 		if err != nil {
 			t.Fatal(err)
 		}
 		reencrypt := func(item int, typ, from, to string) string {
 			var blob string
-			db.QueryRow("SELECT private FROM private_keys WHERE item=?", item).Scan(&blob)
+			sqldb.QueryRow("SELECT private FROM private_keys WHERE item=?", item).Scan(&blob)
 			raw, _ := b64.StdEncoding.DecodeString(blob)
 			der, err := legacyDER(raw, typ, []byte(from))
 			if err != nil {
@@ -206,11 +206,11 @@ func TestImport(t *testing.T) {
 			{"UPDATE private_keys SET private=? WHERE item=18", []any{reencrypt(18, "EC", "secret", "other")}},
 			{"UPDATE items SET del=1 WHERE id=12", nil},
 		} {
-			if _, err := db.Exec(st.q, st.args...); err != nil {
+			if _, err := sqldb.Exec(st.q, st.args...); err != nil {
 				t.Fatal(err)
 			}
 		}
-		db.Close()
+		sqldb.Close()
 	}
 	// a file in the backup folder named like the source is not touched
 	os.MkdirAll(s.BackupDir(), 0o700)
@@ -261,12 +261,12 @@ func TestImport(t *testing.T) {
 	for _, r := range rows {
 		switch r.ID {
 		case 10, 18: // own password: mail (XCA), pending (did not open)
-			if r.Protection != gcadb.ProtPassword || vault.IsSealed(r.Blob) {
+			if r.Protection != db.ProtPassword || vault.IsSealed(r.Blob) {
 				t.Errorf("key %d: protection %d, sealed %v", r.ID, r.Protection, vault.IsSealed(r.Blob))
 			}
 			continue
 		}
-		if r.Protection != gcadb.ProtDEK || vault.Mode(r.Blob) != vault.ModeDEK {
+		if r.Protection != db.ProtDEK || vault.Mode(r.Blob) != vault.ModeDEK {
 			t.Errorf("key %d: protection %d, mode %d", r.ID, r.Protection, vault.Mode(r.Blob))
 			continue
 		}
@@ -301,7 +301,7 @@ func TestImport(t *testing.T) {
 			t.Errorf("key %d check: %s %v %v", id, algo, ok, err)
 		}
 		sk, _ := h.DB.StoredPrivateKey(ctx, id)
-		if sk.Protection != gcadb.ProtPassword || vault.Mode(sk.Blob) != vault.ModePassword {
+		if sk.Protection != db.ProtPassword || vault.Mode(sk.Blob) != vault.ModePassword {
 			t.Errorf("key %d not upgraded: protection %d, mode %d", id, sk.Protection, vault.Mode(sk.Blob))
 		}
 	}
@@ -341,7 +341,7 @@ func TestFormerGoCARefused(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
 	path := filepath.Join(s.Dir, "sample.xdb")
-	db, err := sql.Open("sqlite", dsn(path, false))
+	sqldb, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,11 +349,11 @@ func TestFormerGoCARefused(t *testing.T) {
 		"UPDATE settings SET value='1000' WHERE key_='schema'",
 		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '2')",
 	} {
-		if _, err := db.Exec(q); err != nil {
+		if _, err := sqldb.Exec(q); err != nil {
 			t.Fatal(err)
 		}
 	}
-	db.Close()
+	sqldb.Close()
 	info, _ := s.Lookup(ctx, "sample.xdb")
 	if info.Status != Invalid || !strings.Contains(info.Detail, "former") {
 		t.Fatalf("lookup %+v", info)
@@ -371,16 +371,16 @@ func TestNewerGoCA(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.Dir, "next.gca")
-	db, err := sql.Open("sqlite", dsn(path, false))
+	sqldb, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec("UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(gcadb.Schema+1))
-	db.Close()
+	_, err = sqldb.Exec("UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(db.Schema+1))
+	sqldb.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, _, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != gcadb.Schema+1 {
+	if st, _, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != db.Schema+1 {
 		t.Fatalf("newer go-ca: %s %+v", st, v)
 	}
 	if _, err := s.Acquire(ctx, "next"); err == nil {

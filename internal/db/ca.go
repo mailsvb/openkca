@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"bytes"

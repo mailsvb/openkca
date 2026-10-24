@@ -3,7 +3,7 @@ package web
 import (
 	"bytes"
 	"fmt"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"html/template"
 	"net/http"
 	"path"
@@ -165,7 +165,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 }
 
 func (s *Server) header(ds *session.Session) *dbHeader {
-	h := &dbHeader{Name: ds.DBName, Label: ds.DBName, Schema: gcadb.Schema}
+	h := &dbHeader{Name: ds.DBName, Label: ds.DBName, Schema: db.Schema}
 	if c, ok := s.store.ConfiguredDB(ds.DBName); ok {
 		h.Label, h.Background = c.Label, c.Background
 	}

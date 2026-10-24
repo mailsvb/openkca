@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -66,9 +66,9 @@ func (h *Handle) keyDER(ctx context.Context, keyID int64, keyType string, kr *va
 		return nil, fmt.Errorf("%w: %v", ErrNoPrivateKey, err)
 	}
 	switch sk.Protection {
-	case gcadb.ProtToken:
+	case db.ProtToken:
 		return nil, errors.New("the key is on a security token, which go-ca does not access")
-	case gcadb.ProtPassword:
+	case db.ProtPassword:
 		pw := kp[keyID]
 		if len(pw) == 0 {
 			return nil, ErrNeedKeyPassword
@@ -108,7 +108,7 @@ func (h *Handle) upgradeOwnPassword(ctx context.Context, keyID int64, spki, der,
 	}
 	blob, err := vault.SealWithPassword(der, spki, pw, p)
 	if err == nil {
-		err = h.DB.Write(ctx, func(tx *gcadb.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, gcadb.ProtPassword) })
+		err = h.DB.Write(ctx, func(tx *db.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, db.ProtPassword) })
 	}
 	if err != nil {
 		slog.Warn("upgrading a key with its own password failed", "db", h.Name, "id", keyID, "err", err)
@@ -142,7 +142,7 @@ func sealKey(kr *vault.Keyring, key crypto.Signer, spki []byte) ([]byte, error) 
 // CheckKey decrypts a key and reports its algorithm and whether it
 // matches its public key. password is the key's own password (ignored for
 // other keys); a wrong one returns ErrNeedKeyPassword.
-func (h *Handle) CheckKey(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, password []byte) (algorithm string, ok bool, err error) {
+func (h *Handle) CheckKey(ctx context.Context, k *db.Key, kr *vault.Keyring, password []byte) (algorithm string, ok bool, err error) {
 	var kp KeyPasswords
 	if len(password) > 0 {
 		kp = KeyPasswords{k.ID: password}

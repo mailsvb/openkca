@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -21,13 +21,13 @@ func openDst(t *testing.T) *sql.DB {
 	t.Helper()
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "dst.gca")+"?"+q.Encode())
+	sqldb, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "dst.gca")+"?"+q.Encode())
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
-	return db
+	sqldb.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqldb.Close() })
+	return sqldb
 }
 
 func TestInspect(t *testing.T) {
@@ -67,11 +67,11 @@ func TestImportFixtures(t *testing.T) {
 		if len(rep.Skipped) > 0 || rep.Items == 0 {
 			t.Fatalf("%s: report %+v", name, rep)
 		}
-		db, err := gcadb.Open(ctx, dst)
+		d, err := db.Open(ctx, dst)
 		if err != nil {
 			t.Fatal(err)
 		}
-		snap, err := db.Load(ctx)
+		snap, err := d.Load(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,13 +96,13 @@ func TestImportFixtures(t *testing.T) {
 			if !k.HasPrivate {
 				continue
 			}
-			if k.Protection == gcadb.ProtPassword {
+			if k.Protection == db.ProtPassword {
 				if !k.Legacy {
 					t.Errorf("%s/%s: own-password key not marked legacy", name, k.Name)
 				}
 				continue
 			}
-			sk, err := db.StoredPrivateKey(ctx, k.ID)
+			sk, err := d.StoredPrivateKey(ctx, k.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestImportFixtures(t *testing.T) {
 		if len(snap.Templates) == 0 || snap.Templates[0].Data == nil {
 			t.Errorf("%s: templates %v", name, snap.Templates)
 		}
-		log, _ := db.AuditLog(ctx, 0, 0, 10)
+		log, _ := d.AuditLog(ctx, 0, 0, 10)
 		if len(log) != 1 || log[0].Action != "database.import" {
 			t.Errorf("%s: audit %+v", name, log)
 		}
@@ -174,11 +174,11 @@ func TestImportUpgradesDefaults(t *testing.T) {
 	if _, _, err := src.Import(ctx, dst, []byte("secret"), cheap, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	db, err := gcadb.Open(ctx, dst)
+	d, err := db.Open(ctx, dst)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := db.Load(ctx)
+	snap, err := d.Load(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

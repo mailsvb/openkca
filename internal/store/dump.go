@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -119,7 +119,7 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, kr *vault.Keyring, expor
 // it is when that is a standard encrypted PKCS#8 file; otherwise (go-ca's
 // own format, or XCA's legacy form, which no other program reads) only its
 // public key is written and ownPass reports it.
-func (h *Handle) dumpKey(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, exportPass []byte) (data []byte, ownPass bool, err error) {
+func (h *Handle) dumpKey(ctx context.Context, k *db.Key, kr *vault.Keyring, exportPass []byte) (data []byte, ownPass bool, err error) {
 	if !k.HasPrivate || k.Token {
 		return codec.PEM(codec.PEMPublicKey, k.Public), false, nil
 	}
@@ -127,7 +127,7 @@ func (h *Handle) dumpKey(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, e
 	if err != nil {
 		return nil, false, err
 	}
-	if sk.Protection == gcadb.ProtPassword {
+	if sk.Protection == db.ProtPassword {
 		if pki.IsEncryptedPKCS8(sk.Blob) {
 			return codec.PEM(codec.PEMEncrypted, sk.Blob), false, nil
 		}

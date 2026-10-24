@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // revocationOf returns the revocation of serial under caID.
-func revOf(snap *gcadb.Snapshot, caID int64, serial string) *gcadb.Revocation {
+func revOf(snap *db.Snapshot, caID int64, serial string) *db.Revocation {
 	for _, r := range snap.Revocations {
 		if r.CAID == caID && r.Serial == serial {
 			return r
@@ -68,8 +68,8 @@ func TestRevocationExpiryAndPurge(t *testing.T) {
 
 	// A revocation without a known certificate (as an XCA import can bring) is
 	// not published.
-	if err := h.DB.Write(ctx, func(tx *gcadb.Tx) error {
-		return tx.PutRevocation(ctx, gcadb.Revocation{CAID: rootID, Serial: "0ABC", Date: time.Now()})
+	if err := h.DB.Write(ctx, func(tx *db.Tx) error {
+		return tx.PutRevocation(ctx, db.Revocation{CAID: rootID, Serial: "0ABC", Date: time.Now()})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRevocationExpiryAndPurge(t *testing.T) {
 		crlIDs = append(crlIDs, id)
 	}
 	snap, _ = h.Snapshot(ctx)
-	var gen []*gcadb.CRL
+	var gen []*db.CRL
 	for _, c := range snap.CRLs {
 		if c.IssuerID == rootID {
 			gen = append(gen, c)

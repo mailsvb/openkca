@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/publish"
 	"github.com/mailsvb/openkca/internal/vault"
@@ -122,7 +122,7 @@ func TestSignDueCRLs(t *testing.T) {
 	if st := AutoCRLState(snap, findCert(snap, rootID)); st != AutoCRLOn {
 		t.Fatalf("root state %s", st)
 	}
-	_ = gcadb.ProtDEK
+	_ = db.ProtDEK
 }
 
 // TestWatch: changes through a handle signal its watchers without blocking.

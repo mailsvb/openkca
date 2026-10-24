@@ -16,7 +16,7 @@ import (
 
 	"github.com/cloudflare/circl/sign/ed448"
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/session"
 	"github.com/mailsvb/openkca/internal/store"
@@ -185,14 +185,14 @@ func (s *Server) newPGPKey(w http.ResponseWriter, r *http.Request) {
 // pgpSubRow is a subkey on a key's PGP page.
 type pgpSubRow struct {
 	codec.PGPKeyInfo
-	Key *gcadb.Key // the stored key, nil if not stored
+	Key *db.Key // the stored key, nil if not stored
 }
 
 // pgpKeyForm is the PGP page of a key.
 type pgpKeyForm struct {
-	Key         *gcadb.Key
+	Key         *db.Key
 	View        *store.PGPView
-	Primary     *gcadb.Key // when Key is a subkey of another key's certificate
+	Primary     *db.Key // when Key is a subkey of another key's certificate
 	Fingerprint string
 	Public      string // armored
 	Subkeys     []pgpSubRow
@@ -209,12 +209,12 @@ type pgpKeyForm struct {
 	Usages      []string
 }
 
-func (s *Server) pgpKeyForm(r *http.Request, snap *gcadb.Snapshot) (*pgpKeyForm, bool) {
+func (s *Server) pgpKeyForm(r *http.Request, snap *db.Snapshot) (*pgpKeyForm, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		return nil, false
 	}
-	var k *gcadb.Key
+	var k *db.Key
 	for _, sk := range snap.Keys {
 		if sk.ID == id {
 			k = sk
@@ -224,7 +224,7 @@ func (s *Server) pgpKeyForm(r *http.Request, snap *gcadb.Snapshot) (*pgpKeyForm,
 		return nil, false
 	}
 	f := &pgpKeyForm{Key: k, Flavors: pgpFlavors, Flavor: pgpFlavors[0], Versions: pgpVersions, Expiries: pgpExpiries, Usages: pgpUsages}
-	byID := map[int64]*gcadb.Key{}
+	byID := map[int64]*db.Key{}
 	for _, sk := range snap.Keys {
 		byID[sk.ID] = sk
 	}
@@ -239,7 +239,7 @@ func (s *Server) pgpKeyForm(r *http.Request, snap *gcadb.Snapshot) (*pgpKeyForm,
 			sk := byID[v.KeyIDs[i]]
 			if sk != nil {
 				inCert[sk.ID] = true
-				f.OwnPass = f.OwnPass || sk.Protection == gcadb.ProtPassword
+				f.OwnPass = f.OwnPass || sk.Protection == db.ProtPassword
 			}
 			if i > 0 {
 				f.Subkeys = append(f.Subkeys, pgpSubRow{PGPKeyInfo: info, Key: sk})
@@ -269,7 +269,7 @@ func (s *Server) pgpKeyForm(r *http.Request, snap *gcadb.Snapshot) (*pgpKeyForm,
 		return nil, false
 	}
 	f.CanCreate = k.HasPrivate && !k.Token && (codec.PGPCompatible(pub, 4, false) || codec.PGPCompatible(pub, 6, false))
-	f.OwnPass = k.Protection == gcadb.ProtPassword
+	f.OwnPass = k.Protection == db.ProtPassword
 	if spec := encryptionSpec(pub); spec != nil {
 		f.SubkeySpec = spec.Type
 		switch {
@@ -314,7 +314,7 @@ func (s *Server) pgpKeyPage(w http.ResponseWriter, r *http.Request) {
 
 // pgpAction loads the PGP page of a POST and runs fn; fn's error key is
 // shown on the page.
-func (s *Server) pgpAction(w http.ResponseWriter, r *http.Request, fn func(ds *session.Session, f *pgpKeyForm, snap *gcadb.Snapshot) (string, string, error)) {
+func (s *Server) pgpAction(w http.ResponseWriter, r *http.Request, fn func(ds *session.Session, f *pgpKeyForm, snap *db.Snapshot) (string, string, error)) {
 	ds := dbSession(r)
 	snap, err := ds.Handle.Snapshot(r.Context())
 	if err != nil {
@@ -349,7 +349,7 @@ func (s *Server) pgpAction(w http.ResponseWriter, r *http.Request, fn func(ds *s
 
 // pgpCreate turns a stored key into an OpenPGP primary key.
 func (s *Server) pgpCreate(w http.ResponseWriter, r *http.Request) {
-	s.pgpAction(w, r, func(ds *session.Session, f *pgpKeyForm, snap *gcadb.Snapshot) (string, string, error) {
+	s.pgpAction(w, r, func(ds *session.Session, f *pgpKeyForm, snap *db.Snapshot) (string, string, error) {
 		if !f.CanCreate {
 			return "pgpkey.error.notpgp", "", nil
 		}
@@ -378,7 +378,7 @@ func (s *Server) pgpCreate(w http.ResponseWriter, r *http.Request) {
 
 // pgpAddSubkey binds a stored key, or a new encryption key, as subkey.
 func (s *Server) pgpAddSubkey(w http.ResponseWriter, r *http.Request) {
-	s.pgpAction(w, r, func(ds *session.Session, f *pgpKeyForm, snap *gcadb.Snapshot) (string, string, error) {
+	s.pgpAction(w, r, func(ds *session.Session, f *pgpKeyForm, snap *db.Snapshot) (string, string, error) {
 		if f.View == nil || f.Primary != nil || !f.Private {
 			return "pgpkey.error.notpgp", "", nil
 		}
@@ -417,7 +417,7 @@ func (s *Server) pgpAddSubkey(w http.ResponseWriter, r *http.Request) {
 
 // pgpRemove deletes a key's certificate; its keys stay.
 func (s *Server) pgpRemove(w http.ResponseWriter, r *http.Request) {
-	s.pgpAction(w, r, func(ds *session.Session, f *pgpKeyForm, _ *gcadb.Snapshot) (string, string, error) {
+	s.pgpAction(w, r, func(ds *session.Session, f *pgpKeyForm, _ *db.Snapshot) (string, string, error) {
 		if f.View == nil || f.Primary != nil || r.PostFormValue("confirm") == "" {
 			return "pgpkey.error.confirm", "", nil
 		}
@@ -429,7 +429,7 @@ func (s *Server) pgpRemove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func findSnapKey(snap *gcadb.Snapshot, id int64) *gcadb.Key {
+func findSnapKey(snap *db.Snapshot, id int64) *db.Key {
 	for _, k := range snap.Keys {
 		if k.ID == id {
 			return k

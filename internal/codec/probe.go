@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pkcs12"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/tmpl"
@@ -23,7 +23,7 @@ import (
 
 // Object is one item found in an imported file.
 type Object struct {
-	Type     int    // gcadb.Type*
+	Type     int    // db.Type*
 	Name     string // suggested internal name
 	Comment  string
 	DER      []byte // certificate, request or CRL; SubjectPublicKeyInfo for keys
@@ -279,7 +279,7 @@ func (p *prober) request(der []byte) {
 		p.skip("request: %v", err)
 		return
 	}
-	p.add(Object{Type: gcadb.TypeRequest, Name: p.x509Name(r.RawSubject), DER: der})
+	p.add(Object{Type: db.TypeRequest, Name: p.x509Name(r.RawSubject), DER: der})
 }
 
 func (p *prober) crl(der []byte) {
@@ -288,7 +288,7 @@ func (p *prober) crl(der []byte) {
 		p.skip("CRL: %v", err)
 		return
 	}
-	p.add(Object{Type: gcadb.TypeCRL, Name: p.x509Name(l.RawIssuer), DER: der})
+	p.add(Object{Type: db.TypeCRL, Name: p.x509Name(l.RawIssuer), DER: der})
 }
 
 func (p *prober) pkcs7(der []byte) {
@@ -389,7 +389,7 @@ func (p *prober) namedCert(der []byte, name string) string {
 	if name == "" {
 		name = p.x509Name(c.RawSubject)
 	}
-	p.add(Object{Type: gcadb.TypeCert, Name: name, DER: der})
+	p.add(Object{Type: db.TypeCert, Name: name, DER: der})
 	return name
 }
 
@@ -406,7 +406,7 @@ func (p *prober) keyName(spki []byte, public bool) (string, string, int) {
 
 func (p *prober) publicKey(spki []byte) {
 	name, typ, bits := p.keyName(spki, true)
-	p.add(Object{Type: gcadb.TypeKey, Name: name, DER: spki, KeyType: typ, KeyBits: bits})
+	p.add(Object{Type: db.TypeKey, Name: name, DER: spki, KeyType: typ, KeyBits: bits})
 }
 
 func (p *prober) privateKey(pkcs8 []byte, name, comment string) {
@@ -419,7 +419,7 @@ func (p *prober) privateKey(pkcs8 []byte, name, comment string) {
 	if name == "" || name == "_key" {
 		name = n
 	}
-	p.add(Object{Type: gcadb.TypeKey, Name: name, Comment: comment, DER: spki, Private: pkcs8, KeyType: typ, KeyBits: bits})
+	p.add(Object{Type: db.TypeKey, Name: name, Comment: comment, DER: spki, Private: pkcs8, KeyType: typ, KeyBits: bits})
 }
 
 func (p *prober) pkcs8(der []byte) { p.privateKey(der, "", "") }
@@ -535,7 +535,7 @@ func (p *prober) pgp(data []byte) {
 			if i > 0 {
 				name += " [" + k.Usage + "]"
 			}
-			o := Object{Type: gcadb.TypeKey, Name: name, DER: spki, KeyType: typ, KeyBits: bits, PGPFingerprint: k.Fingerprint}
+			o := Object{Type: db.TypeKey, Name: name, DER: spki, KeyType: typ, KeyBits: bits, PGPFingerprint: k.Fingerprint}
 			if i == 0 {
 				o.PGP = e.Cert
 			}
@@ -562,7 +562,7 @@ func (p *prober) sshPublic(pub crypto.PublicKey, comment string) {
 	if c := SSHComment(comment); c != "" {
 		name = c
 	}
-	p.add(Object{Type: gcadb.TypeKey, Name: name, Comment: comment, DER: spki, KeyType: typ, KeyBits: bits})
+	p.add(Object{Type: db.TypeKey, Name: name, Comment: comment, DER: spki, KeyType: typ, KeyBits: bits})
 }
 
 func (p *prober) rfc4716(text []byte) {
@@ -617,7 +617,7 @@ func (p *prober) template(b []byte) {
 	if name == "" {
 		name = p.x509Name(t.Subject)
 	}
-	p.add(Object{Type: gcadb.TypeTemplate, Name: name, Comment: t.Comment, Template: t})
+	p.add(Object{Type: db.TypeTemplate, Name: name, Comment: t.Comment, Template: t})
 }
 
 func (p *prober) pvk(data []byte) {

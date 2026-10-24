@@ -1,4 +1,4 @@
-package gcadb
+package db
 
 import (
 	"context"
@@ -245,7 +245,7 @@ func Open(ctx context.Context, db *sql.DB) (*DB, error) {
 		return nil, err
 	}
 	if !gca || s != Schema {
-		return nil, fmt.Errorf("gcadb: not a go-ca database of schema %d", Schema)
+		return nil, fmt.Errorf("db: not a go-ca database of schema %d", Schema)
 	}
 	return &DB{SQL: db}, nil
 }

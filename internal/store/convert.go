@@ -15,7 +15,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 	"github.com/mailsvb/openkca/internal/xcaimport"
@@ -203,19 +203,19 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		return nil, rep, err
 	}
-	db, err := sql.Open("sqlite", dsn(tmp, false))
+	sqldb, err := sql.Open("sqlite", dsn(tmp, false))
 	if err != nil {
 		return nil, rep, err
 	}
-	db.SetMaxOpenConns(1)
-	nk, ir, err := src.Import(ctx, db, password, p, nil, func(done, total int) {
+	sqldb.SetMaxOpenConns(1)
+	nk, ir, err := src.Import(ctx, sqldb, password, p, nil, func(done, total int) {
 		c.total.Store(int64(total))
 		c.done.Store(int64(done))
 	})
 	if err == nil {
-		_, err = db.ExecContext(ctx, "VACUUM")
+		_, err = sqldb.ExecContext(ctx, "VACUUM")
 	}
-	if cerr := db.Close(); err == nil {
+	if cerr := sqldb.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
@@ -258,12 +258,12 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 	if st != Supported {
 		return fmt.Errorf("status %s %s", st, detail)
 	}
-	db, err := sql.Open("sqlite", dsn(path, true))
+	sqldb, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	d, err := gcadb.Open(ctx, db)
+	defer sqldb.Close()
+	d, err := db.Open(ctx, sqldb)
 	if err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 		return fmt.Errorf("%d items written, %d found", items, n)
 	}
 	var fk int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fk); err != nil || fk != 0 {
+	if err := sqldb.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fk); err != nil || fk != 0 {
 		return fmt.Errorf("%d broken links (%v)", fk, err)
 	}
 	kdf, err := d.Setting(ctx, "kdf")
@@ -300,7 +300,7 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 		return err
 	}
 	for _, r := range rows {
-		if r.Protection != gcadb.ProtDEK {
+		if r.Protection != db.ProtDEK {
 			continue
 		}
 		der, err := kr.Open(r.Blob, r.Public)

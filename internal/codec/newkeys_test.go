@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pkcs12"
 	"github.com/mailsvb/openkca/internal/pki"
 )
@@ -39,14 +39,14 @@ func TestProbeNewKeyTypes(t *testing.T) {
 				t.Fatalf("%s %s: %d objects, skipped %v", spec.Type, what, len(r.Objects), r.Unrecognized)
 			}
 			o := r.Objects[0]
-			if typ == gcadb.TypeKey && (!bytes.Equal(o.DER, spki) || o.KeyType != wantType || o.KeyBits != wantBits) {
+			if typ == db.TypeKey && (!bytes.Equal(o.DER, spki) || o.KeyType != wantType || o.KeyBits != wantBits) {
 				t.Errorf("%s %s: key %q %d", spec.Type, what, o.KeyType, o.KeyBits)
 			}
 		}
-		check("SPKI PEM", PEM(PEMPublicKey, spki), gcadb.TypeKey)
-		check("SPKI DER", spki, gcadb.TypeKey)
-		check("PKCS#8 PEM", PEM(PEMPrivateKey, pk8), gcadb.TypeKey)
-		check("PKCS#8 DER", pk8, gcadb.TypeKey)
+		check("SPKI PEM", PEM(PEMPublicKey, spki), db.TypeKey)
+		check("SPKI DER", spki, db.TypeKey)
+		check("PKCS#8 PEM", PEM(PEMPrivateKey, pk8), db.TypeKey)
+		check("PKCS#8 DER", pk8, db.TypeKey)
 
 		if !pki.CanSign(key) {
 			continue
@@ -57,14 +57,14 @@ func TestProbeNewKeyTypes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		check("certificate PEM", PEM(PEMCert, der), gcadb.TypeCert)
-		check("certificate DER", der, gcadb.TypeCert)
+		check("certificate PEM", PEM(PEMCert, der), db.TypeCert)
+		check("certificate DER", der, db.TypeCert)
 		csr, err := pki.CreateRequest(subject, nil, key, "sha256")
 		if err != nil {
 			t.Fatal(err)
 		}
-		check("request PEM", PEM(PEMRequest, csr), gcadb.TypeRequest)
-		check("request DER", csr, gcadb.TypeRequest)
+		check("request PEM", PEM(PEMRequest, csr), db.TypeRequest)
+		check("request DER", csr, db.TypeRequest)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/tmpl"
 )
@@ -63,7 +63,7 @@ func (h *Handle) SaveTemplate(ctx context.Context, d TemplateData) (int64, error
 	if source == 0 {
 		source = 2
 	}
-	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *db.Tx) error {
 		if id == 0 {
 			id, err = tx.InsertTemplate(ctx, d.Name, d.Comment, source, blob)
 			return err

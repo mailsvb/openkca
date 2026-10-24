@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/vault"
 )
 
@@ -135,12 +135,12 @@ func TestPasswordChangePurgesBackups(t *testing.T) {
 	}
 	// the remaining backup is the new state: it opens with the new password
 	_ = old
-	db, err := openRO(all[0])
+	sqldb, err := openRO(all[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	g, _ := gcadb.Open(ctx, db)
+	defer sqldb.Close()
+	g, _ := db.Open(ctx, sqldb)
 	kdf, _ := g.Setting(ctx, "kdf")
 	dek, _ := g.Setting(ctx, "dek")
 	if _, err := vault.Unwrap(kdf, dek, []byte("another password")); err != nil {

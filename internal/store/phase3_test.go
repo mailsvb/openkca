@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -180,7 +180,7 @@ func TestIssueHierarchy(t *testing.T) {
 			continue
 		}
 		blob, own, _ := h.DB.PrivateKey(ctx, k.ID)
-		if own != gcadb.ProtDEK || vault.Mode(blob) != vault.ModeDEK {
+		if own != db.ProtDEK || vault.Mode(blob) != vault.ModeDEK {
 			t.Errorf("%s ownPass %d, mode %d", k.Name, own, vault.Mode(blob))
 		}
 		if _, err := h.unlock(ctx, k.ID, k.KeyType, nk, nil); err != nil {

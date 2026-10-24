@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 )
 
 type trashRow struct {
-	gcadb.Item
+	db.Item
 	Kind string
 }
 
@@ -24,7 +24,7 @@ func (s *Server) trashPage(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]trashRow, len(items))
 	for i, it := range items {
-		rows[i] = trashRow{it, gcadb.TypeName(it.Type)}
+		rows[i] = trashRow{it, db.TypeName(it.Type)}
 	}
 	p := &page{Title: "trash.title", Tab: "trash", Data: map[string]any{"Rows": rows}}
 	switch r.URL.Query().Get("notice") {
@@ -55,7 +55,7 @@ func (s *Server) restoreItem(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
 	if err := ds.Handle.Restore(r.Context(), id); err != nil {
 		s.log.Warn("restore failed", "db", ds.DBName, "id", id, "err", err)
-		if errors.Is(err, gcadb.ErrAuthorityInUse) {
+		if errors.Is(err, db.ErrAuthorityInUse) {
 			s.toTrash(w, r, "error=trash.error.authority")
 			return
 		}

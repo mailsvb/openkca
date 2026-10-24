@@ -1,4 +1,4 @@
-// Package gcadb reads and writes go-ca's database files (.gca): SQLite
+// Package db reads and writes go-ca's database files (.gca): SQLite
 // with go-ca's own schema. It is the only package that issues SQL against
 // a go-ca database; reading XCA's files is package xcaimport's job.
 //
@@ -19,7 +19,7 @@
 // items in a trash until they are purged, protects private keys with
 // package vault, stores templates as JSON and records changes in an
 // append-only audit table.
-package gcadb
+package db
 
 import (
 	"context"
@@ -166,7 +166,7 @@ func Create(ctx context.Context, db *sql.DB, settings map[string]string, fn func
 	defer sqlTx.Rollback()
 	for _, stmt := range ddl {
 		if _, err := sqlTx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("gcadb: create: %w", err)
+			return fmt.Errorf("db: create: %w", err)
 		}
 	}
 	if _, err := sqlTx.ExecContext(ctx, fmt.Sprintf("PRAGMA application_id = %d", ApplicationID)); err != nil {
@@ -229,23 +229,23 @@ func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error)
 
 func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step, target int) (bool, error) {
 	if MinMigratable+len(steps) != target {
-		return false, fmt.Errorf("gcadb: %d migration steps do not lead from schema %d to %d", len(steps), MinMigratable, target)
+		return false, fmt.Errorf("db: %d migration steps do not lead from schema %d to %d", len(steps), MinMigratable, target)
 	}
 	s, gca, err := ReadSchema(ctx, db)
 	if err != nil {
 		return false, err
 	}
 	if !gca {
-		return false, errors.New("gcadb: not a go-ca database")
+		return false, errors.New("db: not a go-ca database")
 	}
 	switch {
 	case s == target:
 		return false, nil
 	case s < MinMigratable || s > target:
-		return false, fmt.Errorf("gcadb: schema %d cannot be migrated", s)
+		return false, fmt.Errorf("db: schema %d cannot be migrated", s)
 	}
 	if err := backup(); err != nil {
-		return false, fmt.Errorf("gcadb: backup before migration: %w", err)
+		return false, fmt.Errorf("db: backup before migration: %w", err)
 	}
 	sqlTx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -255,7 +255,7 @@ func migrate(ctx context.Context, db *sql.DB, backup func() error, steps []step,
 	tx := &Tx{Tx: sqlTx}
 	for v := s; v < target; v++ {
 		if err := steps[v-MinMigratable](ctx, tx); err != nil {
-			return false, fmt.Errorf("gcadb: migrate schema %d to %d: %w", v, v+1, err)
+			return false, fmt.Errorf("db: migrate schema %d to %d: %w", v, v+1, err)
 		}
 	}
 	if _, err := sqlTx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(target)); err != nil {
@@ -280,7 +280,7 @@ func ReadSchema(ctx context.Context, db *sql.DB) (schema int, gca bool, err erro
 	}
 	s, err := strconv.Atoi(v)
 	if err != nil {
-		return 0, true, fmt.Errorf("gcadb: invalid schema %q", v)
+		return 0, true, fmt.Errorf("db: invalid schema %q", v)
 	}
 	return s, true, nil
 }

@@ -24,7 +24,7 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
 	"github.com/mailsvb/openkca/internal/cadir"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/index"
 	"github.com/mailsvb/openkca/internal/publish"
 	"github.com/mailsvb/openkca/internal/xcaimport"
@@ -124,12 +124,12 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 // classifyGCA classifies a go-ca database; ok is false when the file is
 // not one.
 func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Version, detail string, ok bool) {
-	db, err := sql.Open("sqlite", dsn(path, true))
+	sqldb, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		return Invalid, v, err.Error(), false
 	}
-	defer db.Close()
-	schema, gca, err := gcadb.ReadSchema(ctx, db)
+	defer sqldb.Close()
+	schema, gca, err := db.ReadSchema(ctx, sqldb)
 	if !gca {
 		return Invalid, v, "", false
 	}
@@ -142,23 +142,23 @@ func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Vers
 		check = "PRAGMA integrity_check"
 	}
 	var res string
-	if err := db.QueryRowContext(ctx, check).Scan(&res); err != nil {
+	if err := sqldb.QueryRowContext(ctx, check).Scan(&res); err != nil {
 		return Invalid, v, err.Error(), true
 	}
 	if res != "ok" {
 		return Invalid, v, "integrity check: " + res, true
 	}
-	if schema > gcadb.Schema {
+	if schema > db.Schema {
 		return Newer, v, "", true
 	}
-	if schema < gcadb.MinMigratable {
+	if schema < db.MinMigratable {
 		return Invalid, v, "unknown go-ca schema", true
 	}
 	// An older schema from MinMigratable on is upgraded in place when the
 	// database is opened (Acquire).
 	for _, k := range []string{"kdf", "dek"} {
 		var val string
-		if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
+		if err := sqldb.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
 			return Invalid, v, "no key encryption settings", true
 		}
 	}
@@ -380,14 +380,14 @@ var ErrLocked = errors.New("database is in use by another go-ca process")
 // Handle is a shared, reference counted open database.
 type Handle struct {
 	Name string
-	DB   *gcadb.DB
+	DB   *db.DB
 
 	store *Store
 	lock  *flock.Flock
 	refs  int
 
 	mu       sync.Mutex
-	snap     *gcadb.Snapshot
+	snap     *db.Snapshot
 	watchers []chan struct{}
 
 	crlMu sync.Mutex // CRLs signed with the CA's defaults, one at a time
@@ -423,16 +423,16 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(1) // serialises writes
-	migrated, err := gcadb.Migrate(ctx, sqlDB, func() error { return s.backupFile(ctx, info.Path, name) })
+	migrated, err := db.Migrate(ctx, sqlDB, func() error { return s.backupFile(ctx, info.Path, name) })
 	if err != nil {
 		sqlDB.Close()
 		lk.Unlock()
 		return nil, err
 	}
 	if migrated {
-		slog.Info("database upgraded", "db", name, "from", info.Schema, "to", gcadb.Schema)
+		slog.Info("database upgraded", "db", name, "from", info.Schema, "to", db.Schema)
 	}
-	d, err := gcadb.Open(ctx, sqlDB)
+	d, err := db.Open(ctx, sqlDB)
 	if err != nil {
 		sqlDB.Close()
 		lk.Unlock()
@@ -464,7 +464,7 @@ func (h *Handle) Release() {
 
 // Snapshot returns the cached objects, reloading them when MAX(stamp)
 // changed.
-func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
+func (h *Handle) Snapshot(ctx context.Context) (*db.Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	stamp, err := h.DB.MaxStamp(ctx)
@@ -492,7 +492,7 @@ func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 }
 
 // CADir returns the folder of a CA of this database by its authority ID
-// (gcadb.Authority.UUID): <data-dir>/ca/<database>/<authority ID>/. It
+// (db.Authority.UUID): <data-dir>/ca/<database>/<authority ID>/. It
 // holds the CA's index files and is the place for any other file go-ca
 // keeps per CA; a renewal with the same key keeps it. The folder is not
 // created.

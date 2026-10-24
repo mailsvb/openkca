@@ -19,7 +19,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/vault"
 )
@@ -342,7 +342,7 @@ func TestImportRoundTrip(t *testing.T) {
 	if len(snap.Certs) != 4 || len(snap.Keys) != 4 || len(snap.CRLs) != 1 || len(snap.Requests) != 1 || len(snap.Templates) != 1 {
 		t.Fatalf("certs %d keys %d crls %d reqs %d templates %d", len(snap.Certs), len(snap.Keys), len(snap.CRLs), len(snap.Requests), len(snap.Templates))
 	}
-	var leaf, sub *gcadb.Cert
+	var leaf, sub *db.Cert
 	for _, c := range snap.Certs {
 		switch c.Name {
 		case "www.example.org":

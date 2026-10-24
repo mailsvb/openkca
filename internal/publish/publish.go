@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 
 	"github.com/mailsvb/openkca/internal/cadir"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 )
 
 // File names in a CA folder.
@@ -29,13 +29,13 @@ const (
 
 // Write publishes the certificate and the newest CRL of every live CA in
 // the snapshot. A file is only rewritten when its content changes.
-func Write(dir, db string, snap *gcadb.Snapshot) error {
+func Write(dir, dbName string, snap *db.Snapshot) error {
 	newest := NewestCRLs(snap)
 	for _, ca := range snap.Certs {
 		if !ca.CA || ca.Authority == nil {
 			continue
 		}
-		folder, err := cadir.Path(dir, db, ca.Authority.UUID)
+		folder, err := cadir.Path(dir, dbName, ca.Authority.UUID)
 		if err != nil {
 			return err
 		}
@@ -56,9 +56,9 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 
 // NewestCRLs returns each CA's newest CRL (latest thisUpdate, then the
 // higher CRL number, then the later item) by CA ID.
-func NewestCRLs(snap *gcadb.Snapshot) map[int64]*gcadb.CRL {
+func NewestCRLs(snap *db.Snapshot) map[int64]*db.CRL {
 	type best struct {
-		crl *gcadb.CRL
+		crl *db.CRL
 		l   *x509.RevocationList
 	}
 	out := map[int64]best{}
@@ -76,7 +76,7 @@ func NewestCRLs(snap *gcadb.Snapshot) map[int64]*gcadb.CRL {
 			out[c.IssuerID] = best{c, l}
 		}
 	}
-	res := map[int64]*gcadb.CRL{}
+	res := map[int64]*db.CRL{}
 	for id, b := range out {
 		res[id] = b.crl
 	}

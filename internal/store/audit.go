@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 )
 
@@ -28,7 +28,7 @@ func (h *Handle) Audit(ctx context.Context, action string, id int64, detail stri
 }
 
 // AuditLog returns audit entries newest first (all for itemID 0).
-func (h *Handle) AuditLog(ctx context.Context, itemID, before int64, limit int) ([]gcadb.AuditEntry, error) {
+func (h *Handle) AuditLog(ctx context.Context, itemID, before int64, limit int) ([]db.AuditEntry, error) {
 	return h.DB.AuditLog(ctx, itemID, before, limit)
 }
 

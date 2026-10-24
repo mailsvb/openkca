@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/store"
 )
@@ -12,7 +12,7 @@ import (
 // keyAlgorithmOf is the key type ("EC:P-256", or "RSA:" for a stored RSA
 // key) a form's extensions depend on: the existing key's, the request's
 // or the new key's.
-func keyAlgorithmOf(snap *gcadb.Snapshot, existing bool, keyID, fromReq int64, newKey string) string {
+func keyAlgorithmOf(snap *db.Snapshot, existing bool, keyID, fromReq int64, newKey string) string {
 	var spki []byte
 	switch {
 	case fromReq != 0:
@@ -36,7 +36,7 @@ func keyAlgorithmOf(snap *gcadb.Snapshot, existing bool, keyID, fromReq int64, n
 	return pki.DescribePublicKey(spki).Algorithm + ":"
 }
 
-func (f *editorForm) keyAlgorithm(snap *gcadb.Snapshot) string {
+func (f *editorForm) keyAlgorithm(snap *db.Snapshot) string {
 	fromReq := f.FromReq
 	if f.Kind != "cert" {
 		fromReq = 0
@@ -46,7 +46,7 @@ func (f *editorForm) keyAlgorithm(snap *gcadb.Snapshot) string {
 
 // applyProfile sets key type, validity, hash and extensions of a profile;
 // the subject and its alternative names stay.
-func (f *editorForm) applyProfile(p *profile, snap *gcadb.Snapshot) {
+func (f *editorForm) applyProfile(p *profile, snap *db.Snapshot) {
 	if f.KeyMode != "existing" && f.FromReq == 0 {
 		f.NewKey = p.Key
 	}
@@ -62,7 +62,7 @@ func (f *editorForm) applyProfile(p *profile, snap *gcadb.Snapshot) {
 // editorSums are the one-line summaries of the folded editor sections.
 type editorSums struct{ Key, Validity, Ext string }
 
-func (f *editorForm) summaries(t func(string, ...any) string, snap *gcadb.Snapshot) editorSums {
+func (f *editorForm) summaries(t func(string, ...any) string, snap *db.Snapshot) editorSums {
 	var s editorSums
 	switch {
 	case f.Kind == "cert" && f.FromReq != 0:
@@ -135,7 +135,7 @@ func (f *editorForm) summaries(t func(string, ...any) string, snap *gcadb.Snapsh
 
 // profileDiff lists where the form differs from the profile it started
 // from.
-func (f *editorForm) profileDiff(t func(string, ...any) string, snap *gcadb.Snapshot) []string {
+func (f *editorForm) profileDiff(t func(string, ...any) string, snap *db.Snapshot) []string {
 	p := profileByID(f.Profile)
 	if p == nil || p.Link != "" {
 		return nil
@@ -180,7 +180,7 @@ func netscapeSet(e pki.ExtSpec) bool {
 
 // expertUsed names the expert fields that hold a value, for the note shown
 // while they are hidden ("" when none does).
-func (f *editorForm) expertUsed(t func(string, ...any) string, snap *gcadb.Snapshot) string {
+func (f *editorForm) expertUsed(t func(string, ...any) string, snap *db.Snapshot) string {
 	var used []string
 	e := f.Ext
 	if f.Kind != "template" && f.Hash != store.Hash(snap) {

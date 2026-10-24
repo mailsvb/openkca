@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/openkca/internal/codec"
-	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/index"
 	"github.com/mailsvb/openkca/internal/pkcs12"
 	"github.com/mailsvb/openkca/internal/pki"
@@ -51,26 +51,26 @@ var ErrNoPrivateKey = errors.New("there is no private key for this item")
 
 type itemRef struct {
 	typ     int
-	item    *gcadb.Item
-	key     *gcadb.Key
-	cert    *gcadb.Cert
-	req     *gcadb.Request
-	crl     *gcadb.CRL
-	tmpl    *gcadb.Template
+	item    *db.Item
+	key     *db.Key
+	cert    *db.Cert
+	req     *db.Request
+	crl     *db.CRL
+	tmpl    *db.Template
 	pub     crypto.PublicKey // keys and certificates
 	pubSPKI []byte
 }
 
-func refOf(snap *gcadb.Snapshot, id int64) *itemRef {
+func refOf(snap *db.Snapshot, id int64) *itemRef {
 	for _, k := range snap.Keys {
 		if k.ID == id {
 			pub, _ := codec.ParsePublic(k.Public)
-			return &itemRef{typ: gcadb.TypeKey, item: &k.Item, key: k, pub: pub, pubSPKI: k.Public}
+			return &itemRef{typ: db.TypeKey, item: &k.Item, key: k, pub: pub, pubSPKI: k.Public}
 		}
 	}
 	for _, c := range snap.Certs {
 		if c.ID == id {
-			r := &itemRef{typ: gcadb.TypeCert, item: &c.Item, cert: c}
+			r := &itemRef{typ: db.TypeCert, item: &c.Item, cert: c}
 			if x, err := pki.ParseCertificate(c.DER); err == nil {
 				r.pub, r.pubSPKI = x.PublicKey, x.RawSubjectPublicKeyInfo
 			}
@@ -79,23 +79,23 @@ func refOf(snap *gcadb.Snapshot, id int64) *itemRef {
 	}
 	for _, q := range snap.Requests {
 		if q.ID == id {
-			return &itemRef{typ: gcadb.TypeRequest, item: &q.Item, req: q}
+			return &itemRef{typ: db.TypeRequest, item: &q.Item, req: q}
 		}
 	}
 	for _, l := range snap.CRLs {
 		if l.ID == id {
-			return &itemRef{typ: gcadb.TypeCRL, item: &l.Item, crl: l}
+			return &itemRef{typ: db.TypeCRL, item: &l.Item, crl: l}
 		}
 	}
 	for _, t := range snap.Templates {
 		if t.ID == id {
-			return &itemRef{typ: gcadb.TypeTemplate, item: &t.Item, tmpl: t}
+			return &itemRef{typ: db.TypeTemplate, item: &t.Item, tmpl: t}
 		}
 	}
 	return nil
 }
 
-func itemRefs(snap *gcadb.Snapshot, ids []int64) ([]*itemRef, error) {
+func itemRefs(snap *db.Snapshot, ids []int64) ([]*itemRef, error) {
 	if len(ids) == 0 {
 		return nil, errors.New("nothing selected")
 	}
@@ -114,7 +114,7 @@ func itemRefs(snap *gcadb.Snapshot, ids []int64) ([]*itemRef, error) {
 }
 
 // keyOf returns the key item belonging to a certificate.
-func keyOf(snap *gcadb.Snapshot, c *gcadb.Cert) *gcadb.Key {
+func keyOf(snap *db.Snapshot, c *db.Cert) *db.Key {
 	if c.KeyID == 0 {
 		return nil
 	}
@@ -122,10 +122,10 @@ func keyOf(snap *gcadb.Snapshot, c *gcadb.Cert) *gcadb.Key {
 }
 
 // disabledFlags mirrors the exportFlags functions of XCA's models.
-func disabledFlags(snap *gcadb.Snapshot, r *itemRef) codec.Flags {
+func disabledFlags(snap *db.Snapshot, r *itemRef) codec.Flags {
 	var d codec.Flags
 	switch r.typ {
-	case gcadb.TypeCert:
+	case db.TypeCert:
 		c := r.cert
 		if c.IssuerID == 0 || c.IssuerID == c.ID {
 			d |= codec.FChain
@@ -141,7 +141,7 @@ func disabledFlags(snap *gcadb.Snapshot, r *itemRef) codec.Flags {
 		if r.pub == nil || !codec.JWKSupported(r.pub) {
 			d |= codec.FJWK
 		}
-	case gcadb.TypeKey:
+	case db.TypeKey:
 		k := r.key
 		if r.pub == nil {
 			// a key Go cannot use: public PEM/DER and PKCS#8 only
@@ -173,7 +173,7 @@ func disabledFlags(snap *gcadb.Snapshot, r *itemRef) codec.Flags {
 }
 
 // ExportFormats lists the formats available for a selection.
-func ExportFormats(snap *gcadb.Snapshot, ids []int64) []codec.Format {
+func ExportFormats(snap *db.Snapshot, ids []int64) []codec.Format {
 	var d codec.Flags
 	typ := 0
 	for _, id := range ids {
@@ -194,7 +194,7 @@ func ExportFormats(snap *gcadb.Snapshot, ids []int64) []codec.Format {
 	}
 	var out []codec.Format
 	for _, f := range codec.Select(typ, d) {
-		if typ == gcadb.TypeKey && refOf(snap, ids[0]).pub == nil && f.Flags&codec.FDER != 0 && f.Flags&codec.FPrivate != 0 {
+		if typ == db.TypeKey && refOf(snap, ids[0]).pub == nil && f.Flags&codec.FDER != 0 && f.Flags&codec.FPrivate != 0 {
 			continue // DER private is the traditional form
 		}
 		out = append(out, f)
@@ -238,14 +238,14 @@ func contentType(f codec.Format) string {
 
 // privateDER decrypts a stored key to an unencrypted PKCS#8 structure,
 // also for algorithms Go cannot compute with.
-func (h *Handle) privateDER(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
+func (h *Handle) privateDER(ctx context.Context, k *db.Key, kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
 	if !k.HasPrivate {
 		return nil, ErrNoPrivateKey
 	}
 	return h.keyDER(ctx, k.ID, k.KeyType, kr, kp)
 }
 
-func (h *Handle) signer(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, kp KeyPasswords) (crypto.Signer, error) {
+func (h *Handle) signer(ctx context.Context, k *db.Key, kr *vault.Keyring, kp KeyPasswords) (crypto.Signer, error) {
 	if k == nil || !k.HasPrivate {
 		return nil, ErrNoPrivateKey
 	}
@@ -253,8 +253,8 @@ func (h *Handle) signer(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, kp
 }
 
 // chain returns a certificate followed by its issuers up to the root.
-func chain(snap *gcadb.Snapshot, c *gcadb.Cert) []*gcadb.Cert {
-	out := []*gcadb.Cert{c}
+func chain(snap *db.Snapshot, c *db.Cert) []*db.Cert {
+	out := []*db.Cert{c}
 	seen := map[int64]bool{c.ID: true}
 	for c.IssuerID != 0 && !seen[c.IssuerID] {
 		p := findCert(snap, c.IssuerID)
@@ -268,7 +268,7 @@ func chain(snap *gcadb.Snapshot, c *gcadb.Cert) []*gcadb.Cert {
 	return out
 }
 
-func revocationOf(snap *gcadb.Snapshot, c *gcadb.Cert) *gcadb.Revocation {
+func revocationOf(snap *db.Snapshot, c *db.Cert) *db.Revocation {
 	if c.IssuerID == 0 || c.IssuerID == c.ID {
 		return nil
 	}
@@ -281,12 +281,12 @@ func revocationOf(snap *gcadb.Snapshot, c *gcadb.Cert) *gcadb.Revocation {
 }
 
 // unusable is pki_x509::unusable: expired or revoked.
-func unusable(snap *gcadb.Snapshot, c *gcadb.Cert, now time.Time) bool {
+func unusable(snap *db.Snapshot, c *db.Cert, now time.Time) bool {
 	info := pki.DescribeCert(c.DER)
 	return (!info.NoExpiry && info.NotAfter.Before(now)) || revocationOf(snap, c) != nil
 }
 
-func (e *exporter) certPEM(c *gcadb.Cert) []byte {
+func (e *exporter) certPEM(c *db.Cert) []byte {
 	var b []byte
 	if e.req.PEMComment {
 		subj, _ := pki.RawSubject(c.DER)
@@ -295,7 +295,7 @@ func (e *exporter) certPEM(c *gcadb.Cert) []byte {
 	return append(b, codec.PEM(codec.PEMCert, c.DER)...)
 }
 
-func (e *exporter) keyComment(k *gcadb.Key) []byte {
+func (e *exporter) keyComment(k *db.Key) []byte {
 	if !e.req.PEMComment {
 		return nil
 	}
@@ -305,7 +305,7 @@ func (e *exporter) keyComment(k *gcadb.Key) []byte {
 type exporter struct {
 	h    *Handle
 	ctx  context.Context
-	snap *gcadb.Snapshot
+	snap *db.Snapshot
 	req  ExportRequest
 	refs []*itemRef
 	f    codec.Format
@@ -348,15 +348,15 @@ func (h *Handle) Export(ctx context.Context, req ExportRequest) (*ExportResult, 
 	}
 	e := &exporter{h: h, ctx: ctx, snap: snap, req: req, refs: refs, f: f}
 	switch f.Type {
-	case gcadb.TypeCert:
+	case db.TypeCert:
 		err = e.certs()
-	case gcadb.TypeKey:
+	case db.TypeKey:
 		err = e.keys()
-	case gcadb.TypeRequest:
+	case db.TypeRequest:
 		err = e.requests()
-	case gcadb.TypeCRL:
+	case db.TypeCRL:
 		err = e.crls()
-	case gcadb.TypeTemplate:
+	case db.TypeTemplate:
 		err = e.templates()
 	}
 	if err != nil {
@@ -376,7 +376,7 @@ func (h *Handle) Export(ctx context.Context, req ExportRequest) (*ExportResult, 
 
 func (e *exporter) dbName() string { return e.h.Name + ExtGCA }
 
-func (e *exporter) certVEvent(c *gcadb.Cert) []string {
+func (e *exporter) certVEvent(c *db.Cert) []string {
 	info := pki.DescribeCert(c.DER)
 	t := e.req.T
 	return codec.VEvent(c.DER, info.NotAfter, t("vcal.cert.summary", c.Name),
@@ -384,7 +384,7 @@ func (e *exporter) certVEvent(c *gcadb.Cert) []string {
 		c.Comment, e.alarm(), e.req.Now)
 }
 
-func (e *exporter) crlVEvent(l *gcadb.CRL) []string {
+func (e *exporter) crlVEvent(l *db.CRL) []string {
 	info := pki.DescribeCRL(l.DER)
 	t := e.req.T
 	if ca := findCert(e.snap, l.IssuerID); ca != nil {
@@ -410,12 +410,12 @@ func (e *exporter) vcal(events []string) {
 func (e *exporter) certs() error {
 	f := e.f.Flags
 	first := e.refs[0].cert
-	var certs []*gcadb.Cert
+	var certs []*db.Cert
 	for _, r := range e.refs {
 		certs = append(certs, r.cert)
 	}
-	unusableCerts := func() []*gcadb.Cert {
-		var out []*gcadb.Cert
+	unusableCerts := func() []*db.Cert {
+		var out []*db.Cert
 		for _, c := range e.snap.Certs {
 			if unusable(e.snap, c, e.req.Now) {
 				out = append(out, c)
@@ -423,7 +423,7 @@ func (e *exporter) certs() error {
 		}
 		return out
 	}
-	ders := func(l []*gcadb.Cert) [][]byte {
+	ders := func(l []*db.Cert) [][]byte {
 		var out [][]byte
 		for _, c := range l {
 			out = append(out, c.DER)
@@ -546,7 +546,7 @@ func (e *exporter) certs() error {
 		// The issued certificates of the selected CAs, as in the index
 		// file go-ca maintains for each CA.
 		for _, ca := range certs {
-			var issued []*gcadb.Cert
+			var issued []*db.Cert
 			for _, c := range e.snap.Certs {
 				if c.IssuerID == ca.ID && c.ID != ca.ID {
 					issued = append(issued, c)
@@ -564,7 +564,7 @@ func (e *exporter) certs() error {
 			if f&codec.FCA == 0 {
 				continue
 			}
-			var latest *gcadb.CRL
+			var latest *db.CRL
 			for _, ch := range e.snap.Certs {
 				if ch.IssuerID == c.ID && ch.ID != c.ID && !unusable(e.snap, ch, e.req.Now) {
 					ev = append(ev, e.certVEvent(ch)...)
