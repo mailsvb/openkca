@@ -291,7 +291,7 @@ func TestSchema3Refused(t *testing.T) {
 	if _, err := s.Acquire(ctx, "old"); err == nil {
 		t.Fatal("opened a schema 3 database")
 	}
-	if gcadb.Schema != 4 {
-		t.Fatalf("schema %d", gcadb.Schema)
+	if gcadb.MinMigratable != 4 {
+		t.Fatalf("oldest migratable schema %d", gcadb.MinMigratable)
 	}
 }

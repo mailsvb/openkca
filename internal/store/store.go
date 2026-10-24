@@ -155,9 +155,11 @@ func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Vers
 		// Schema 3 had no item UUIDs and is not migrated.
 		return Invalid, v, "go-ca schema 3 (before item UUIDs) is no longer supported", true
 	}
-	if schema < gcadb.Schema {
+	if schema < gcadb.MinMigratable {
 		return Invalid, v, "unknown go-ca schema", true
 	}
+	// An older schema from MinMigratable on is upgraded in place when the
+	// database is opened (Acquire).
 	for _, k := range []string{"kdf", "dek"} {
 		var val string
 		if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
@@ -418,6 +420,15 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(1) // serialises writes
+	migrated, err := gcadb.Migrate(ctx, sqlDB, func() error { return s.backupFile(ctx, info.Path, name) })
+	if err != nil {
+		sqlDB.Close()
+		lk.Unlock()
+		return nil, err
+	}
+	if migrated {
+		slog.Info("database upgraded", "db", name, "from", info.Schema, "to", gcadb.Schema)
+	}
 	d, err := gcadb.Open(ctx, sqlDB)
 	if err != nil {
 		sqlDB.Close()

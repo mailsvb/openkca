@@ -312,8 +312,8 @@ func (t *Tx) takeOver(ctx context.Context, newID int64, c *x509.Certificate) err
 				t.Touch(ch.id)
 			}
 		}
-		if _, err := t.ExecContext(ctx, `INSERT INTO revocations (ca, serial, date, invalidity, reason, crl_number)
-			SELECT ?, serial, date, invalidity, reason, crl_number FROM revocations WHERE ca=?
+		if _, err := t.ExecContext(ctx, `INSERT INTO revocations (ca, serial, date, invalidity, reason, crl_number, expires)
+			SELECT ?, serial, date, invalidity, reason, crl_number, expires FROM revocations WHERE ca=?
 			ON CONFLICT (ca, serial) DO NOTHING`, newID, o.id); err != nil {
 			return err
 		}

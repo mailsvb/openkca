@@ -35,6 +35,7 @@ func TestCAOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	leaf2ID, _ := h.Issue(ctx, leafP, krOf(t, h))
+	leaf3ID, _ := h.Issue(ctx, leafP, krOf(t, h))
 
 	// Revoke, unrevoke, revoke again
 	inval := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
@@ -50,19 +51,29 @@ func TestCAOperations(t *testing.T) {
 	if err := h.Revoke(ctx, rootID, Revocation{}); err == nil {
 		t.Fatal("a self-signed certificate was revoked")
 	}
-	// A serial that is not in the database, then edited
-	if err := h.SetRevocation(ctx, subID, "0x0A:BC", Revocation{Reason: 5}); err != nil {
+	// A serial that is not in the database is refused.
+	if err := h.SetRevocation(ctx, subID, "0x0A:BC", Revocation{Reason: 5}); !errors.Is(err, gcadb.ErrUnknownCert) {
+		t.Fatalf("unknown serial: %v", err)
+	}
+	// A known serial entered by hand (lower case with colons), then edited
+	snap, _ := h.Snapshot(ctx)
+	leaf2Serial := findCert(snap, leaf3ID).Serial
+	var colons []string
+	for i := 0; i < len(leaf2Serial); i += 2 {
+		colons = append(colons, strings.ToLower(leaf2Serial[i:min(i+2, len(leaf2Serial))]))
+	}
+	if err := h.SetRevocation(ctx, subID, strings.Join(colons, ":"), Revocation{Reason: 5}); err != nil {
 		t.Fatal(err)
 	}
-	snap, _ := h.Snapshot(ctx)
+	snap, _ = h.Snapshot(ctx)
 	var date time.Time
 	for _, r := range snap.Revocations {
-		if r.Serial == "0ABC" {
+		if r.Serial == leaf2Serial {
 			date = r.Date
 		}
 	}
 	time.Sleep(1100 * time.Millisecond)
-	if err := h.SetRevocation(ctx, subID, "abc", Revocation{Reason: 3}); err != nil {
+	if err := h.SetRevocation(ctx, subID, leaf2Serial, Revocation{Reason: 3}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ = h.Snapshot(ctx)
@@ -70,8 +81,11 @@ func TestCAOperations(t *testing.T) {
 		t.Fatalf("revocations %+v", snap.Revocations)
 	}
 	for _, r := range snap.Revocations {
-		if r.Serial == "0ABC" && (r.ReasonBit != 3 || !r.Date.Equal(date)) {
+		if r.Serial == leaf2Serial && (r.ReasonBit != 3 || !r.Date.Equal(date)) {
 			t.Fatalf("edit changed date or kept reason: %+v", r)
+		}
+		if !r.CertKnown || r.Expires.IsZero() || !r.OnCRL(time.Now()) {
+			t.Fatalf("expiry not recorded: %+v", r)
 		}
 	}
 

@@ -457,8 +457,14 @@ func TestCAPages(t *testing.T) {
 	if b := body(t, r); !strings.Contains(b, "www.example.org") || !strings.Contains(b, "2001") {
 		t.Fatal("revocation list")
 	}
-	post("/db/sample/item/5/revocations", url.Values{"action": {"add"}, "serial": {"DEAD"}, "reason": {"5"}, "invaldate": {""}})
+	if loc := post("/db/sample/item/5/revocations", url.Values{"action": {"add"}, "serial": {"DEAD"}, "reason": {"5"}, "invaldate": {""}}).Header.Get("Location"); !strings.Contains(loc, "rev.error.unknown") {
+		t.Fatalf("unknown serial: %s", loc)
+	}
 	post("/db/sample/item/5/revocations", url.Values{"action": {"delete"}, "serial": {"DEAD"}})
+	r, _ = c.Get(ts.URL + "/db/sample/item/5/revocations")
+	if b := body(t, r); !strings.Contains(b, "on the CRL") {
+		t.Fatal("no CRL status on the revocations page")
+	}
 	r, _ = c.Get(ts.URL + "/db/sample/item/5/crl")
 	if b := body(t, r); !strings.Contains(b, `name="number" value="1"`) {
 		t.Fatal("CRL form defaults")

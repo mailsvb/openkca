@@ -120,6 +120,7 @@ type revRow struct {
 	Cert       link
 	Reason     string
 	InvalLocal string
+	Status     string // rev.status.<on|unknown|aged>
 }
 
 func (s *Server) revocationsPage(w http.ResponseWriter, r *http.Request) {
@@ -134,11 +135,18 @@ func (s *Server) revocationsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var rows []revRow
+	now := time.Now()
 	for _, rv := range snap.Revocations {
 		if rv.CAID != ca.ID {
 			continue
 		}
-		row := revRow{Revocation: *rv, Cert: bySerial[rv.Serial]}
+		row := revRow{Revocation: *rv, Cert: bySerial[rv.Serial], Status: "rev.status.on"}
+		switch {
+		case rv.Expires.IsZero():
+			row.Status = "rev.status.unknown"
+		case !rv.OnCRL(now):
+			row.Status = "rev.status.aged"
+		}
 		if rv.ReasonBit >= 0 && rv.ReasonBit < len(pki.ReasonNames) {
 			row.Reason = pki.ReasonNames[rv.ReasonBit]
 		}
@@ -153,8 +161,8 @@ func (s *Server) revocationsPage(w http.ResponseWriter, r *http.Request) {
 	case "saved":
 		p.Notice = "item.notice.saved"
 	}
-	if r.URL.Query().Get("error") == "rev.error.input" {
-		p.Error = "rev.error.input"
+	if e := r.URL.Query().Get("error"); e == "rev.error.input" || e == "rev.error.unknown" {
+		p.Error = e
 	}
 	s.render(w, r, http.StatusOK, "revocations", p)
 }
@@ -179,7 +187,11 @@ func (s *Server) revocationsSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Warn("revocation change failed", "ca", ca.ID, "err", err)
-		http.Redirect(w, r, back+"?error=rev.error.input", http.StatusSeeOther)
+		key := "rev.error.input"
+		if errors.Is(err, gcadb.ErrUnknownCert) {
+			key = "rev.error.unknown"
+		}
+		http.Redirect(w, r, back+"?error="+key, http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, back+"?notice=saved", http.StatusSeeOther)
@@ -205,9 +217,9 @@ func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, s
 			keyOwn = k.Protection == gcadb.ProtPassword
 		}
 	}
-	n := 0
+	n, now := 0, time.Now()
 	for _, rv := range snap.Revocations {
-		if rv.CAID == ca.ID {
+		if rv.CAID == ca.ID && rv.OnCRL(now) {
 			n++
 		}
 	}

@@ -176,8 +176,9 @@ func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, kr *
 		}
 		p.Number = big.NewInt(o.Number)
 	}
+	now := time.Now()
 	for _, r := range snap.Revocations {
-		if r.CAID != caID {
+		if r.CAID != caID || !r.OnCRL(now) {
 			continue
 		}
 		serial, ok := new(big.Int).SetString(strings.TrimPrefix(r.Serial, "-"), 16)
@@ -199,16 +200,17 @@ func (h *Handle) GenerateCRL(ctx context.Context, caID int64, o CRLOptions, kr *
 		name = ca.Name
 	}
 	var id int64
+	var replaced int
 	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
 		num := int64(0)
 		if o.SetNumber {
 			num = o.Number
 		}
-		id, err = tx.InsertCRL(ctx, gcadb.NewCRL{Name: name, Source: 2, DER: der, CAID: caID, Number: num, NextTime: o.NextUpdate})
+		id, replaced, err = tx.InsertCRL(ctx, gcadb.NewCRL{Name: name, Source: gcadb.SourceGenerated, DER: der, CAID: caID, Number: num, NextTime: o.NextUpdate})
 		return err
 	})
 	h.changed(ctx)
-	h.auditIf(ctx, err, "crl.generate", id, "by CA %d", caID)
+	h.auditIf(ctx, err, "crl.generate", id, "by CA %d, %d entries, replaces %d", caID, len(p.Revoked), replaced)
 	return id, err
 }
 

@@ -24,6 +24,7 @@ package gcadb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -33,8 +34,9 @@ const ApplicationID = 0x67636131
 
 // Schema is the version this package writes (the "schema" setting).
 // Versions 1 and 2 were go-ca's XCA based format, read by xcaimport.
-// Version 3 had no item UUIDs; it is not migrated.
-const Schema = 4
+// Version 3 had no item UUIDs; it is not migrated. Version 4 lacked the
+// certificate expiry on revocations and is migrated in place (Migrate).
+const Schema = 5
 
 var ddl = []string{
 	`CREATE TABLE settings (
@@ -98,6 +100,7 @@ var ddl = []string{
 	`CREATE INDEX certs_issuer_name ON certs (issuer_name)`,
 	`CREATE INDEX certs_key_fingerprint ON certs (key_fingerprint)`,
 	`CREATE INDEX certs_issuer ON certs (issuer)`,
+	`CREATE INDEX certs_issuer_serial ON certs (issuer_name, serial)`,
 	`CREATE TABLE authorities (
 		cert       INTEGER PRIMARY KEY REFERENCES certs (item) ON DELETE CASCADE,
 		uuid       TEXT NOT NULL CHECK (length(uuid) = 36 AND uuid = lower(uuid)),
@@ -125,6 +128,7 @@ var ddl = []string{
 		invalidity TEXT,
 		reason     INTEGER NOT NULL DEFAULT 0,
 		crl_number INTEGER,
+		expires    TEXT,
 		PRIMARY KEY (ca, serial)
 	) WITHOUT ROWID`,
 	`CREATE TABLE pgp (
@@ -183,8 +187,73 @@ func Create(ctx context.Context, db *sql.DB, settings map[string]string, fn func
 	if _, err := sqlTx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
 		return err
 	}
-	return commitWrite(ctx, sqlTx, fn)
+	return commitWrite(ctx, sqlTx, func(t *Tx) error {
+		if err := fn(t); err != nil {
+			return err
+		}
+		return t.fillRevocationExpiry(ctx)
+	})
 }
+
+// certExpirySQL is the latest expiry of the certificates (live or in the
+// trash) that revocation r refers to: same serial, issued under the name
+// of the revoking CA.
+const certExpirySQL = `(SELECT MAX(c.not_after) FROM certs c WHERE c.serial = r.serial
+	AND c.issuer_name = (SELECT ca.subject FROM certs ca WHERE ca.item = r.ca))`
+
+// fillRevocationExpiry records the certificate expiry on revocations that
+// have none and whose certificate is in the database.
+func (t *Tx) fillRevocationExpiry(ctx context.Context) error {
+	_, err := t.ExecContext(ctx, `UPDATE revocations AS r SET expires = `+certExpirySQL+` WHERE r.expires IS NULL`)
+	return err
+}
+
+// Migrate upgrades a go-ca database of an older, migratable schema to
+// Schema in one transaction. It reports whether anything changed; before
+// it changes anything, backup is called.
+func Migrate(ctx context.Context, db *sql.DB, backup func() error) (bool, error) {
+	s, gca, err := ReadSchema(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	if !gca {
+		return false, errors.New("gcadb: not a go-ca database")
+	}
+	switch {
+	case s == Schema:
+		return false, nil
+	case s < MinMigratable || s > Schema:
+		return false, fmt.Errorf("gcadb: schema %d cannot be migrated", s)
+	}
+	if err := backup(); err != nil {
+		return false, fmt.Errorf("gcadb: backup before migration: %w", err)
+	}
+	sqlTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer sqlTx.Rollback()
+	if s == 4 {
+		for _, stmt := range []string{
+			`ALTER TABLE revocations ADD COLUMN expires TEXT`,
+			`CREATE INDEX certs_issuer_serial ON certs (issuer_name, serial)`,
+		} {
+			if _, err := sqlTx.ExecContext(ctx, stmt); err != nil {
+				return false, fmt.Errorf("gcadb: migrate 4 to 5: %w", err)
+			}
+		}
+		if err := (&Tx{Tx: sqlTx}).fillRevocationExpiry(ctx); err != nil {
+			return false, err
+		}
+	}
+	if _, err := sqlTx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='schema'", strconv.Itoa(Schema)); err != nil {
+		return false, err
+	}
+	return true, sqlTx.Commit()
+}
+
+// MinMigratable is the oldest go-ca schema Migrate upgrades.
+const MinMigratable = 4
 
 // ReadSchema returns the "schema" setting and whether the file carries
 // go-ca's application ID.
