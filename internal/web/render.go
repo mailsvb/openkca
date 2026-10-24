@@ -3,16 +3,16 @@ package web
 import (
 	"bytes"
 	"fmt"
-	"github.com/mailsvb/go-ca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/gcadb"
 	"html/template"
 	"net/http"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/i18n"
-	"github.com/mailsvb/go-ca/internal/session"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/i18n"
+	"github.com/mailsvb/openkca/internal/session"
 )
 
 // page is the data every template receives.

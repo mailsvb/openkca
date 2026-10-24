@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"unicode/utf16"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 var (

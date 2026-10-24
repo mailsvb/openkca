@@ -26,13 +26,13 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/mailsvb/go-ca/internal/auth"
-	"github.com/mailsvb/go-ca/internal/background"
-	"github.com/mailsvb/go-ca/internal/config"
-	"github.com/mailsvb/go-ca/internal/i18n"
-	"github.com/mailsvb/go-ca/internal/pubserve"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/web"
+	"github.com/mailsvb/openkca/internal/auth"
+	"github.com/mailsvb/openkca/internal/background"
+	"github.com/mailsvb/openkca/internal/config"
+	"github.com/mailsvb/openkca/internal/i18n"
+	"github.com/mailsvb/openkca/internal/pubserve"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/web"
 )
 
 // version is set at build time: -ldflags "-X main.version=0.10.0".

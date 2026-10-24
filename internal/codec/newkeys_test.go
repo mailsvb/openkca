@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pkcs12"
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/pkcs12"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // TestProbeNewKeyTypes reads certificates, requests and keys of the new

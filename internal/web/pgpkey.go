@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/cloudflare/circl/sign/ed448"
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/session"
-	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/session"
+	"github.com/mailsvb/openkca/internal/store"
 )
 
 // pgpKeyChoices are the key types offered for new OpenPGP keys, the usual

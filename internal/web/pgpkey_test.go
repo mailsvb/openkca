@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/openkca/internal/codec"
 )
 
 func TestPGPKeyPages(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 type pgpCase struct {

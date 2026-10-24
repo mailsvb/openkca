@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 func (t *Tx) insertItem(ctx context.Context, name string, typ, source int, comment string) (int64, error) {

@@ -23,7 +23,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // PuTTY's private key files (PPK), as described in the PuTTY manual,

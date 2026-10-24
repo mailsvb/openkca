@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // Defaults of options a database may not set. Databases imported from

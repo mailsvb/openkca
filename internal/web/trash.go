@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/gcadb"
 )
 
 type trashRow struct {

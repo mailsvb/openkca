@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // openssl ca knows these reasons in the revocation field (apps/ca.c).

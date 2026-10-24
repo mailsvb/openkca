@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/openkca/internal/tmpl"
 )
 
 // Item types.

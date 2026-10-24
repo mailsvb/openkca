@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/auth"
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/auth"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // dhJob generates Diffie-Hellman parameters in the background (XCA's

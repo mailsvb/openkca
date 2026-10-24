@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // TestMain lowers the PBKDF2 iteration count for new encrypted keys and

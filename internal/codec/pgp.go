@@ -39,7 +39,7 @@ import (
 	gcx448 "github.com/ProtonMail/go-crypto/openpgp/x448"
 	"github.com/cloudflare/circl/sign/ed448"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // Armor block types of OpenPGP keys.

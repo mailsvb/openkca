@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"hash"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 var (

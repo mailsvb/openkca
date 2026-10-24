@@ -4,7 +4,7 @@ import (
 	"encoding/asn1"
 	"strconv"
 
-	"github.com/mailsvb/go-ca/internal/pkcs12"
+	"github.com/mailsvb/openkca/internal/pkcs12"
 )
 
 // PKCS12Algorithms are the values of the pkcs12_enc_algo setting

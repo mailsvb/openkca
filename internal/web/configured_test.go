@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/background"
-	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/background"
+	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // TestConfiguredDatabases covers databases from the configuration file:

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/gcadb"
 )
 
 // allUUIDs maps every item, trash included, to its UUID.

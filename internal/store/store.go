@@ -23,11 +23,11 @@ import (
 	"github.com/gofrs/flock"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/index"
-	"github.com/mailsvb/go-ca/internal/publish"
-	"github.com/mailsvb/go-ca/internal/xcaimport"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/index"
+	"github.com/mailsvb/openkca/internal/publish"
+	"github.com/mailsvb/openkca/internal/xcaimport"
 )
 
 // Status is the classifier's verdict for one file.

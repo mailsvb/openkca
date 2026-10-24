@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/vault"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 var caExt = pki.ExtSpec{CA: 1, BCCritical: true, SubKey: true, AuthKey: true, KeyUse: 1<<5 | 1<<6, KUCritical: true}

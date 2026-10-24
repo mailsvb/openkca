@@ -10,10 +10,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mailsvb/go-ca/internal/codec"
-	"github.com/mailsvb/go-ca/internal/gcadb"
-	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/gcadb"
+	"github.com/mailsvb/openkca/internal/pki"
+	"github.com/mailsvb/openkca/internal/store"
 )
 
 var typeTabs = map[int]string{gcadb.TypeKey: "keys", gcadb.TypeRequest: "requests", gcadb.TypeCert: "certs", gcadb.TypeCRL: "crls", gcadb.TypeTemplate: "templates"}

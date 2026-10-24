@@ -5,7 +5,7 @@
 // It works on DER and Go keys only; it does not touch databases.
 package codec
 
-import "github.com/mailsvb/go-ca/internal/gcadb"
+import "github.com/mailsvb/openkca/internal/gcadb"
 
 // Flags describe an export format, as pki_export's F_* flags do in XCA.
 type Flags uint32

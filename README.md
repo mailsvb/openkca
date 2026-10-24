@@ -254,7 +254,7 @@ Requires Go 1.27 or later (the toolchain is downloaded automatically by older
 `go` commands). No C compiler is needed:
 
 ```sh
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o go-ca ./cmd/go-ca
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o go-ca ./cmd/openkca
 ```
 
 ## Versions and releases

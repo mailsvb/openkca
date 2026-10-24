@@ -32,8 +32,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mailsvb/go-ca/internal/cadir"
-	"github.com/mailsvb/go-ca/internal/publish"
+	"github.com/mailsvb/openkca/internal/cadir"
+	"github.com/mailsvb/openkca/internal/publish"
 )
 
 // MaxAge is how long clients and proxies may cache a response: short, so

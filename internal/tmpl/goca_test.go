@@ -3,7 +3,7 @@ package tmpl
 import (
 	"testing"
 
-	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/openkca/internal/pki"
 )
 
 // TestGoCAKeys: the CDP/AIA flags round-trip through go-ca's settings but
