@@ -218,6 +218,14 @@ func (s *Server) saveOptions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			vals[o.key] = strconv.Itoa(n) + unit
+		case "number":
+			v := strings.TrimSpace(r.PostFormValue(o.key))
+			n, err := strconv.Atoi(v)
+			if rg := optionRanges[o.key]; err != nil || n < rg[0] || n > rg[1] {
+				s.redirectOptions(w, r, "error=options.error.value&key="+o.key)
+				return
+			}
+			vals[o.key] = strconv.Itoa(n)
 		default:
 			v := strings.TrimSpace(r.PostFormValue(o.key))
 			if len(o.choices) > 0 && !contains(o.choices, v) {

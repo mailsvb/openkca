@@ -176,7 +176,7 @@ func TestPKCS12AllKeyTypes(t *testing.T) {
 			t.Fatalf("%v: %v", spec, err)
 		}
 		for _, algo := range PKCS12Algorithms {
-			p12, err := PKCS12(pk8, []pkcs12.Bag{{DER: leaf, FriendlyName: "the alias"}, {DER: caDER}}, "pw", algo)
+			p12, err := PKCS12(pk8, []pkcs12.Bag{{DER: leaf, FriendlyName: "the alias"}, {DER: caDER}}, "pw", algo, 0)
 			if err != nil {
 				t.Fatalf("%v %s: %v", spec, algo, err)
 			}
@@ -219,12 +219,98 @@ func TestPKCS12UnknownKey(t *testing.T) {
 		Key     []byte
 	}{Algo: pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3, 4}}, Key: []byte{1, 2, 3}})
 	leaf := selfSigned(t, "leaf")
-	p12, err := PKCS12(unknown, []pkcs12.Bag{{DER: leaf}}, "pw", "")
+	p12, err := PKCS12(unknown, []pkcs12.Bag{{DER: leaf}}, "pw", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := Probe("x.p12", p12, ProbeOptions{Password: []byte("pw")})
 	if len(r.Objects) != 1 || r.Objects[0].Name != "leaf" || len(r.Unrecognized) != 1 || !strings.Contains(r.Unrecognized[0], "unsupported algorithm") {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// macIterations reads the MAC iteration count of a PKCS#12 file.
+func macIterations(t *testing.T, p12 []byte) int {
+	t.Helper()
+	var p struct {
+		Version  int
+		AuthSafe asn1.RawValue
+		MacData  struct {
+			Mac        asn1.RawValue
+			Salt       []byte
+			Iterations int `asn1:"optional,default:1"`
+		}
+	}
+	if _, err := asn1.Unmarshal(p12, &p); err != nil {
+		t.Fatal(err)
+	}
+	return p.MacData.Iterations
+}
+
+// TestPKCS12Iterations: the count applies to AES-256-CBC only.
+func TestPKCS12Iterations(t *testing.T) {
+	key, _ := pki.GenerateKey(pki.KeySpec{Type: "Ed25519"})
+	pk8, _ := pki.MarshalPKCS8(key)
+	certs := []pkcs12.Bag{{DER: selfSigned(t, "leaf")}}
+	for algo, want := range map[string]int{"AES-256-CBC": 4096, "": 4096, "PBE-SHA1-3DES": 1, "PBE-SHA1-RC2-40": 1} {
+		p12, err := PKCS12(pk8, certs, "pw", algo, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := macIterations(t, p12); n != want {
+			t.Errorf("%q: MAC iterations %d, want %d", algo, n, want)
+		}
+	}
+	p12, _ := PKCS12(pk8, certs, "pw", "", 0)
+	if n := macIterations(t, p12); n != PKCS12Iterations {
+		t.Errorf("default: %d", n)
+	}
+	for v, ok := range map[string]bool{"": true, "2048": true, "200000": true, "10000000": true, "2047": false, "10000001": false, "x": false, "-1": false} {
+		if _, got := ParsePKCS12Iterations(v); got != ok {
+			t.Errorf("ParsePKCS12Iterations(%q) = %v", v, got)
+		}
+	}
+}
+
+// TestProbeEncryptedKeys: legacy PKCS#8 encryptions import, and schemes
+// go-ca cannot decrypt are reported as such, not as a wrong password.
+func TestProbeEncryptedKeys(t *testing.T) {
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl not installed")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("openssl", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("openssl %v: %v\n%s", args, err, out)
+		}
+	}
+	run("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "ec.pem")
+	run("pkcs8", "-topk8", "-in", "ec.pem", "-v1", "PBE-SHA1-3DES", "-passout", "pass:pw", "-out", "v1.pem")
+	run("pkcs8", "-topk8", "-in", "ec.pem", "-scrypt", "-passout", "pass:pw", "-out", "scrypt.pem")
+	run("pkcs8", "-topk8", "-in", "ec.pem", "-v2", "camellia-256-cbc", "-passout", "pass:pw", "-out", "camellia.pem")
+	run("ec", "-in", "ec.pem", "-camellia256", "-passout", "pass:pw", "-out", "camellia-trad.pem")
+	read := func(n string) []byte {
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for _, n := range []string{"v1.pem", "scrypt.pem"} {
+		if r := Probe(n, read(n), ProbeOptions{Password: []byte("pw")}); len(r.Objects) != 1 || r.Objects[0].Private == nil {
+			t.Errorf("%s: %+v", n, r)
+		}
+		if r := Probe(n, read(n), ProbeOptions{Password: []byte("nope")}); !r.PasswordWrong {
+			t.Errorf("%s: wrong password not reported", n)
+		}
+	}
+	for n, want := range map[string]string{"camellia.pem": "unsupported cipher Camellia-256-CBC", "camellia-trad.pem": "unsupported encryption CAMELLIA-256-CBC"} {
+		r := Probe(n, read(n), ProbeOptions{Password: []byte("pw")})
+		if r.PasswordWrong || len(r.Objects) != 0 || len(r.Unrecognized) != 1 || !strings.Contains(r.Unrecognized[0], want) {
+			t.Errorf("%s: %+v", n, r)
+		}
 	}
 }

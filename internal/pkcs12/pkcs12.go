@@ -286,6 +286,14 @@ var (
 	RC2 = Profile{certs: oidPBEWithSHAAnd40BitRC2CBC, key: oidPBEWithSHAAnd3KeyTripleDESCBC, mac: oidSHA1, iterations: 2048, macIter: 1, saltLen: 8, macSaltLen: 8}
 )
 
+// WithIterations returns p with n iterations for the MAC and both
+// encryptions. Each is a way to test a guessed password, so they rise
+// together.
+func (p Profile) WithIterations(n int) Profile {
+	p.iterations, p.macIter = n, n
+	return p
+}
+
 // Encode writes a PKCS#12 file as OpenSSL's PKCS12_create does: the
 // certificates in an encrypted SafeContents, the shrouded key in a plain
 // one, and a MAC over both. key.DER is a PKCS#8 PrivateKeyInfo, or nil for

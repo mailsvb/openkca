@@ -168,8 +168,15 @@ func (p *prober) pemBlock(b *pem.Block) {
 				return
 			}
 			var err error
-			if der, err = x509.DecryptPEMBlock(b, pw); err != nil { //nolint:staticcheck
+			if der, err = x509.DecryptPEMBlock(b, pw); errors.Is(err, x509.IncorrectPasswordError) { //nolint:staticcheck
 				p.wrongPassword()
+				return
+			} else if err != nil {
+				if alg, _, _ := strings.Cut(b.Headers["DEK-Info"], ","); alg != "" && strings.Contains(err.Error(), "unknown encryption mode") {
+					p.skip("%s: unsupported encryption %s", b.Type, alg)
+				} else {
+					p.skip("%s: %v", b.Type, err)
+				}
 				return
 			}
 		}
@@ -422,9 +429,12 @@ func (p *prober) encryptedPKCS8(der []byte) {
 	if !ok {
 		return
 	}
-	plain, err := pki.DecryptPKCS8(der, pw)
-	if err != nil {
+	plain, err := pkcs12.DecryptPKCS8(der, pw)
+	if errors.Is(err, pki.ErrWrongPassword) {
 		p.wrongPassword()
+		return
+	} else if err != nil {
+		p.skip("encrypted private key: %v", err)
 		return
 	}
 	p.privateKey(plain, "", "")

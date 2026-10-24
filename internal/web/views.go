@@ -637,6 +637,7 @@ type optionRow struct {
 	Choices                 []string
 	Labels                  map[string]string // message keys of choices shown translated
 	Units                   []string
+	Min, Max                int    // number: bounds
 	Num                     string // expiry: number part
 	Unit                    string // expiry: unit part
 }
@@ -666,11 +667,17 @@ var optionKeys = []struct {
 	{"cert_expiry", "opt.cert_expiry", "80%", "expiry", nil, "%DW"},
 	{"ical_expiry", "opt.ical_expiry", "1W", "expiry", nil, "DW"},
 	{"pkcs12_enc_algo", "opt.pkcs12_enc_algo", codec.PKCS12Algorithms[0], "select", codec.PKCS12Algorithms, ""},
+	{"pkcs12_iterations", "opt.pkcs12_iterations", strconv.Itoa(codec.PKCS12Iterations), "number", nil, ""},
 	{"disable_netscape", "opt.disable_netscape", "no", "bool", nil, ""},
 	{"no_expire_colors", "opt.no_expire_colors", "no", "bool", nil, ""},
 	{"hide_unusable", "opt.hide_unusable", "no", "bool", nil, ""},
 	{"translate_dn", "opt.translate_dn", "no", "bool", nil, ""},
 	{"suppress_messages", "opt.suppress_messages", "no", "bool", nil, ""},
+}
+
+// optionRanges are the bounds of the "number" options.
+var optionRanges = map[string][2]int{
+	"pkcs12_iterations": {codec.PKCS12MinIterations, codec.PKCS12MaxIterations},
 }
 
 func (s *Server) options(w http.ResponseWriter, r *http.Request) {
@@ -689,6 +696,9 @@ func (s *Server) options(w http.ResponseWriter, r *http.Request) {
 		row := optionRow{Key: o.key, Label: o.label, Value: v, Default: !ok, Kind: o.kind, Choices: o.choices}
 		if o.key == "default_hash" {
 			row.Labels = hashLabels
+		}
+		if rg, ok := optionRanges[o.key]; ok {
+			row.Min, row.Max = rg[0], rg[1]
 		}
 		if o.kind == "select" && !contains(row.Choices, v) {
 			row.Choices = append([]string{v}, row.Choices...)

@@ -111,7 +111,9 @@ XCA.
   PKCS#7 (single, selected, chain), PKCS#12 (with or without chain, every
   certificate under its name, using the `pkcs12_enc_algo` option:
   AES-256-CBC by default, PBE-SHA1-3DES and RC2-40 for old Windows and
-  Java), OpenVPN inline tags, OpenSSL config,
+  Java; AES-256-CBC files use `pkcs12_iterations`, 200 000 by default,
+  for the MAC and both encryptions, the most Windows and .NET import
+  (OpenSSL writes 2048)), OpenVPN inline tags, OpenSSL config,
   vCalendar reminders, JSON Web Key and the OpenSSL index; keys as PEM
   (public, private, encrypted), DER, PKCS#8, SSH, PVK and JWK; requests,
   CRLs and templates in their formats. Only the formats that can hold a
@@ -128,7 +130,11 @@ XCA.
   Argon2 and AES-256-OCB for v6) and as revocation certificates. Select
   several items in a list to export them together; text formats can be
   shown and copied.
-- Import PEM (any number of blocks), DER, PKCS#7, PKCS#8, PKCS#12 (any
+- Import PEM (any number of blocks), DER, PKCS#7, PKCS#8 (encrypted with
+  PBES2 using PBKDF2 or scrypt, with the PKCS#12 schemes such as
+  PBE-SHA1-3DES, old OpenSSL's default, or with PBES1 MD5/SHA-1 and DES or
+  RC2; a scheme go-ca cannot decrypt, such as Camellia, is reported as
+  such, not as a wrong password), PKCS#12 (any
   number of keys and certificates, also certificates or a key alone; a key
   of an unknown type is reported and its certificate still imported), SSH
   keys (`authorized_keys` lines, RFC 4716 public keys, OpenSSH private

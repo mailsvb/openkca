@@ -8,6 +8,7 @@ import (
 	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"errors"
 	"math/big"
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	gopkcs12 "software.sslmate.com/src/go-pkcs12"
+
+	"github.com/mailsvb/go-ca/internal/pki"
 )
 
 func TestDeriveKey(t *testing.T) {
@@ -239,4 +242,129 @@ func pemToDER(t *testing.T, fn string) []byte {
 		t.Fatal(err)
 	}
 	return der
+}
+
+// TestWithIterations checks that the MAC and both encryptions use the
+// count, so none of them is a cheaper way to test a password.
+func TestWithIterations(t *testing.T) {
+	_, leaf, key := testCert(t, "leaf")
+	p12, err := Encode(Bag{DER: key}, []Bag{{DER: leaf}}, "pw", AES256.WithIterations(5000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pfx pfxPDU
+	asn1.Unmarshal(p12, &pfx)
+	if pfx.MacData.Iterations != 5000 {
+		t.Errorf("MAC iterations %d", pfx.MacData.Iterations)
+	}
+	// every PBKDF2-params in the file: certificates and key
+	n := 0
+	for i := 0; i+4 < len(p12); i++ {
+		// the PBKDF2 OID, then its parameters
+		if bytes.HasPrefix(p12[i:], []byte{0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0c}) {
+			var params struct {
+				Salt       []byte
+				Iterations int
+				Rest       asn1.RawValue `asn1:"optional"`
+			}
+			if _, err := asn1.Unmarshal(p12[i+11:], &params); err == nil {
+				n++
+				if params.Iterations != 5000 {
+					t.Errorf("encryption iterations %d", params.Iterations)
+				}
+			}
+		}
+	}
+	if n != 2 { // the certificates' and the key's
+		t.Errorf("%d PBKDF2 parameters", n)
+	}
+	if c, err := Decode(p12, "pw"); err != nil || len(c.Keys) != 1 {
+		t.Fatalf("%v %+v", err, c)
+	}
+	if AES256.iterations != 2048 || DES3.WithIterations(7).key == nil {
+		t.Error("WithIterations changed the profile")
+	}
+}
+
+// TestDecryptPKCS8 reads every encrypted PKCS#8 form OpenSSL writes.
+func TestDecryptPKCS8(t *testing.T) {
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl not installed")
+	}
+	dir := t.TempDir()
+	openssl := func(args ...string) error {
+		cmd := exec.Command("openssl", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("openssl %v: %s", args, out)
+		}
+		return err
+	}
+	if err := openssl("genpkey", "-algorithm", "ED448", "-out", "k.pem"); err != nil {
+		t.Fatal(err)
+	}
+	openssl("pkey", "-in", "k.pem", "-outform", "DER", "-out", "k.der")
+	plain, _ := os.ReadFile(filepath.Join(dir, "k.der"))
+	legacy := []string{"-provider", "legacy", "-provider", "default"}
+	for _, c := range []struct {
+		name string
+		args []string
+		ok   bool // readable; else an unsupported scheme
+	}{
+		{"pbkdf2-aes256", []string{"-v2", "aes-256-cbc"}, true},
+		{"pbkdf2-sha512-aes128", []string{"-v2", "aes-128-cbc", "-v2prf", "hmacWithSHA512"}, true},
+		{"pbkdf2-3des", []string{"-v2", "des-ede3-cbc"}, true},
+		{"pbkdf2-des", append([]string{"-v2", "des-cbc"}, legacy...), true},
+		{"scrypt", []string{"-scrypt"}, true},
+		{"scrypt-small", []string{"-scrypt", "-scrypt_N", "1024", "-scrypt_r", "4", "-scrypt_p", "2"}, true},
+		{"pkcs12-3des", []string{"-v1", "PBE-SHA1-3DES"}, true},
+		{"pkcs12-2des", append([]string{"-v1", "PBE-SHA1-2DES"}, legacy...), true},
+		{"pkcs12-rc2-40", append([]string{"-v1", "PBE-SHA1-RC2-40"}, legacy...), true},
+		{"pkcs12-rc2-128", append([]string{"-v1", "PBE-SHA1-RC2-128"}, legacy...), true},
+		{"pbes1-md5-des", append([]string{"-v1", "PBE-MD5-DES"}, legacy...), true},
+		{"pbes1-sha1-des", append([]string{"-v1", "PBE-SHA1-DES"}, legacy...), true},
+		{"pbes1-md5-rc2", append([]string{"-v1", "PBE-MD5-RC2-64"}, legacy...), true},
+		{"pbes1-sha1-rc2", append([]string{"-v1", "PBE-SHA1-RC2-64"}, legacy...), true},
+		{"camellia", []string{"-v2", "camellia-256-cbc"}, false},
+		{"aria", []string{"-v2", "aria-128-cbc"}, false},
+	} {
+		fn := c.name + ".der"
+		args := append([]string{"pkcs8", "-topk8", "-in", "k.pem", "-outform", "DER", "-passout", "pass:pässwort", "-out", fn}, c.args...)
+		if err := openssl(args...); err != nil {
+			t.Logf("%s: this OpenSSL cannot write it", c.name)
+			continue
+		}
+		blob, _ := os.ReadFile(filepath.Join(dir, fn))
+		got, err := DecryptPKCS8(blob, []byte("pässwort"))
+		if !c.ok {
+			if err == nil || errors.Is(err, pki.ErrWrongPassword) {
+				t.Errorf("%s: %v, want an unsupported scheme", c.name, err)
+			}
+			continue
+		}
+		if err != nil || !bytes.Equal(got, plain) {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if _, err := DecryptPKCS8(blob, []byte("passwort")); !errors.Is(err, pki.ErrWrongPassword) {
+			t.Errorf("%s: wrong password: %v", c.name, err)
+		}
+	}
+}
+
+// TestScryptLimits refuses scrypt parameters that would take a lot of
+// memory, before deriving anything.
+func TestScryptLimits(t *testing.T) {
+	params, _ := asn1.Marshal(struct {
+		Salt    []byte
+		N, R, P int
+	}{[]byte("salt"), 1 << 20, 8, 1}) // 1 GiB
+	kdf, _ := asn1.Marshal(pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11591, 4, 11}, Parameters: asn1.RawValue{FullBytes: params}})
+	iv, _ := asn1.Marshal(make([]byte, 16))
+	enc, _ := asn1.Marshal(pkix.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42}, Parameters: asn1.RawValue{FullBytes: iv}})
+	pbes2, _ := asn1.Marshal(struct{ KDF, Enc asn1.RawValue }{asn1.RawValue{FullBytes: kdf}, asn1.RawValue{FullBytes: enc}})
+	blob, _ := asn1.Marshal(encryptedPrivateKeyInfo{Algorithm: pkix.AlgorithmIdentifier{Algorithm: pki.OIDPBES2, Parameters: asn1.RawValue{FullBytes: pbes2}}, Data: make([]byte, 32)})
+	if _, err := DecryptPKCS8(blob, []byte("pw")); err == nil || !strings.Contains(err.Error(), "scrypt") {
+		t.Fatalf("%v", err)
+	}
 }
