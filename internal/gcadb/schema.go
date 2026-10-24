@@ -4,8 +4,14 @@
 //
 // Every item has a UUID (items.uuid) next to its integer row ID. The row
 // ID links rows inside one database; the UUID is the item's identity
-// outside of it, e.g. a CA's folder for its OpenSSL index and other files
-// go-ca keeps on disk, and it never changes.
+// outside of it and never changes.
+//
+// A CA certificate's authority row has an authority ID (authorities.uuid)
+// naming the CA's folder for its OpenSSL index and other files go-ca keeps
+// on disk. A new CA gets its certificate's UUID; a renewal with the same
+// subject and key that takes over the issued certificates takes over the
+// authority ID as well. At most one live CA holds an authority ID: a CA in
+// the trash whose authority ID a live CA holds cannot be restored.
 //
 // The schema stores DER objects as BLOBs with SHA-256 fingerprints, links
 // items with foreign keys (certificate to issuer and key, request to key,
@@ -94,12 +100,14 @@ var ddl = []string{
 	`CREATE INDEX certs_issuer ON certs (issuer)`,
 	`CREATE TABLE authorities (
 		cert       INTEGER PRIMARY KEY REFERENCES certs (item) ON DELETE CASCADE,
+		uuid       TEXT NOT NULL CHECK (length(uuid) = 36 AND uuid = lower(uuid)),
 		template   INTEGER REFERENCES templates (item) ON DELETE SET NULL,
 		crl_number INTEGER NOT NULL DEFAULT 0,
 		crl_days   INTEGER NOT NULL DEFAULT 30,
 		crl_next   TEXT,
 		dn_policy  TEXT NOT NULL DEFAULT ''
 	)`,
+	`CREATE INDEX authorities_uuid ON authorities (uuid)`,
 	`CREATE TABLE crls (
 		item        INTEGER PRIMARY KEY REFERENCES items (id) ON DELETE CASCADE,
 		der         BLOB NOT NULL,

@@ -1,7 +1,7 @@
 // Package index writes an OpenSSL "ca" style certificate index per CA, as
 // used by "openssl ocsp -index": index.txt and index.txt.attr in the CA's
-// folder, <data-dir>/ca/<database>/<CA UUID>/ (package cadir). It is the
-// only package that writes index files.
+// folder, <data-dir>/ca/<database>/<authority ID>/ (package cadir). It is
+// the only package that writes index files.
 package index
 
 import (
@@ -104,7 +104,7 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 	}
 	var cas []*gcadb.Cert
 	for _, c := range snap.Certs {
-		if c.CA {
+		if c.CA && c.Authority != nil {
 			cas = append(cas, c)
 		}
 	}
@@ -112,11 +112,11 @@ func Write(dir, db string, snap *gcadb.Snapshot) error {
 	live := map[string]bool{}
 	now := time.Now()
 	for _, ca := range cas {
-		folder, err := cadir.Path(dir, db, ca.UUID)
+		folder, err := cadir.Path(dir, db, ca.Authority.UUID)
 		if err != nil {
 			return err
 		}
-		live[ca.UUID] = true
+		live[ca.Authority.UUID] = true
 		var lines []string
 		for _, c := range snap.Certs {
 			if c.IssuerID == ca.ID && c.ID != ca.ID {

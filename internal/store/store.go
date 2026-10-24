@@ -364,12 +364,13 @@ func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 	return snap, nil
 }
 
-// CADir returns the folder of a CA of this database by the UUID of its
-// certificate: <data-dir>/ca/<database>/<UUID>/. It holds the CA's index
-// files and is the place for any other file go-ca keeps per CA. The folder
-// is not created.
-func (h *Handle) CADir(caUUID string) (string, error) {
-	return cadir.Path(h.store.Dir, h.Name, caUUID)
+// CADir returns the folder of a CA of this database by its authority ID
+// (gcadb.Authority.UUID): <data-dir>/ca/<database>/<authority ID>/. It
+// holds the CA's index files and is the place for any other file go-ca
+// keeps per CA; a renewal with the same key keeps it. The folder is not
+// created.
+func (h *Handle) CADir(authorityID string) (string, error) {
+	return cadir.Path(h.store.Dir, h.Name, authorityID)
 }
 
 // changed drops the cached snapshot and reloads it at once, which also

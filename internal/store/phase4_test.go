@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/vault"
 )
@@ -121,12 +123,17 @@ func TestCAOperations(t *testing.T) {
 		t.Fatal("crlDays not used")
 	}
 
-	// Index file, in the CA's folder named after its UUID
-	subDir, err := h.CADir(findCert(snap, subID).UUID)
+	// Index file, in the CA's folder named after its authority ID, which
+	// for a new CA is its certificate's UUID
+	subAuth := findCert(snap, subID).Authority.UUID
+	if subAuth != findCert(snap, subID).UUID {
+		t.Fatalf("authority ID %s of a new CA", subAuth)
+	}
+	subDir, err := h.CADir(subAuth)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(s.Dir, "ca", "ca", findCert(snap, subID).UUID); subDir != want {
+	if want := filepath.Join(s.Dir, "ca", "ca", subAuth); subDir != want {
 		t.Fatalf("CA folder %s, want %s", subDir, want)
 	}
 	idx, err := os.ReadFile(filepath.Join(subDir, "index.txt"))
@@ -191,18 +198,18 @@ func TestCAOperations(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("revocations after CA renewal: %d", n)
 	}
-	// The renewed CA is a new item with a UUID and folder of its own; the
-	// replaced one's folder held only index files and is gone.
-	newDir, _ := h.CADir(findCert(snap, newSub).UUID)
-	if newDir == subDir {
-		t.Fatal("renewed CA shares the folder of the replaced one")
+	// The renewed CA is a new item but takes over the authority ID and with
+	// it the folder; the replaced one in the trash keeps the ID and cannot
+	// be restored while the renewed one is live.
+	if c := findCert(snap, newSub); c.UUID == subAuth || c.Authority.UUID != subAuth {
+		t.Fatalf("renewed CA: uuid %s, authority %s", c.UUID, c.Authority.UUID)
 	}
-	if b, err := os.ReadFile(filepath.Join(newDir, "index.txt")); err != nil || strings.Count("\n"+string(b), "\nR\t") != 3 ||
+	if b, err := os.ReadFile(filepath.Join(subDir, "index.txt")); err != nil || strings.Count("\n"+string(b), "\nR\t") != 3 ||
 		!strings.Contains(string(b), "\t"+nl.Serial+"\t") {
 		t.Fatalf("index of the renewed CA: %q %v", b, err)
 	}
-	if _, err := os.Stat(subDir); !os.IsNotExist(err) {
-		t.Fatal("folder of the replaced CA not removed")
+	if err := h.Restore(ctx, subID); !errors.Is(err, gcadb.ErrAuthorityInUse) {
+		t.Fatalf("restored the replaced CA: %v", err)
 	}
 }
 
@@ -233,7 +240,7 @@ func ocspCheck(t *testing.T, h *Handle, s *Store, snap interface{}, caID int64, 
 	}
 	req, resp := filepath.Join(dir, "req.der"), filepath.Join(dir, "resp.der")
 	run("-issuer", caPEM, "-serial", "0x"+serial, "-reqout", req, "-no_nonce")
-	caDir, err := h.CADir(ca.UUID)
+	caDir, err := h.CADir(ca.Authority.UUID)
 	if err != nil {
 		t.Fatal(err)
 	}

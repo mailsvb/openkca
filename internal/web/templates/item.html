@@ -39,6 +39,7 @@
     <dt>{{T "ca.crldays"}}</dt><dd>{{$a.CRLDays}}</dd>
     <dt>{{T "ca.crlno"}}</dt><dd>{{$a.CRLNo}}</dd>
     <dt>{{T "ca.crlexpire"}}</dt><dd>{{if eq $a.CRLExpire.Year 9999}}{{T "ca.nocrl"}}{{else}}{{time $a.CRLExpire}}{{end}}</dd>
+    <dt>{{T "ca.authority"}}</dt><dd class="mono">{{$a.UUID}}</dd>
     {{with $d.CADir}}<dt>{{T "ca.folder"}}</dt><dd class="mono small">{{.}}</dd>{{end}}
   </dl>
   <div class="actionbar">

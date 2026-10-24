@@ -140,11 +140,15 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
   generate CRLs with XCA's options and renew certificates (new or same
   serial, optionally revoking or deleting the old one).
 - An OpenSSL `ca` style index per CA in
-  `<data-dir>/ca/<database>/<CA UUID>/index.txt` (plus `index.txt.attr`),
+  `<data-dir>/ca/<database>/<authority ID>/index.txt` (plus `index.txt.attr`),
   kept current and usable directly with `openssl ocsp -index`. Every item
-  has a UUID that never changes; a CA's folder is named after the UUID of
-  its certificate, so it survives renaming the CA and a trip through the
-  trash. The item page shows the UUID and, for a CA, its folder.
+  has a UUID that never changes. A CA's folder is named after its authority
+  ID: its certificate's UUID for a new CA, taken over by a renewal with the
+  same subject and key, so the folder survives renaming, renewing and a trip
+  through the trash. A renewed CA certificate still live gets a new
+  authority ID; one in the trash keeps its ID and cannot be restored while
+  the renewal holding it is live. The item page shows the UUID and, for a
+  CA, its authority ID and folder.
 
 **Templates**
 
@@ -295,7 +299,7 @@ will warn about the name until you pass a certificate for the real host name.
     ├── server-password   argon2id hash
     ├── tls.crt, tls.key  self-issued certificate
     └── backup/           <name>.<yyyyMMddHHmmss>.gca
-/srv/xca/ca/<database>/<CA UUID>/index.txt   per-CA folder: certificate index
+/srv/xca/ca/<database>/<authority ID>/index.txt   per-CA folder: certificate index
 ```
 
 A backup is written right after an import and before every change that

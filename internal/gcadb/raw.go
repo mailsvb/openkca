@@ -102,8 +102,14 @@ func (t *Tx) PutRaw(ctx context.Context, r RawItem) error {
 			if days == 0 {
 				days = 30
 			}
-			_, err = t.ExecContext(ctx, `INSERT INTO authorities (cert, template, crl_number, crl_days, crl_next, dn_policy)
-				VALUES (?, ?, ?, ?, ?, ?)`, r.ID, link(a.TemplateID), a.CRLNo, days, optTime(a.CRLExpire), a.DNPolicy)
+			auth := uid // a new authority ID is the certificate's UUID
+			if a.UUID != "" {
+				if auth, err = CanonicalUUID(a.UUID); err != nil {
+					return fmt.Errorf("certificate %d: %w", r.ID, err)
+				}
+			}
+			_, err = t.ExecContext(ctx, `INSERT INTO authorities (cert, uuid, template, crl_number, crl_days, crl_next, dn_policy)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`, r.ID, auth, link(a.TemplateID), a.CRLNo, days, optTime(a.CRLExpire), a.DNPolicy)
 		}
 	case r.Type == TypeCRL && r.CRL != nil:
 		var issuerName []byte
