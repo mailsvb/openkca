@@ -326,3 +326,37 @@ func TestParseLenient(t *testing.T) {
 		t.Error("RawTBSCertificate is not the original")
 	}
 }
+
+// TestAutoHash checks that "auto" picks the hash from the signing key.
+func TestAutoHash(t *testing.T) {
+	cases := []struct {
+		spec KeySpec
+		want x509.SignatureAlgorithm
+		name string
+	}{
+		{KeySpec{Type: "EC", Curve: "P-256"}, x509.ECDSAWithSHA256, "sha256"},
+		{KeySpec{Type: "EC", Curve: "P-384"}, x509.ECDSAWithSHA384, "sha384"},
+		{KeySpec{Type: "EC", Curve: "P-521"}, x509.ECDSAWithSHA512, "sha512"},
+		{KeySpec{Type: "RSA", Bits: 2048}, x509.SHA256WithRSA, "sha256"},
+		{KeySpec{Type: "Ed25519"}, x509.PureEd25519, ""},
+	}
+	for _, c := range cases {
+		key, err := GenerateKey(c.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, _ := selfSigned(t, key, "auto", HashAuto)
+		if cert.SignatureAlgorithm != c.want {
+			t.Errorf("%+v: signed with %v, want %v", c.spec, cert.SignatureAlgorithm, c.want)
+		}
+		if got := AutoHashName(cert.RawSubjectPublicKeyInfo); got != c.name {
+			t.Errorf("%+v: AutoHashName %q, want %q", c.spec, got, c.name)
+		}
+		if got := AutoHashNameForSpec(c.spec); got != c.name {
+			t.Errorf("%+v: AutoHashNameForSpec %q, want %q", c.spec, got, c.name)
+		}
+	}
+	if AutoHash("RSA", 8192) != crypto.SHA384 || AutoHash("RSA", 3072) != crypto.SHA256 {
+		t.Error("RSA sizes map to the wrong hash")
+	}
+}

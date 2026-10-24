@@ -48,6 +48,28 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 
 **Keys, requests and certificates**
 
+- "New…" starts from the purpose: root CA, intermediate CA, TLS server,
+  TLS client, S/MIME, code signing, SSH key or OpenPGP key. Each purpose
+  asks only for what it needs (host names, a name or an e-mail address,
+  the issuing CA, the lifetime) and fills in the rest: ECDSA P-256 keys
+  (P-384 for a root CA, RSA 3072 for S/MIME, Ed25519 for SSH and OpenPGP),
+  key usage and extended key usage, basic constraints. A side panel shows
+  the resulting certificate as it is typed, with warnings (a TLS server
+  certificate longer than Apple accepts, a certificate that outlives its
+  CA). The form can be handed to the full editor with its values; a CA's
+  "Issue" and a request's "Sign" lead to the purposes too. The database's
+  own templates are offered next to them.
+- Simple by default, deep for experts: the key type picker offers three
+  recommended types first and folds the others by family; post-quantum
+  keys, RSA-PSS and key agreement keys, the signature hash, issuer
+  alternative names, name constraints, OCSP must-staple, further
+  extensions and Netscape extensions are shown when the database's
+  "Show expert fields" option is on (values they hold are kept and
+  pointed out while hidden). Composite keys are marked as drafts.
+- The signature hash follows the signing key by default (SHA-256 for
+  P-256 and RSA up to 4096 bit, SHA-384 for P-384, SHA-512 for P-521);
+  serial numbers are 128 bit random. Databases imported with XCA's
+  defaults (SHA-256, 64 bit) switch to these.
 - Generate RSA (also as RSA-PSS keys that sign with PSS only), ECDSA
   (P-256/384/521, brainpoolP256r1/384r1/512r1, secp256k1), Ed25519, Ed448,
   X25519 and X448 keys, and the post-quantum ML-DSA (FIPS 204), SLH-DSA
@@ -62,7 +84,10 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
   certificates from a CA. Certificates, requests and CRLs of all these
   algorithms are read and their signatures verified, also those Go's
   crypto/x509 refuses.
-- Create requests and certificates in an editor modelled on XCA's:
+- Create requests and certificates in an editor modelled on XCA's, which
+  starts from a purpose or template, folds key, validity and extensions
+  into one-line summaries and lists where the form differs from its
+  purpose:
   self-signed or signed by a CA, from a request, with subject, validity,
   basic constraints, key identifiers, key usage, extended key usage,
   alternative names (including `DNS:copycn` and `email:copy`), CRL

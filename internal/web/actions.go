@@ -305,6 +305,31 @@ func (s *Server) saveOptions(w http.ResponseWriter, r *http.Request) {
 	s.redirectOptions(w, r, "notice=saved")
 }
 
+// setExpert switches the expert fields on or off and returns to the page
+// the form names (a page of the same database).
+func (s *Server) setExpert(w http.ResponseWriter, r *http.Request) {
+	ds := dbSession(r)
+	v := "no"
+	if r.PostFormValue("expert") == "yes" {
+		v = "yes"
+	}
+	if err := ds.Handle.SetSettings(r.Context(), map[string]string{"expert": v}); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	http.Redirect(w, r, backPath(r.PostFormValue("back"), ds.DBName), http.StatusSeeOther)
+}
+
+// backPath is back when it is a path below the database's pages, else
+// the database's home.
+func backPath(back, db string) string {
+	base := dbPath(db)
+	if !strings.HasPrefix(back, base) || strings.ContainsAny(back, "\\\r\n") || strings.Contains(back[1:], "//") {
+		return base
+	}
+	return back
+}
+
 func (s *Server) redirectOptions(w http.ResponseWriter, r *http.Request, q string) {
 	http.Redirect(w, r, dbPath(dbSession(r).DBName)+"options?"+q, http.StatusSeeOther)
 }

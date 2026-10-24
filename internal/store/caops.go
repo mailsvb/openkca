@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"math/big"
-	"strconv"
 	"strings"
 	"time"
 
@@ -142,10 +141,7 @@ func DefaultCRLOptions(snap *gcadb.Snapshot, ca *gcadb.Cert) CRLOptions {
 		}
 		num = ca.Authority.CRLNo + 1
 	}
-	hash := snap.Settings["default_hash"]
-	if hash == "" {
-		hash = "sha256"
-	}
+	hash := Hash(snap)
 	return CRLOptions{Name: ca.Name, ThisUpdate: now, NextUpdate: now.AddDate(0, 0, days), Hash: hash,
 		SetNumber: true, Number: num, WithReason: true, AuthKeyID: true, IssuerAlt: true}
 }
@@ -264,7 +260,7 @@ func (h *Handle) Renew(ctx context.Context, certID int64, o RenewOptions, kr *va
 	serial := oc.SerialNumber
 	if !o.KeepSerial {
 		used := usedSerials(snap, signer)
-		serialLen, _ := strconv.Atoi(snap.Settings["serial_len"])
+		serialLen := SerialLen(snap)
 		for i := 0; ; i++ {
 			if i > 100 {
 				return 0, errors.New("failed to find an unused serial number")

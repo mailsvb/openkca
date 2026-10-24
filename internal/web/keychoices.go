@@ -91,3 +91,97 @@ func parseKeyChoice(s string) (*pki.KeySpec, error) {
 	}
 	return nil, fmt.Errorf("unknown key type %q", s)
 }
+
+// recommendedKey is one of the key types the picker offers first.
+type recommendedKey struct {
+	Value, Label string
+	Note, Works  string // message keys
+}
+
+var recommendedKeys = []recommendedKey{
+	{"EC:P-256", "ECDSA P-256", "keypick.note.p256", "keypick.works.p256"},
+	{"Ed25519", "Ed25519", "keypick.note.ed25519", "keypick.works.ed25519"},
+	{"RSA:3072", "RSA 3072", "keypick.note.rsa3072", "keypick.works.rsa3072"},
+}
+
+// pickerGroup is a folded family of further key types.
+type pickerGroup struct {
+	Label   string // message key
+	Expert  bool   // shown with expert fields only
+	Draft   bool   // encoding from an Internet-Draft, may change
+	Open    bool   // holds the selected type
+	Summary string
+	Choices []keyChoice
+}
+
+// keyPicker is the data of the "keypicker" template: the recommended key
+// types, then the other families. Families for experts (post-quantum,
+// RSA-PSS, key agreement only) are left out unless expert fields are on
+// or they hold the selected type.
+type keyPicker struct {
+	Name, Value string // form field and selected value
+	DB          string // database name, for the options link
+	Expert      bool
+	Recommended []recommendedKey
+	Groups      []pickerGroup
+	Hidden      int // key types left out
+}
+
+var expertGroups = map[string]bool{"newkey.group.rsapss": true, "newkey.group.mldsa": true, "newkey.group.slhdsa": true,
+	"newkey.group.composite": true, "newkey.group.ecdh": true, "newkey.group.mlkem": true, "newkey.group.compositekem": true}
+
+var draftGroups = map[string]bool{"newkey.group.composite": true, "newkey.group.compositekem": true}
+
+func newKeyPicker(name, value, db string, expert bool) keyPicker {
+	kp := keyPicker{Name: name, Value: value, DB: db, Expert: expert, Recommended: recommendedKeys}
+	recommended := func(v string) bool {
+		return slices.ContainsFunc(recommendedKeys, func(r recommendedKey) bool { return r.Value == v })
+	}
+	for _, g := range keyGroups {
+		pg := pickerGroup{Label: g.Label, Expert: expertGroups[g.Label], Draft: draftGroups[g.Label]}
+		var labels []string
+		for _, c := range g.Choices {
+			if recommended(c.Value) {
+				continue
+			}
+			pg.Choices = append(pg.Choices, c)
+			labels = append(labels, c.Label)
+			pg.Open = pg.Open || c.Value == value
+		}
+		if len(pg.Choices) == 0 {
+			continue
+		}
+		if pg.Expert && !expert && !pg.Open {
+			kp.Hidden += len(pg.Choices)
+			continue
+		}
+		labels = trimCommonWord(labels)
+		if len(labels) > 6 {
+			labels = append(labels[:5], "…")
+		}
+		pg.Summary = strings.Join(labels, " · ")
+		kp.Groups = append(kp.Groups, pg)
+	}
+	return kp
+}
+
+// trimCommonWord drops a first word all labels share ("ECDSA P-384",
+// "ECDSA P-521" → "P-384", "P-521").
+func trimCommonWord(labels []string) []string {
+	if len(labels) < 2 {
+		return labels
+	}
+	first, _, ok := strings.Cut(labels[0], " ")
+	if !ok {
+		return labels
+	}
+	out := make([]string, len(labels))
+	for i, l := range labels {
+		rest, found := strings.CutPrefix(l, first+" ")
+		if !found {
+			return labels
+		}
+		out[i] = rest
+	}
+	return out
+}

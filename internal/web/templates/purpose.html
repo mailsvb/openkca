@@ -1,0 +1,58 @@
+{{template "head" .}}
+<div class="pagehead">
+  <div>
+    <h1>{{T "purpose.heading"}}</h1>
+    <p class="muted">{{T "purpose.intro"}}</p>
+  </div>
+  <a href="{{.Data.Editor}}">{{T "purpose.editor"}}</a>
+</div>
+{{if .Data.Carry}}<p class="notice small">{{T "purpose.carry"}}</p>{{end}}
+
+<section class="purposes" aria-labelledby="g-ca">
+  <h2 id="g-ca" class="grouphead">{{T "purpose.group.ca"}}</h2>
+  <div class="purposegrid">{{range .Data.CA}}{{template "purposecard" .}}{{end}}</div>
+</section>
+<section class="purposes" aria-labelledby="g-cert">
+  <h2 id="g-cert" class="grouphead">{{T "purpose.group.cert"}}</h2>
+  <div class="purposegrid">{{range .Data.Cert}}{{template "purposecard" .}}{{end}}</div>
+</section>
+<section class="purposes" aria-labelledby="g-keys">
+  <h2 id="g-keys" class="grouphead">{{T "purpose.group.keys"}}</h2>
+  <div class="purposegrid">{{range .Data.Keys}}{{template "purposecard" .}}{{end}}</div>
+</section>
+{{if .Data.Templates}}
+<section class="purposes" aria-labelledby="g-tpl">
+  <h2 id="g-tpl" class="grouphead">{{T "purpose.group.templates"}}</h2>
+  <div class="purposegrid">
+    {{range .Data.Templates}}
+    <a class="purpose" href="{{.Href}}">
+      {{template "picon" "template"}}
+      <span><strong>{{.Title}}</strong>{{if .Summary}}<span class="muted small">{{.Summary}}</span>{{end}}
+      <span class="muted small">{{T "purpose.template.help"}}</span></span>
+    </a>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{template "foot" .}}
+
+{{define "purposecard"}}
+<a class="purpose" href="{{.Href}}">
+  {{template "picon" .ID}}
+  <span><strong>{{T .Title}}</strong>
+    <span class="muted small">{{T .Help}}</span>
+    <span class="muted small mono">{{.Summary}}</span></span>
+</a>
+{{end}}
+
+{{define "picon"}}<svg class="picon" aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+{{- if eq . "root-ca"}}<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>
+{{- else if eq . "intermediate-ca"}}<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M12 8v8"/><path d="M8 12h8"/>
+{{- else if eq . "tls-server"}}<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01"/><path d="M7 16.5h.01"/>
+{{- else if eq . "tls-client"}}<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>
+{{- else if eq . "smime"}}<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>
+{{- else if eq . "code-signing"}}<path d="M8 8l-4 4 4 4"/><path d="M16 8l4 4-4 4"/><path d="M13.5 5l-3 14"/>
+{{- else if eq . "ssh"}}<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/>
+{{- else if eq . "openpgp"}}<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9"/><path d="M17 6l3 3"/>
+{{- else}}<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>
+{{- end}}</svg>{{end}}

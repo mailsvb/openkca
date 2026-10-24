@@ -21,6 +21,7 @@
     <a href="/db/{{$db}}/trash"{{if eq $cur "trash"}} class="active" aria-current="page"{{end}}>{{T "tab.trash"}}</a>
     <a href="/db/{{$db}}/audit"{{if eq $cur "audit"}} class="active" aria-current="page"{{end}}>{{T "tab.audit"}}</a>
   </nav>
+  <a class="button newbutton" href="/db/{{$db}}/new">{{T "purpose.button"}}</a>
   <form method="post" action="/db/{{.DB.Name}}/logout" class="inline">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button type="submit" class="link">{{T "db.close"}}</button>

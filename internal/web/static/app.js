@@ -52,3 +52,35 @@
     }
   });
 })();
+
+// Key picker filter: shows the key types whose label contains the text.
+(function () {
+  "use strict";
+  function setup(picker) {
+    var input = picker.querySelector("input[data-keyfilter]");
+    if (!input) { return; }
+    input.closest("label").hidden = false;
+    var fams = picker.querySelectorAll("details.keyfam");
+    var wasOpen = [];
+    fams.forEach(function (d, i) { wasOpen[i] = d.open; });
+    input.addEventListener("input", function () {
+      var q = input.value.trim().toLowerCase();
+      fams.forEach(function (d, i) {
+        var any = false;
+        d.querySelectorAll(".keychip").forEach(function (chip) {
+          var hit = q === "" || chip.textContent.toLowerCase().indexOf(q) >= 0;
+          chip.hidden = !hit;
+          any = any || hit;
+        });
+        d.hidden = !any;
+        d.open = q === "" ? wasOpen[i] : any;
+      });
+    });
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("[data-keypick]").forEach(setup);
+  });
+  document.addEventListener("htmx:afterSwap", function (ev) {
+    ev.target.querySelectorAll("[data-keypick]").forEach(setup);
+  });
+})();

@@ -31,14 +31,14 @@ var pgpKeyChoices = []keyChoice{
 	{"Ed448", "Ed448 / X448"},
 	{"EC:brainpoolP256r1", "ECDSA / ECDH brainpoolP256r1"}, {"EC:brainpoolP384r1", "ECDSA / ECDH brainpoolP384r1"},
 	{"EC:brainpoolP512r1", "ECDSA / ECDH brainpoolP512r1"},
-	{"Composite:MLDSA65-Ed25519-SHA512", "ML-DSA-65+Ed25519 / ML-KEM-768+X25519 (v6)"},
-	{"Composite:MLDSA87-Ed448-SHAKE256", "ML-DSA-87+Ed448 / ML-KEM-1024+X448 (v6)"},
+	{"Composite:MLDSA65-Ed25519-SHA512", "ML-DSA-65+Ed25519 / ML-KEM-768+X25519 (v6, draft)"},
+	{"Composite:MLDSA87-Ed448-SHAKE256", "ML-DSA-87+Ed448 / ML-KEM-1024+X448 (v6, draft)"},
 }
 
 // pgpVersions and pgpExpiries are the choices of the forms, default first.
 var (
 	pgpVersions = []string{"4", "6"}
-	pgpExpiries = []string{"2y", "1y", "3y", "5y", "never"}
+	pgpExpiries = []string{"3y", "1y", "2y", "5y", "never"}
 	pgpUsages   = []string{codec.PGPEncrypt, codec.PGPSign, codec.PGPAuth}
 	pgpFlavors  = []string{"bundle", "public", "binary", "secret"}
 )
@@ -118,9 +118,26 @@ func subkeySpec(primary pki.KeySpec) *pki.KeySpec {
 // pgpV6Only reports whether keys of the spec exist only as v6 OpenPGP keys.
 func pgpV6Only(spec pki.KeySpec) bool { return spec.Type == "Composite" }
 
+// pgpChoices are pgpKeyChoices without the composite (draft) ones unless
+// expert fields are on or one of them is selected.
+func pgpChoices(expert bool, selected string) []keyChoice {
+	var out []keyChoice
+	for _, c := range pgpKeyChoices {
+		if expert || c.Value == selected || !strings.HasPrefix(c.Value, "Composite:") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (s *Server) newPGPKeyPage(w http.ResponseWriter, r *http.Request) {
+	snap, err := dbSession(r).Handle.Snapshot(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	s.render(w, r, http.StatusOK, "newpgpkey", &page{Title: "newpgpkey.title", Tab: "keys", Data: map[string]any{
-		"KeyChoices": pgpKeyChoices, "Type": pgpKeyChoices[0].Value, "Versions": pgpVersions, "Version": pgpVersions[0],
+		"KeyChoices": pgpChoices(store.Expert(snap), ""), "Expert": store.Expert(snap), "Back": r.URL.RequestURI(), "Type": pgpKeyChoices[0].Value, "Versions": pgpVersions, "Version": pgpVersions[0],
 		"Expiries": pgpExpiries, "Expiry": pgpExpiries[0], "Subkey": true}})
 }
 
@@ -130,7 +147,11 @@ func (s *Server) newPGPKey(w http.ResponseWriter, r *http.Request) {
 	typ := r.PostFormValue("type")
 	p, uids, ok := pgpParams(r)
 	subkey := r.PostFormValue("subkey") != ""
-	data := map[string]any{"KeyChoices": pgpKeyChoices, "Type": typ, "Versions": pgpVersions, "Version": r.PostFormValue("version"),
+	expert := false
+	if snap, err := ds.Handle.Snapshot(r.Context()); err == nil {
+		expert = store.Expert(snap)
+	}
+	data := map[string]any{"KeyChoices": pgpChoices(expert, typ), "Expert": expert, "Back": dbPath(ds.DBName) + "new/pgpkey", "Type": typ, "Versions": pgpVersions, "Version": r.PostFormValue("version"),
 		"Expiries": pgpExpiries, "Expiry": r.PostFormValue("expiry"), "Name": name, "UIDs": strings.Join(uids, "\n"), "Subkey": subkey}
 	spec, err := parseKeyChoice(typ)
 	offered := slices.ContainsFunc(pgpKeyChoices, func(c keyChoice) bool { return c.Value == typ })

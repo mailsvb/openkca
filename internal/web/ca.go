@@ -212,7 +212,7 @@ func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, s
 		}
 	}
 	s.render(w, r, status, "crl", &page{Title: "crlgen.title", Tab: "certs", Error: errKey, Data: map[string]any{
-		"CA": ca, "O": o, "Hashes": pki.Hashes, "HasSAN": hasSAN, "KeyOwn": keyOwn, "Count": n,
+		"CA": ca, "O": o, "Hashes": pki.HashChoices, "HasSAN": hasSAN, "KeyOwn": keyOwn, "Count": n,
 		"This": o.ThisUpdate.UTC().Format("2006-01-02T15:04"), "Next": o.NextUpdate.UTC().Format("2006-01-02T15:04"),
 	}})
 }

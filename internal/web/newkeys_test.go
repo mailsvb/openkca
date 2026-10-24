@@ -44,7 +44,14 @@ func TestNewKeyTypesUI(t *testing.T) {
 	post("/db/pq/login", url.Values{"password": {"password1"}})
 
 	page := get("/db/pq/new/key")
-	for _, want := range []string{`<optgroup label="ML-DSA (post-quantum)">`, `value="Composite:MLDSA87-Ed448-SHAKE256"`,
+	if strings.Contains(page, `value="ML-KEM:ML-KEM-1024"`) || !strings.Contains(page, `value="EC:brainpoolP512r1"`) {
+		t.Error("new key page shows expert key types without expert fields, or lacks others")
+	}
+	if r := post("/db/pq/expert", url.Values{"expert": {"yes"}, "back": {"/db/pq/new/key"}}); r.Header.Get("Location") != "/db/pq/new/key" {
+		t.Fatalf("expert switch: %d %q", r.StatusCode, r.Header.Get("Location"))
+	}
+	page = get("/db/pq/new/key")
+	for _, want := range []string{`ML-DSA (post-quantum)`, `value="Composite:MLDSA87-Ed448-SHAKE256"`,
 		`value="EC:brainpoolP512r1"`, `value="ML-KEM:ML-KEM-1024"`, `value="X448"`, `value="RSA-PSS:3072"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("new key page lacks %s", want)

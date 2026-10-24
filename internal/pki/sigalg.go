@@ -25,6 +25,86 @@ import (
 // key is an RSA key, and like the plain hash otherwise.
 var Hashes = []string{"sha256", "sha384", "sha512", "sha256-pss", "sha384-pss", "sha512-pss"}
 
+// HashAuto is the hash choice that follows the signing key's strength:
+// see AutoHash. It is go-ca's default.
+const HashAuto = "auto"
+
+// HashChoices are the choices offered in forms and options: HashAuto,
+// then Hashes.
+var HashChoices = append([]string{HashAuto}, Hashes...)
+
+// AutoHash is the digest HashAuto picks for a key of the given algorithm
+// (as DescribePublicKey names it) and size, after NIST SP 800-57: SHA-256
+// up to 128 bit security (RSA below 7680 bit, curves up to 256 bit),
+// SHA-384 up to 192 bit (RSA below 15360, curves up to 384 bit), SHA-512
+// above. Algorithms that sign without a separate hash give 0.
+func AutoHash(algorithm string, bits int) crypto.Hash {
+	switch algorithm {
+	case "RSA", "RSA-PSS", "DSA":
+		switch {
+		case bits >= 15360:
+			return crypto.SHA512
+		case bits >= 7680:
+			return crypto.SHA384
+		}
+		return crypto.SHA256
+	case "EC":
+		switch {
+		case bits > 384:
+			return crypto.SHA512
+		case bits > 256:
+			return crypto.SHA384
+		}
+		return crypto.SHA256
+	}
+	return 0
+}
+
+// AutoHashName names the choice of Hashes HashAuto makes for a public
+// key (DER SubjectPublicKeyInfo): "sha256", "sha384", "sha512", or "" when
+// the algorithm signs without a separate hash (EdDSA, ML-DSA, ...).
+func AutoHashName(spki []byte) string {
+	info := DescribePublicKey(spki)
+	return hashChoiceName(AutoHash(info.Algorithm, info.Bits))
+}
+
+// AutoHashNameForSpec is AutoHashName for a key yet to be generated.
+func AutoHashNameForSpec(spec KeySpec) string {
+	switch spec.Type {
+	case "RSA", "RSA-PSS":
+		return hashChoiceName(AutoHash(spec.Type, spec.Bits))
+	case "EC":
+		if c := curveByName(spec.Curve); c != nil {
+			return hashChoiceName(AutoHash("EC", c.Curve().Params().BitSize))
+		}
+	}
+	return ""
+}
+
+func hashChoiceName(h crypto.Hash) string {
+	switch h {
+	case crypto.SHA256:
+		return "sha256"
+	case crypto.SHA384:
+		return "sha384"
+	case crypto.SHA512:
+		return "sha512"
+	}
+	return ""
+}
+
+func autoHashOf(pub crypto.PublicKey) crypto.Hash {
+	switch k := pub.(type) {
+	case *rsa.PublicKey:
+		return AutoHash("RSA", k.N.BitLen())
+	case *RSAPSSPublicKey:
+		return AutoHash("RSA", k.N.BitLen())
+	case *ecdsa.PublicKey:
+		return AutoHash("EC", k.Curve.Params().BitSize)
+	}
+	return crypto.SHA256
+}
+
 var (
 	oidSigRSASHA1    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 5}
 	oidSigRSASHA256  = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
@@ -80,9 +160,15 @@ func pssScheme(p PSSParams) (sigScheme, error) {
 // RSASSA-PSS key always signs with PSS, with its own parameters if it has
 // them.
 func signatureScheme(key crypto.Signer, hash string) (sigScheme, error) {
-	h, pss, err := parseHash(hash)
-	if err != nil {
-		return sigScheme{}, err
+	var h crypto.Hash
+	var pss bool
+	if strings.EqualFold(hash, HashAuto) {
+		h = autoHashOf(key.Public())
+	} else {
+		var err error
+		if h, pss, err = parseHash(hash); err != nil {
+			return sigScheme{}, err
+		}
 	}
 	switch k := key.(type) {
 	case *rsa.PrivateKey:
