@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"github.com/mailsvb/go-ca/internal/store"
+	"github.com/mailsvb/go-ca/internal/vault"
 )
 
 func backTo(w http.ResponseWriter, r *http.Request, query string) {
@@ -31,8 +32,10 @@ func (s *Server) createDB(w http.ResponseWriter, r *http.Request) {
 		backTo(w, r, "error=create.error.mismatch")
 		return
 	}
-	err := s.store.Create(r.Context(), name, pw)
+	err := s.store.Create(r.Context(), name, pw, vault.Default)
 	switch {
+	case errors.Is(err, store.ErrShortPassword):
+		backTo(w, r, "error=create.error.short")
 	case errors.Is(err, store.ErrBadName):
 		backTo(w, r, "error=create.error.name")
 	case errors.Is(err, store.ErrExists):

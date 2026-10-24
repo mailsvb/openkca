@@ -8,6 +8,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -18,8 +19,8 @@ import (
 func TestNewKeyTypes(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
-	if err := s.Create(ctx, "newkeys", pw); err != nil {
+	pw := testPassword
+	if err := s.Create(ctx, "newkeys", pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, "newkeys")
@@ -40,7 +41,7 @@ func TestNewKeyTypes(t *testing.T) {
 		name := c.ca.Type + c.ca.Curve + c.ca.Param
 		p := params(name, 0)
 		p.NewKey, p.Hash = &c.ca, c.hash
-		rootID, err := h.Issue(ctx, p, pw)
+		rootID, err := h.Issue(ctx, p, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: root: %v", name, err)
 		}
@@ -49,19 +50,19 @@ func TestNewKeyTypes(t *testing.T) {
 		lp := params(name+" kem", rootID)
 		lp.NewKey, lp.Hash = &pki.KeySpec{Type: "ML-KEM", Param: "ML-KEM-768"}, c.hash
 		lp.Ext = pki.ExtSpec{CA: 2, SubKey: true, AuthKey: true, KeyUse: 1 << 4}
-		kemID, err := h.Issue(ctx, lp, pw)
+		kemID, err := h.Issue(ctx, lp, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: ML-KEM certificate: %v", name, err)
 		}
 
 		// an existing X448 key
-		xid, err := h.GenerateKey(ctx, name+" x448", "", pki.KeySpec{Type: "X448"}, pw)
+		xid, err := h.GenerateKey(ctx, name+" x448", "", pki.KeySpec{Type: "X448"}, krOf(t, h))
 		if err != nil {
 			t.Fatal(err)
 		}
 		xp := lp
 		xp.Name, xp.NewKey, xp.KeyID = name+" x448", nil, xid
-		x448ID, err := h.Issue(ctx, xp, pw)
+		x448ID, err := h.Issue(ctx, xp, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: X448 certificate: %v", name, err)
 		}
@@ -70,13 +71,13 @@ func TestNewKeyTypes(t *testing.T) {
 		rp := params(name+" req", 0)
 		rp.Request, rp.NewKey, rp.Hash = true, &pki.KeySpec{Type: "Ed448"}, c.hash
 		rp.Ext = pki.ExtSpec{SubAltName: "DNS:copycn"}
-		reqID, err := h.Issue(ctx, rp, pw)
+		reqID, err := h.Issue(ctx, rp, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: request: %v", name, err)
 		}
 		fp := IssueParams{Name: name + " from req", FromReqID: reqID, ReqSubject: true, CopyReqExt: true, SignerID: rootID,
 			NotBefore: time.Now(), NotAfter: time.Now().AddDate(0, 1, 0), Hash: c.hash, Ext: pki.ExtSpec{CA: 2, AuthKey: true}}
-		fromReqID, err := h.Issue(ctx, fp, pw)
+		fromReqID, err := h.Issue(ctx, fp, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: certificate from request: %v", name, err)
 		}
@@ -101,7 +102,7 @@ func TestNewKeyTypes(t *testing.T) {
 		// renewal keeps the key exactly; the CRL is linked to the CA
 		kem := findCert(snap, kemID)
 		newID, err := h.Renew(ctx, kemID, RenewOptions{NotBefore: time.Now(), NotAfter: time.Now().AddDate(2, 0, 0),
-			Revoke: &Revocation{Reason: 4}}, pw, nil)
+			Revoke: &Revocation{Reason: 4}}, krOf(t, h), nil)
 		if err != nil {
 			t.Fatalf("%s: renew: %v", name, err)
 		}
@@ -114,7 +115,7 @@ func TestNewKeyTypes(t *testing.T) {
 		}
 		opts := DefaultCRLOptions(snap, root)
 		opts.Hash = c.hash
-		crlID, err := h.GenerateCRL(ctx, rootID, opts, pw, nil)
+		crlID, err := h.GenerateCRL(ctx, rootID, opts, krOf(t, h), nil)
 		if err != nil {
 			t.Fatalf("%s: CRL: %v", name, err)
 		}
@@ -130,7 +131,7 @@ func TestNewKeyTypes(t *testing.T) {
 		}
 
 		// the root back to a request
-		if _, err := h.CertToRequest(ctx, rootID, pw, nil); err != nil {
+		if _, err := h.CertToRequest(ctx, rootID, krOf(t, h), nil); err != nil {
 			t.Fatalf("%s: to request: %v", name, err)
 		}
 	}
@@ -142,13 +143,13 @@ func TestNewKeyTypes(t *testing.T) {
 func TestNewKeyTypesExport(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
-	if err := s.Create(ctx, "newexport", pw); err != nil {
+	pw := testPassword
+	if err := s.Create(ctx, "newexport", pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, "newexport")
 	rootP := params("export root", 0)
-	rootID, err := h.Issue(ctx, rootP, pw)
+	rootID, err := h.Issue(ctx, rootP, krOf(t, h))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestNewKeyTypesExport(t *testing.T) {
 		p := params(name, rootID)
 		p.NewKey = &spec
 		p.Ext = pki.ExtSpec{CA: 2, SubKey: true, AuthKey: true}
-		certID, err := h.Issue(ctx, p, pw)
+		certID, err := h.Issue(ctx, p, krOf(t, h))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -173,7 +174,7 @@ func TestNewKeyTypesExport(t *testing.T) {
 			offered := map[int]bool{}
 			for _, f := range ExportFormats(snap, []int64{id}) {
 				offered[f.ID] = true
-				res, err := h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), DBPass: pw})
+				res, err := h.Export(ctx, ExportRequest{Format: f.ID, IDs: []int64{id}, Password: []byte("export"), Keyring: krOf(t, h)})
 				if err != nil {
 					t.Errorf("%s: item %d format %d (%s): %v", name, id, f.ID, f.Label, err)
 					continue

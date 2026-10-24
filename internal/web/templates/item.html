@@ -256,6 +256,5 @@
 
 {{define "keycheck"}}{{$r := .Data.Result}}
 <p class="{{if eq $r "keycheck.ok"}}ok{{else}}error{{end}}">{{T $r}}{{if .Data.Algorithm}} · {{.Data.Algorithm}}{{end}}</p>
-{{if .Data.Legacy}}<p class="muted small">{{T "keycheck.legacy"}}</p>{{end}}
 {{if .Data.Detail}}<p class="muted small">{{.Data.Detail}}</p>{{end}}
 {{end}}

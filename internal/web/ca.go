@@ -235,9 +235,8 @@ func (s *Server) crlSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ds := dbSession(r)
-	pw := ds.Password()
-	defer clear(pw)
-	id, err := ds.Handle.GenerateCRL(r.Context(), ca.ID, o, pw, keyPasswords(r, snap))
+	kr := ds.Keyring()
+	id, err := ds.Handle.GenerateCRL(r.Context(), ca.ID, o, kr, keyPasswords(r, snap))
 	switch {
 	case errors.Is(err, store.ErrNeedKeyPassword):
 		s.renderCRL(w, r, http.StatusUnprocessableEntity, snap, ca, o, "editor.error.keypass")
@@ -307,9 +306,8 @@ func (s *Server) renewSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap, _ := ds.Handle.Snapshot(r.Context())
-	pw := ds.Password()
-	defer clear(pw)
-	nid, err := ds.Handle.Renew(r.Context(), id, o, pw, keyPasswords(r, snap))
+	kr := ds.Keyring()
+	nid, err := ds.Handle.Renew(r.Context(), id, o, kr, keyPasswords(r, snap))
 	switch {
 	case errors.Is(err, store.ErrNeedKeyPassword):
 		http.Redirect(w, r, back+"editor.error.keypass", http.StatusSeeOther)

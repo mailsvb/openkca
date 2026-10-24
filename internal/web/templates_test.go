@@ -141,7 +141,8 @@ func TestMessageKeys(t *testing.T) {
 	for _, n := range []string{"created", "subkey", "removed"} {
 		keys = append(keys, "pgpkey.notice."+n)
 	}
-	keys = append(keys, "keypw.error.mismatch", "keypw.error.current", "list.deleted.notice")
+	keys = append(keys, "keypw.error.mismatch", "keypw.error.current", "list.deleted.notice",
+		"converted.ownpass", "dump.error.password", "converting.title")
 	for _, k := range keys {
 		if !cat.Has(k) {
 			t.Errorf("message key %q missing from locales/en.json", k)

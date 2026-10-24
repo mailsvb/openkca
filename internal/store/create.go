@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
-	"github.com/mailsvb/go-ca/internal/xdbpass"
 )
 
 var (
@@ -56,13 +56,30 @@ func (s *Store) place(tmp, name string) error {
 	return os.Remove(tmp)
 }
 
-// Create writes a new, empty database protected by password.
-func (s *Store) Create(ctx context.Context, name string, password []byte) error {
+// MinPasswordLen is the shortest database password accepted for new
+// databases and password changes.
+const MinPasswordLen = 8
+
+// ErrShortPassword means a database password is shorter than MinPasswordLen.
+var ErrShortPassword = fmt.Errorf("the database password must have at least %d characters", MinPasswordLen)
+
+// Create writes a new, empty database protected by password with the
+// Argon2id cost p.
+func (s *Store) Create(ctx context.Context, name string, password []byte, p vault.Params) error {
 	if !ValidName(name) {
 		return ErrBadName
 	}
+	if len(password) < MinPasswordLen {
+		return ErrShortPassword
+	}
 	if _, err := os.Lstat(filepath.Join(s.Dir, name+".xdb")); err == nil {
 		return ErrExists
+	}
+	kr := vault.NewKeyring(p)
+	defer kr.Wipe()
+	kdf, dek, err := kr.Wrap(password, p)
+	if err != nil {
+		return err
 	}
 	f, err := s.tempFile("create")
 	if err != nil {
@@ -75,7 +92,7 @@ func (s *Store) Create(ctx context.Context, name string, password []byte) error 
 	if err != nil {
 		return err
 	}
-	err = xdb.Create(ctx, db, xdbpass.NewHash(password))
+	err = xdb.Create(ctx, db, map[string]string{"kdf": kdf, "dek": dek})
 	if cerr := db.Close(); err == nil {
 		err = cerr
 	}

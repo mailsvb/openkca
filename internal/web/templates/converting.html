@@ -1,0 +1,15 @@
+{{template "head" .}}
+<h1>{{T "converting.heading"}}</h1>
+<section class="card">
+  <p class="muted">{{T "converting.intro"}}</p>
+  <div id="convstatus">{{template "convstatus" .}}</div>
+</section>
+{{template "foot" .}}
+
+{{define "convstatus"}}
+<div hx-get="/db/{{.Data.Name}}/converting" hx-trigger="every 1s" hx-target="#convstatus" hx-swap="innerHTML">
+  {{if .Data.Total}}<p>{{T "converting.progress" .Data.Done .Data.Total}}</p>
+  <progress max="{{.Data.Total}}" value="{{.Data.Done}}"></progress>
+  {{else}}<p>{{T "converting.preparing"}}</p>{{end}}
+</div>
+{{end}}

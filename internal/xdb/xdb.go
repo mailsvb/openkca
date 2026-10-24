@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -154,9 +155,24 @@ type Snapshot struct {
 
 // DB wraps an open database.
 type DB struct {
-	SQL    *sql.DB
-	Schema int // the "schema" setting: XCA's schema, LockoutSchema for go-ca
-	GoCA   int // go-ca's schema ("gca_schema"), 0 for an XCA database
+	SQL *sql.DB
+
+	mu     sync.RWMutex // guards the versions, which Convert changes
+	schema int          // the "schema" setting: XCA's schema, LockoutSchema for go-ca
+	goca   int          // go-ca's schema ("gca_schema"), 0 for an XCA database
+}
+
+// Version returns the "schema" setting (XCA's schema, LockoutSchema for a
+// go-ca database) and go-ca's schema (0 for an XCA database).
+func (d *DB) Version() (schema, goca int) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.schema, d.goca
+}
+
+func (d *DB) schemaVersion() int {
+	s, _ := d.Version()
+	return s
 }
 
 // Open wraps an already opened *sql.DB and reads its schema versions.
@@ -165,7 +181,7 @@ func Open(ctx context.Context, db *sql.DB) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DB{SQL: db, Schema: v, GoCA: g}, nil
+	return &DB{SQL: db, schema: v, goca: g}, nil
 }
 
 // ReadVersion returns the "schema" and "gca_schema" settings (0 when
@@ -210,7 +226,7 @@ func (d *DB) Setting(ctx context.Context, key string) (string, error) {
 	return querySetting(ctx, d.SQL, key)
 }
 
-// SetSetting writes one settings value (used for the pwhash upgrade).
+// SetSetting writes one settings value.
 func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 	return d.Write(ctx, func(tx *Tx) error { return tx.SetSetting(ctx, key, value) })
 }
@@ -224,7 +240,7 @@ func (d *DB) MaxStamp(ctx context.Context) (int64, error) {
 }
 
 func (d *DB) liveCond(alias string) string {
-	if d.Schema < 7 { // items.del arrived with schema 7
+	if d.schemaVersion() < 7 { // items.del arrived with schema 7
 		return "1=1"
 	}
 	return alias + ".del=0"
@@ -256,7 +272,7 @@ func (d *DB) Load(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	s := &Snapshot{Schema: d.Schema, Settings: map[string]string{}}
+	s := &Snapshot{Schema: d.schemaVersion(), Settings: map[string]string{}}
 	steps := []func(context.Context, *sql.Tx, *Snapshot) error{
 		d.loadSettings, d.loadKeys, d.loadRequests, d.loadCerts, d.loadCRLs, d.loadTemplates, d.loadRevocations, d.loadPGP, d.loadMeta,
 	}
@@ -465,7 +481,7 @@ func (d *DB) loadMeta(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(stamp), 0) FROM items").Scan(&s.Stamp); err != nil {
 		return err
 	}
-	if d.Schema >= 7 {
+	if d.schemaVersion() >= 7 {
 		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM items WHERE del<>0").Scan(&s.Deleted)
 	}
 	return nil
@@ -480,4 +496,30 @@ func (d *DB) PrivateKey(ctx context.Context, keyID int64) (blob []byte, ownPass 
 	}
 	blob, err = b64(priv)
 	return blob, ownPass, err
+}
+
+// StoredKey is a private key row with its public key.
+type StoredKey struct {
+	Blob    []byte
+	OwnPass int
+	Public  []byte // DER SubjectPublicKeyInfo
+}
+
+// StoredPrivateKey returns the encrypted private key blob of a key item
+// with its ownPass and public key.
+func (d *DB) StoredPrivateKey(ctx context.Context, keyID int64) (*StoredKey, error) {
+	var priv, pub sql.NullString
+	var k StoredKey
+	err := d.SQL.QueryRowContext(ctx, `SELECT p.private, p.ownPass, k."public" FROM private_keys p
+		JOIN public_keys k ON k.item = p.item WHERE p.item=?`, keyID).Scan(&priv, &k.OwnPass, &pub)
+	if err != nil {
+		return nil, err
+	}
+	if k.Blob, err = b64(priv); err != nil {
+		return nil, err
+	}
+	if k.Public, err = b64(pub); err != nil {
+		return nil, err
+	}
+	return &k, nil
 }

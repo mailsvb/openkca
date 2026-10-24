@@ -25,8 +25,8 @@ func TestSSHKeyPages(t *testing.T) {
 		}
 		return r
 	}
-	post("/", url.Values{"name": {"sk"}, "password": {"pw"}, "password2": {"pw"}})
-	post("/db/sk/login", url.Values{"password": {"pw"}})
+	post("/", url.Values{"name": {"sk"}, "password": {"password1"}, "password2": {"password1"}})
+	post("/db/sk/login", url.Values{"password": {"password1"}})
 	r, _ := c.Get(ts.URL + "/db/sk/keys")
 	if b := body(t, r); !strings.Contains(b, `href="/db/sk/new/sshkey"`) {
 		t.Fatal("no New SSH key button")

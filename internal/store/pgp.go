@@ -13,6 +13,7 @@ import (
 
 	"github.com/mailsvb/go-ca/internal/codec"
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -108,12 +109,12 @@ type PGPSubkey struct {
 
 // GeneratePGPKey generates a primary key and its subkeys and certifies
 // them as an OpenPGP key. It returns the primary key's item ID.
-func (h *Handle) GeneratePGPKey(ctx context.Context, name, comment string, spec pki.KeySpec, subs []PGPSubkey, p codec.PGPParams, dbPass []byte) (int64, error) {
+func (h *Handle) GeneratePGPKey(ctx context.Context, name, comment string, spec pki.KeySpec, subs []PGPSubkey, p codec.PGPParams, kr *vault.Keyring) (int64, error) {
 	primary, err := pki.GenerateKey(spec)
 	if err != nil {
 		return 0, err
 	}
-	keys, err := h.pgpSubkeys(ctx, subs, dbPass, nil)
+	keys, err := h.pgpSubkeys(ctx, subs, kr, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -122,10 +123,10 @@ func (h *Handle) GeneratePGPKey(ctx context.Context, name, comment string, spec 
 	}
 	var id int64
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
-		if id, err = insertGenerated(ctx, tx, name, comment, primary, dbPass); err != nil {
+		if id, err = insertGenerated(ctx, tx, name, comment, primary, kr); err != nil {
 			return err
 		}
-		return certifyPGP(ctx, tx, id, primary, subs, keys, p, dbPass)
+		return certifyPGP(ctx, tx, id, primary, subs, keys, p, kr)
 	})
 	h.changed(ctx)
 	return id, err
@@ -133,7 +134,7 @@ func (h *Handle) GeneratePGPKey(ctx context.Context, name, comment string, spec 
 
 // CreatePGP certifies a stored key as the primary key of a new OpenPGP
 // key, with the given subkeys.
-func (h *Handle) CreatePGP(ctx context.Context, keyID int64, subs []PGPSubkey, p codec.PGPParams, dbPass []byte, kp KeyPasswords) error {
+func (h *Handle) CreatePGP(ctx context.Context, keyID int64, subs []PGPSubkey, p codec.PGPParams, kr *vault.Keyring, kp KeyPasswords) error {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return err
@@ -145,11 +146,11 @@ func (h *Handle) CreatePGP(ctx context.Context, keyID int64, subs []PGPSubkey, p
 	if PGPOf(snap, keyID) != nil {
 		return errors.New("the key has an OpenPGP certificate already")
 	}
-	primary, err := h.signer(ctx, k, dbPass, kp)
+	primary, err := h.signer(ctx, k, kr, kp)
 	if err != nil {
 		return err
 	}
-	keys, err := h.pgpSubkeys(ctx, subs, dbPass, kp)
+	keys, err := h.pgpSubkeys(ctx, subs, kr, kp)
 	if err != nil {
 		return err
 	}
@@ -157,7 +158,7 @@ func (h *Handle) CreatePGP(ctx context.Context, keyID int64, subs []PGPSubkey, p
 		p.Created = time.Now()
 	}
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
-		return certifyPGP(ctx, tx, keyID, primary, subs, keys, p, dbPass)
+		return certifyPGP(ctx, tx, keyID, primary, subs, keys, p, kr)
 	})
 	h.changed(ctx)
 	return err
@@ -165,7 +166,7 @@ func (h *Handle) CreatePGP(ctx context.Context, keyID int64, subs []PGPSubkey, p
 
 // pgpSubkeys unlocks the stored subkeys and generates the new ones, which
 // certifyPGP stores.
-func (h *Handle) pgpSubkeys(ctx context.Context, subs []PGPSubkey, dbPass []byte, kp KeyPasswords) ([]crypto.Signer, error) {
+func (h *Handle) pgpSubkeys(ctx context.Context, subs []PGPSubkey, kr *vault.Keyring, kp KeyPasswords) ([]crypto.Signer, error) {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -182,7 +183,7 @@ func (h *Handle) pgpSubkeys(ctx context.Context, subs []PGPSubkey, dbPass []byte
 		if k == nil {
 			return nil, errors.New("subkey not found")
 		}
-		if keys[i], err = h.signer(ctx, k, dbPass, kp); err != nil {
+		if keys[i], err = h.signer(ctx, k, kr, kp); err != nil {
 			return nil, err
 		}
 	}
@@ -191,11 +192,11 @@ func (h *Handle) pgpSubkeys(ctx context.Context, subs []PGPSubkey, dbPass []byte
 
 // certifyPGP stores the generated subkeys, builds the certificate and
 // stores it for primaryID.
-func certifyPGP(ctx context.Context, tx *xdb.Tx, primaryID int64, primary crypto.Signer, subs []PGPSubkey, keys []crypto.Signer, p codec.PGPParams, dbPass []byte) error {
+func certifyPGP(ctx context.Context, tx *xdb.Tx, primaryID int64, primary crypto.Signer, subs []PGPSubkey, keys []crypto.Signer, p codec.PGPParams, kr *vault.Keyring) error {
 	var bind []codec.PGPSubkey
 	for i, s := range subs {
 		if s.Spec != nil {
-			if _, err := insertGenerated(ctx, tx, s.Name, "", keys[i], dbPass); err != nil {
+			if _, err := insertGenerated(ctx, tx, s.Name, "", keys[i], kr); err != nil {
 				return err
 			}
 		}
@@ -219,7 +220,7 @@ func setPGPCert(ctx context.Context, tx *xdb.Tx, keyID int64, cert []byte) error
 // AddPGPSubkey binds a stored key, for example an SSH key as
 // authentication subkey, or a new one to the OpenPGP key of primaryID. The
 // subkey expires with the primary key.
-func (h *Handle) AddPGPSubkey(ctx context.Context, primaryID int64, sub PGPSubkey, dbPass []byte, kp KeyPasswords) error {
+func (h *Handle) AddPGPSubkey(ctx context.Context, primaryID int64, sub PGPSubkey, kr *vault.Keyring, kp KeyPasswords) error {
 	snap, err := h.Snapshot(ctx)
 	if err != nil {
 		return err
@@ -231,11 +232,11 @@ func (h *Handle) AddPGPSubkey(ctx context.Context, primaryID int64, sub PGPSubke
 	if sub.Spec == nil && (sub.KeyID == primaryID || PGPOf(snap, sub.KeyID) != nil) {
 		return errors.New("the key is the primary key of an OpenPGP key")
 	}
-	primary, err := h.signer(ctx, findKey(snap, primaryID), dbPass, kp)
+	primary, err := h.signer(ctx, findKey(snap, primaryID), kr, kp)
 	if err != nil {
 		return err
 	}
-	keys, err := h.pgpSubkeys(ctx, []PGPSubkey{sub}, dbPass, kp)
+	keys, err := h.pgpSubkeys(ctx, []PGPSubkey{sub}, kr, kp)
 	if err != nil {
 		return err
 	}
@@ -253,7 +254,7 @@ func (h *Handle) AddPGPSubkey(ctx context.Context, primaryID int64, sub PGPSubke
 	}
 	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
 		if sub.Spec != nil {
-			if _, err := insertGenerated(ctx, tx, sub.Name, "", keys[0], dbPass); err != nil {
+			if _, err := insertGenerated(ctx, tx, sub.Name, "", keys[0], kr); err != nil {
 				return err
 			}
 		}
@@ -273,7 +274,7 @@ func (h *Handle) DeletePGP(ctx context.Context, keyID int64) error {
 // pgpSecrets unlocks the secret of every stored key of a certificate; a
 // key not stored, without private part or on a token stays nil, except the
 // primary key, which is required.
-func (h *Handle) pgpSecrets(ctx context.Context, snap *xdb.Snapshot, v *PGPView, dbPass []byte, kp KeyPasswords) ([]crypto.Signer, error) {
+func (h *Handle) pgpSecrets(ctx context.Context, snap *xdb.Snapshot, v *PGPView, kr *vault.Keyring, kp KeyPasswords) ([]crypto.Signer, error) {
 	keys := make([]crypto.Signer, len(v.KeyIDs))
 	for i, id := range v.KeyIDs {
 		k := findKey(snap, id)
@@ -283,7 +284,7 @@ func (h *Handle) pgpSecrets(ctx context.Context, snap *xdb.Snapshot, v *PGPView,
 			}
 			continue
 		}
-		s, err := h.signer(ctx, k, dbPass, kp)
+		s, err := h.signer(ctx, k, kr, kp)
 		if err != nil {
 			return nil, err
 		}
@@ -307,7 +308,7 @@ func (e *exporter) pgp() error {
 		}
 		switch {
 		case f&codec.FRevocation != 0:
-			k, err := e.h.signer(e.ctx, r.key, e.req.DBPass, e.req.Keys)
+			k, err := e.h.signer(e.ctx, r.key, e.req.Keyring, e.req.Keys)
 			if err != nil {
 				return err
 			}
@@ -324,7 +325,7 @@ func (e *exporter) pgp() error {
 					return err
 				}
 			}
-			keys, err := e.h.pgpSecrets(e.ctx, e.snap, v, e.req.DBPass, e.req.Keys)
+			keys, err := e.h.pgpSecrets(e.ctx, e.snap, v, e.req.Keyring, e.req.Keys)
 			if err != nil {
 				return err
 			}

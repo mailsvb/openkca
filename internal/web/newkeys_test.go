@@ -40,8 +40,8 @@ func TestNewKeyTypesUI(t *testing.T) {
 		}
 		return strings.TrimSuffix(strings.Split(strings.Split(loc, "/item/")[1], "?")[0], "/")
 	}
-	post("/", url.Values{"name": {"pq"}, "password": {"pw"}, "password2": {"pw"}})
-	post("/db/pq/login", url.Values{"password": {"pw"}})
+	post("/", url.Values{"name": {"pq"}, "password": {"password1"}, "password2": {"password1"}})
+	post("/db/pq/login", url.Values{"password": {"password1"}})
 
 	page := get("/db/pq/new/key")
 	for _, want := range []string{`<optgroup label="ML-DSA (post-quantum)">`, `value="Composite:MLDSA87-Ed448-SHAKE256"`,
@@ -135,8 +135,8 @@ func TestNewPGPKeyTypes(t *testing.T) {
 		}
 		return r
 	}
-	post("/", url.Values{"name": {"pg"}, "password": {"pw"}, "password2": {"pw"}})
-	post("/db/pg/login", url.Values{"password": {"pw"}})
+	post("/", url.Values{"name": {"pg"}, "password": {"password1"}, "password2": {"password1"}})
+	post("/db/pg/login", url.Values{"password": {"password1"}})
 	for _, tc := range []struct {
 		typ, version string
 		want         []string

@@ -12,26 +12,27 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 )
 
 func TestCAOperations(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	pw := []byte("pw")
-	if err := s.Create(ctx, "ca", pw); err != nil {
+	pw := testPassword
+	if err := s.Create(ctx, "ca", pw, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := load(t, s, "ca")
-	rootID, _ := h.Issue(ctx, params("Root", 0), pw)
+	rootID, _ := h.Issue(ctx, params("Root", 0), krOf(t, h))
 	subP := params("Sub", rootID)
-	subID, _ := h.Issue(ctx, subP, pw)
+	subID, _ := h.Issue(ctx, subP, krOf(t, h))
 	leafP := params("leaf", subID)
 	leafP.Ext = pki.ExtSpec{CA: 2, AuthKey: true}
-	leafID, err := h.Issue(ctx, leafP, pw)
+	leafID, err := h.Issue(ctx, leafP, krOf(t, h))
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf2ID, _ := h.Issue(ctx, leafP, pw)
+	leaf2ID, _ := h.Issue(ctx, leafP, krOf(t, h))
 
 	// Revoke, unrevoke, revoke again
 	inval := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
@@ -78,7 +79,7 @@ func TestCAOperations(t *testing.T) {
 	if opts.Number != 1 || opts.NextUpdate.Sub(opts.ThisUpdate) != 30*24*time.Hour {
 		t.Fatalf("defaults %+v", opts)
 	}
-	crlID, err := h.GenerateCRL(ctx, subID, opts, pw, nil)
+	crlID, err := h.GenerateCRL(ctx, subID, opts, krOf(t, h), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestCAOperations(t *testing.T) {
 
 	// Renew the leaf, revoking the old one
 	newLeaf, err := h.Renew(ctx, leaf2ID, RenewOptions{NotBefore: time.Now(), NotAfter: time.Now().AddDate(2, 0, 0),
-		Revoke: &Revocation{Reason: pki.ReasonSuperseded}}, pw, nil)
+		Revoke: &Revocation{Reason: pki.ReasonSuperseded}}, krOf(t, h), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestCAOperations(t *testing.T) {
 	// Renew the intermediate CA, keeping the serial and replacing the old one:
 	// children and revocations move to the new certificate.
 	newSub, err := h.Renew(ctx, subID, RenewOptions{NotBefore: time.Now(), NotAfter: time.Now().AddDate(5, 0, 0),
-		KeepSerial: true, Replace: true}, pw, nil)
+		KeepSerial: true, Replace: true}, krOf(t, h), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func ocspCheck(t *testing.T, h *Handle, s *Store, snap interface{}, caID int64, 
 	sn, _ := h.Snapshot(context.Background())
 	ca := findCert(sn, caID)
 	k := findKey(sn, ca.KeyID)
-	key, err := h.unlock(context.Background(), k.ID, k.KeyType, []byte("pw"), nil)
+	key, err := h.unlock(context.Background(), k.ID, k.KeyType, krOf(t, h), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

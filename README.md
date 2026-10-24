@@ -18,13 +18,20 @@ XCA.
   their issuers), templates and revocation lists, with search, a column
   chooser and expiry colours, plus XCA's shared options.
 - XCA databases are converted to go-ca's format on first login, after a
-  backup (see the table below); private keys in XCA's legacy 3DES format
-  are re-encrypted as PKCS#8.
-- Private keys are stored as encrypted PKCS#8 (PBES2, PBKDF2-HMAC-SHA256
-  with 600 000 iterations, AES-256-CBC). XCA writes only 2048 iterations;
-  keys under the database password are re-encrypted with the higher count
-  on login (after a backup), keys with their own password when it is next
-  set.
+  backup (see the table below), with a progress page while the keys are
+  re-encrypted.
+- Private keys are stored with envelope encryption. The database password
+  is stretched with Argon2id (256 MiB, 3 passes by default, adjustable per
+  database) into a key that wraps a random 256-bit data key; the data key
+  seals every private key with AES-256-GCM, bound to the key's public key.
+  Unwrapping the data key is the password check: no password hash is
+  stored. A key with its own password is sealed with a key derived from
+  that password instead. Changing the password (or the Argon2id cost)
+  replaces the data key and re-seals all keys.
+- XCA's key encryption (PBKDF2 with 2048 iterations, the legacy 3DES form,
+  the "Bogus" password) and its password hash are converted away: keys
+  under the database password during the conversion, keys with their own
+  password the next time that password opens them.
 
 **Keys, requests and certificates**
 
@@ -150,7 +157,8 @@ XCA.
   the CA. An OpenPGP certificate is stored with its primary key, also when
   the keys are already in the database.
 - Download a whole database as a ZIP of PEM files (XCA's "Dump database"),
-  with the OpenPGP public keys next to their keys.
+  with the OpenPGP public keys next to their keys and the private keys
+  encrypted with a password chosen for the dump.
 
 **Tools**
 
@@ -168,7 +176,12 @@ XCA.
 A go-ca database is XCA's schema 8 plus go-ca's own tables (OpenPGP
 certificates). Its `schema` setting is `1000`, so desktop XCA refuses it
 instead of losing go-ca's data, and `gca_schema` holds go-ca's own schema
-version. The backup taken before the conversion is still an XCA database.
+version. Since go-ca schema 2 the `kdf` and `dek` settings (Argon2id
+parameters and the wrapped data key) replace XCA's `pwhash`, and private
+keys are stored in go-ca's own sealed form (`internal/vault`). go-ca
+schema 1 databases are converted like XCA databases. The backup taken
+before the conversion is still an XCA (or go-ca schema 1) database, with
+the old key encryption: delete it once the conversion is verified.
 
 ## Download
 
@@ -243,8 +256,8 @@ will warn about the name until you pass a certificate for the real host name.
 ```
 
 A backup is written before every change that rewrites a whole database
-(conversion of an XCA database, schema upgrade, 3DES key conversion,
-database password change), using
+(conversion of an XCA or older go-ca database, database password or
+Argon2id cost change), using
 SQLite's `VACUUM INTO`, which copies within one read transaction.
 
 Two go-ca processes cannot open the same database (`flock` on the `.lock`
@@ -253,11 +266,17 @@ file).
 ## Security
 
 - One server password protects the whole UI; database passwords still apply
-  after it. Both logins are rate limited.
+  after it. Both logins are rate limited, and at most two Argon2id runs
+  happen at a time, so parallel login attempts cannot exhaust memory.
+- New database passwords need at least 8 characters.
 - HTTPS only, HSTS, strict Content Security Policy without inline scripts,
   `SameSite=Strict` cookies plus CSRF tokens.
-- Database passwords live only in memory and are zeroed on logout and after
-  the idle timeout. Private keys are decrypted in memory only when needed.
+- A database password is used once per login to unwrap the data key; a
+  session keeps only the data key in memory and wipes it on logout and
+  after the idle timeout (as far as Go allows: the runtime may keep
+  copies). Private keys are decrypted in memory only when needed.
+- SQLite's `secure_delete` is on, and the file is vacuumed after keys are
+  re-encrypted, so replaced or deleted key blobs do not stay in the file.
 
 ## Translations
 

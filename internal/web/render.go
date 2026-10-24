@@ -162,5 +162,6 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 }
 
 func header(ds *session.Session) *dbHeader {
-	return &dbHeader{Name: ds.DBName, Schema: ds.Handle.DB.Schema}
+	schema, _ := ds.Handle.DB.Version()
+	return &dbHeader{Name: ds.DBName, Schema: schema}
 }

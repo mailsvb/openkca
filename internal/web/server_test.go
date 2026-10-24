@@ -87,8 +87,26 @@ func login(t *testing.T, ts *httptest.Server, c *http.Client) string {
 	return m[1]
 }
 
+// finishConversion polls the progress page until the conversion of name
+// has finished and returns where it sends the browser.
+func finishConversion(t *testing.T, ts *httptest.Server, c *http.Client, name string) string {
+	t.Helper()
+	for range 50 {
+		r, err := c.Get(ts.URL + "/db/" + name + "/converting")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body(t, r)
+		if r.StatusCode == http.StatusSeeOther {
+			return r.Header.Get("Location")
+		}
+	}
+	t.Fatalf("%s: the conversion does not finish", name)
+	return ""
+}
+
 func TestServerLoginFlow(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 	c := client(t, ts)
 	r, _ := c.Get(ts.URL + "/")
 	if r.StatusCode != http.StatusSeeOther || r.Header.Get("Location") != "/login" {
@@ -103,6 +121,15 @@ func TestServerLoginFlow(t *testing.T) {
 	if r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong password: %d", r.StatusCode)
 	}
+	// Server password checks run at most two at a time; a third is
+	// turned away instead of allocating another 64 MiB.
+	srv.loginSlots <- struct{}{}
+	srv.loginSlots <- struct{}{}
+	if r, _ := c.PostForm(ts.URL+"/login", url.Values{"password": {serverPassword}}); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("login with all slots busy: %d", r.StatusCode)
+	}
+	<-srv.loginSlots
+	<-srv.loginSlots
 	csrf := login(t, ts, c)
 
 	// Database login without the CSRF token is refused.
@@ -114,9 +141,17 @@ func TestServerLoginFlow(t *testing.T) {
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "dblogin.error.password") {
 		t.Fatalf("wrong db password: %s", loc)
 	}
+	// An XCA database is converted first; the session waits for it.
 	r, _ = c.PostForm(ts.URL+"/db/sample/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
-	if loc := r.Header.Get("Location"); loc != "/db/sample/" {
+	if loc := r.Header.Get("Location"); loc != "/db/sample/converting" {
 		t.Fatalf("db login redirect %q", loc)
+	}
+	r2, _ := c.Get(ts.URL + "/db/sample/certs")
+	if loc := r2.Header.Get("Location"); loc != "/db/sample/converting" && loc != "/db/sample/keys" {
+		t.Fatalf("before the conversion has been picked up: %q", loc)
+	}
+	if loc := finishConversion(t, ts, c, "sample"); loc != "/db/sample/keys" {
+		t.Fatalf("after the conversion: %q", loc)
 	}
 	var sess *http.Cookie
 	for _, ck := range r.Cookies() {
@@ -130,8 +165,12 @@ func TestServerLoginFlow(t *testing.T) {
 
 	// A second database in parallel.
 	r, _ = c.PostForm(ts.URL+"/db/variants/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
-	if loc := r.Header.Get("Location"); loc != "/db/variants/" {
+	if loc := r.Header.Get("Location"); loc != "/db/variants/converting" {
 		t.Fatalf("second db login redirect %q", loc)
+	}
+	// variants has a key with its own password still in XCA's form
+	if loc := finishConversion(t, ts, c, "variants"); !strings.Contains(loc, "notice=converted.ownpass&n=1") {
+		t.Fatalf("variants conversion: %q", loc)
 	}
 	for _, db := range []string{"sample", "variants"} {
 		for _, tab := range append(tabs, "options") {
@@ -197,19 +236,19 @@ func TestCreateImportUpgrade(t *testing.T) {
 	csrf := login(t, ts, c)
 
 	// Create
-	r, _ := c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"pw1"}, "password2": {"pw2"}, "csrf": {csrf}})
+	r, _ := c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"password1"}, "password2": {"password2"}, "csrf": {csrf}})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "create.error.mismatch") {
 		t.Fatalf("mismatch: %s", loc)
 	}
-	r, _ = c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"pw1"}, "password2": {"pw1"}, "csrf": {csrf}})
+	r, _ = c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"password1"}, "password2": {"password1"}, "csrf": {csrf}})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
 		t.Fatalf("create: %s", loc)
 	}
-	r, _ = c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"pw1"}, "password2": {"pw1"}, "csrf": {csrf}})
+	r, _ = c.PostForm(ts.URL+"/", url.Values{"name": {"fresh"}, "password": {"password1"}, "password2": {"password1"}, "csrf": {csrf}})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "create.error.exists") {
 		t.Fatalf("duplicate: %s", loc)
 	}
-	r, _ = c.PostForm(ts.URL+"/db/fresh/login", url.Values{"password": {"pw1"}, "csrf": {csrf}})
+	r, _ = c.PostForm(ts.URL+"/db/fresh/login", url.Values{"password": {"password1"}, "csrf": {csrf}})
 	if loc := r.Header.Get("Location"); loc != "/db/fresh/" {
 		t.Fatalf("login to new db: %s", loc)
 	}
@@ -247,9 +286,10 @@ func TestCreateImportUpgrade(t *testing.T) {
 
 	// Login to the schema 7 import upgrades it after a backup.
 	r, _ = c.PostForm(ts.URL+"/db/uploaded/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
-	if loc := r.Header.Get("Location"); loc != "/db/uploaded/" {
+	if loc := r.Header.Get("Location"); loc != "/db/uploaded/converting" {
 		t.Fatalf("login to imported db: %s", loc)
 	}
+	finishConversion(t, ts, c, "uploaded")
 	info, _ := srv.store.Lookup(context.Background(), "uploaded")
 	if info.Status != store.Supported || info.GoCA != xdb.CurrentSchema {
 		t.Fatalf("after login: %+v", info)
@@ -272,8 +312,8 @@ func TestEditorFlow(t *testing.T) {
 		}
 		return r
 	}
-	post("/", url.Values{"name": {"ed"}, "password": {"pw"}, "password2": {"pw"}})
-	post("/db/ed/login", url.Values{"password": {"pw"}})
+	post("/", url.Values{"name": {"ed"}, "password": {"password1"}, "password2": {"password1"}})
+	post("/db/ed/login", url.Values{"password": {"password1"}})
 	itemFrom := func(r *http.Response) string {
 		t.Helper()
 		loc := r.Header.Get("Location")
@@ -352,16 +392,33 @@ func TestEditorFlow(t *testing.T) {
 		t.Fatal("mandatory_dn not enforced")
 	}
 	// Database password change keeps this session working.
-	r = post("/db/ed/password", url.Values{"old": {"pw"}, "new": {"pw2"}, "new2": {"pw2"}})
+	r = post("/db/ed/password", url.Values{"old": {"password1"}, "new": {"short"}, "new2": {"short"}})
+	if r.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("short password: %d", r.StatusCode)
+	}
+	r = post("/db/ed/password", url.Values{"old": {"wrong pass"}, "new": {"password2"}, "new2": {"password2"}})
+	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body(t, r), "current password is wrong") {
+		t.Fatal("wrong old password accepted")
+	}
+	r = post("/db/ed/password", url.Values{"old": {"password1"}, "new": {"password2"}, "new2": {"password2"}})
 	if !strings.Contains(body(t, r), "was changed") {
 		t.Fatal("password change")
+	}
+	// Only the key derivation cost, with an offered value.
+	r = post("/db/ed/password", url.Values{"old": {"password2"}, "kdf_memory": {"100"}, "kdf_time": {"1"}})
+	if r.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("unoffered memory cost: %d", r.StatusCode)
+	}
+	r = post("/db/ed/password", url.Values{"old": {"password2"}, "kdf_memory": {"64"}, "kdf_time": {"1"}})
+	if b := body(t, r); !strings.Contains(b, "was changed") || !strings.Contains(b, `<option value="64" selected>`) {
+		t.Fatal("key derivation change")
 	}
 	r = post("/db/ed/item/"+rootID+"/to-request", url.Values{})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
 		t.Fatalf("to-request after password change: %s", loc)
 	}
-	if b, _ := srv.store.Backups("ed"); len(b) != 1 {
-		t.Fatalf("backup before password change: %v", b)
+	if b, _ := srv.store.Backups("ed"); len(b) != 2 {
+		t.Fatalf("a backup before each of the two changes: %v", b)
 	}
 }
 
@@ -379,6 +436,7 @@ func TestCAPages(t *testing.T) {
 		return r
 	}
 	post("/db/sample/login", url.Values{"password": {"secret"}})
+	finishConversion(t, ts, c, "sample")
 	// www.example.org is item 7, issued by Example Issuing CA (item 5)
 	if loc := post("/db/sample/item/7/revoke", url.Values{"reason": {"1"}, "invaldate": {"2026-10-01T00:00"}}).Header.Get("Location"); !strings.Contains(loc, "notice=revoked") {
 		t.Fatalf("revoke: %s", loc)
@@ -435,6 +493,7 @@ func TestTemplatePages(t *testing.T) {
 		return r
 	}
 	post("/db/sample/login", url.Values{"password": {"secret"}})
+	finishConversion(t, ts, c, "sample")
 	r := post("/db/sample/new/template", url.Values{"name": {"web tmpl"}, "dn.O": {"Web Org"}, "ca": {"2"}, "subkey": {"1"},
 		"ku.0": {"1"}, "eku.clientAuth": {"1"}, "san": {"email:copy"}, "validn": {"2"}, "validunit": {"y"},
 		"advext": {"certificatePolicies = 1.2.3.4"}})

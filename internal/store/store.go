@@ -63,11 +63,13 @@ type Info struct {
 type Version struct{ Schema, GoCA int }
 
 // dsn builds a modernc.org/sqlite connection string, with SQLite's default
-// rollback journal.
+// rollback journal. secure_delete overwrites deleted content, so replaced
+// or deleted key blobs do not linger in free pages.
 func dsn(path string, readOnly bool) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(0)")
+	q.Add("_pragma", "secure_delete(1)")
 	if readOnly {
 		q.Set("mode", "ro")
 	}
@@ -128,14 +130,23 @@ func classify(ctx context.Context, path string, deep bool, ver *Version) (Status
 	case v < 5:
 		return Outdated, ""
 	}
-	var pwhash sql.NullString
-	if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_='pwhash'").Scan(&pwhash); err != nil || pwhash.String == "" {
-		return Invalid, "no password hash"
-	}
 	if v != xdb.LockoutSchema || g < xdb.CurrentSchema {
+		// XCA's password hash checks the password before the conversion.
+		if !hasSetting(ctx, db, "pwhash") {
+			return Invalid, "no password hash"
+		}
 		return Upgradable, ""
 	}
+	if !hasSetting(ctx, db, "kdf") || !hasSetting(ctx, db, "dek") {
+		return Invalid, "no key encryption settings"
+	}
 	return Supported, ""
+}
+
+func hasSetting(ctx context.Context, db *sql.DB, key string) bool {
+	var v sql.NullString
+	err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_=?", key).Scan(&v)
+	return err == nil && strings.TrimSpace(v.String) != ""
 }
 
 // Store is the data folder and the registry of open databases.
@@ -223,7 +234,8 @@ type Handle struct {
 
 	mu     sync.Mutex
 	snap   *xdb.Snapshot
-	prepMu sync.Mutex // serialises PrepareAfterLogin
+	convMu sync.Mutex // guards conv
+	conv   *Conversion
 }
 
 // Acquire opens the named database or returns the already open handle. Each
@@ -271,9 +283,9 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 func (h *Handle) Release() {
 	s := h.store
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	h.refs--
 	if h.refs > 0 {
+		s.mu.Unlock()
 		return
 	}
 	for k, v := range s.open {
@@ -283,6 +295,13 @@ func (h *Handle) Release() {
 	}
 	h.DB.SQL.Close()
 	h.lock.Unlock()
+	s.mu.Unlock()
+	// A finished conversion's keyring must not outlive the database.
+	h.convMu.Lock()
+	if h.conv != nil {
+		h.conv.expire()
+	}
+	h.convMu.Unlock()
 }
 
 // Snapshot returns the cached objects, reloading them when MAX(stamp)

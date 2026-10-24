@@ -36,9 +36,9 @@
     <input type="text" id="new-name" name="name" required maxlength="64" pattern="[A-Za-z0-9_\-][A-Za-z0-9._\-]*" autocomplete="off">
     <span class="muted small">{{T "create.namehelp"}}</span>
     <label for="new-pw">{{T "create.password"}}</label>
-    <input type="password" id="new-pw" name="password" autocomplete="new-password">
+    <input type="password" id="new-pw" name="password" autocomplete="new-password" required minlength="{{.Data.MinLen}}">
     <label for="new-pw2">{{T "create.password2"}}</label>
-    <input type="password" id="new-pw2" name="password2" autocomplete="new-password">
+    <input type="password" id="new-pw2" name="password2" autocomplete="new-password" required minlength="{{.Data.MinLen}}">
     <button type="submit">{{T "create.submit"}}</button>
   </form>
 </section>

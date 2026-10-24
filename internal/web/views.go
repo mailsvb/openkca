@@ -346,6 +346,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		p.Notice, p.NoticeArg = "importitems.done", r.URL.Query().Get("n")
 	case "deleted":
 		p.Notice = "list.deleted.notice"
+	case "converted.ownpass":
+		p.Notice, p.NoticeArg = "converted.ownpass", r.URL.Query().Get("n")
 	}
 	s.render(w, r, http.StatusOK, "list", p)
 }
@@ -590,42 +592,31 @@ func (s *Server) checkKey(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusTooManyRequests, "item", p)
 		return
 	}
-	blob, own, err := ds.Handle.DB.PrivateKey(r.Context(), id)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	var pw []byte
-	switch own {
-	case xdb.PassPrivate:
-		pw = []byte(r.PostFormValue("password"))
-	case xdb.PassBogus:
-		pw = []byte("Bogus")
-	case xdb.PassPIN:
+	if key.OwnPass == xdb.PassPIN {
 		res["Result"] = "keycheck.token"
 		s.render(w, r, http.StatusOK, "item", p)
 		return
-	default:
-		pw = ds.Password()
 	}
-	defer clear(pw)
-	priv, legacy, err := pki.DecryptPrivateKey(blob, key.KeyType, pw)
+	var pw []byte
+	if key.OwnPass == xdb.PassPrivate {
+		pw = []byte(r.PostFormValue("password"))
+		defer clear(pw)
+	}
+	algo, ok, err := ds.Handle.CheckKey(r.Context(), key, ds.Keyring(), pw)
 	switch {
-	case errors.Is(err, pki.ErrWrongPassword):
+	case errors.Is(err, store.ErrNeedKeyPassword):
 		s.keyLimit.Fail(limitKey)
 		res["Result"] = "keycheck.wrongpass"
 	case err != nil:
 		res["Result"] = "keycheck.error"
 		res["Detail"] = err.Error()
 	default:
-		ok, _ := pki.MatchesPublic(priv, key.Public)
 		if ok {
 			res["Result"] = "keycheck.ok"
 		} else {
 			res["Result"] = "keycheck.mismatch"
 		}
-		res["Legacy"] = legacy
-		res["Algorithm"] = pki.KeyAlgorithm(priv)
+		res["Algorithm"] = algo
 	}
 	s.render(w, r, http.StatusOK, "item", p)
 }
@@ -717,6 +708,8 @@ func (s *Server) options(w http.ResponseWriter, r *http.Request) {
 		p.Notice = "options.saved"
 	case q.Get("error") == "options.error.value":
 		p.Error, p.ErrorArg = "options.error.value", q.Get("key")
+	case q.Get("error") == "dump.error.password":
+		p.Error = "dump.error.password"
 	}
 	s.render(w, r, http.StatusOK, "options", p)
 }

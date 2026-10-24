@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	b64 "encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-ca/internal/pki"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
-	"github.com/mailsvb/go-ca/internal/xdbpass"
 )
 
 // schemaSQL returns the sorted DDL of a database file.
@@ -53,14 +54,14 @@ func gocaDDL(t *testing.T) []string {
 func TestCreate(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	if err := s.Create(ctx, "new-ca", []byte("pw")); err != nil {
+	if err := s.Create(ctx, "new-ca", testPassword, vault.Default); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Create(ctx, "new-ca", []byte("pw")); !errors.Is(err, ErrExists) {
+	if err := s.Create(ctx, "new-ca", testPassword, vault.Default); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate: %v", err)
 	}
 	for _, bad := range []string{"", ".hidden", "a/b", "ä", strings.Repeat("x", 65)} {
-		if err := s.Create(ctx, bad, nil); !errors.Is(err, ErrBadName) {
+		if err := s.Create(ctx, bad, nil, vault.Default); !errors.Is(err, ErrBadName) {
 			t.Errorf("name %q: %v", bad, err)
 		}
 	}
@@ -74,9 +75,18 @@ func TestCreate(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("DDL differs:\n got %q\nwant %q", got, want)
 	}
+	if err := s.Create(ctx, "short", []byte("1234567"), vault.Default); !errors.Is(err, ErrShortPassword) {
+		t.Fatalf("short password: %v", err)
+	}
 	h, snap := load(t, s, "new-ca")
-	if ok, up := xdbpass.Verify(snap.Settings["pwhash"], []byte("pw")); !ok || up {
-		t.Fatal("password hash")
+	if _, ok := snap.Settings["pwhash"]; ok || snap.Settings["kdf"] == "" || snap.Settings["dek"] == "" {
+		t.Fatalf("key settings %v", snap.Settings)
+	}
+	if _, err := h.Unlock(ctx, testPassword); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Unlock(ctx, []byte("wrong password")); !errors.Is(err, pki.ErrWrongPassword) {
+		t.Fatalf("wrong password: %v", err)
 	}
 	if snap.Settings["legacy-keys-updated"] != "yes" || len(snap.Keys)+len(snap.Certs) != 0 {
 		t.Fatalf("settings %v", snap.Settings)
@@ -143,56 +153,183 @@ func TestBackupRotation(t *testing.T) {
 	}
 }
 
-func TestPrepareAfterLogin(t *testing.T) {
+// TestConvert converts an XCA database: keys under the database password
+// (and XCA's "Bogus" one, and those of deleted items) are sealed with a new
+// DEK, keys with their own password stay until it opens them, and a key
+// the database password does not open keeps its blob and needs its own.
+func TestConvert(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
+	path := filepath.Join(s.Dir, "variants.xdb")
+	// Variants the fixture lacks: a "Bogus" key, a deleted item and a key
+	// encrypted with another password.
+	{
+		h, snap := load(t, s, "variants")
+		reencrypt := func(name, from, to string) []byte {
+			for _, k := range snap.Keys {
+				if k.Name == name {
+					blob, _, _ := h.DB.PrivateKey(ctx, k.ID)
+					der, err := legacyDER(blob, k.KeyType, []byte(from))
+					if err != nil {
+						t.Fatal(err)
+					}
+					enc, err := pki.EncryptPKCS8(der, []byte(to))
+					if err != nil {
+						t.Fatal(err)
+					}
+					return enc
+				}
+			}
+			t.Fatalf("no key %s", name)
+			return nil
+		}
+		for _, st := range []struct {
+			q    string
+			args []any
+		}{
+			{"UPDATE private_keys SET ownPass=2, private=? WHERE item=14", []any{b64.StdEncoding.EncodeToString(reencrypt("old", "secret", "Bogus"))}},
+			{"UPDATE private_keys SET private=? WHERE item=18", []any{b64.StdEncoding.EncodeToString(reencrypt("pending", "secret", "other"))}},
+			{"UPDATE items SET del=1 WHERE id=12", nil},
+		} {
+			if _, err := h.DB.SQL.Exec(st.q, st.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		h.Release()
+	}
 
-	h, _ := load(t, s, "variants")
-	rep, err := h.PrepareAfterLogin(ctx, []byte("secret"))
+	h, err := s.Acquire(ctx, "variants")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.UpgradedFrom != 7 || rep.ConvertedKeys != 1 || rep.Backup == "" {
+	t.Cleanup(h.Release)
+	c := h.StartConversion(fixturePassword, testKDF)
+	<-c.Finished()
+	kr, rep, err := c.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done, total := c.Progress(); done != 8 || total != 8 {
+		t.Errorf("progress %d/%d", done, total)
+	}
+	if rep.UpgradedFrom != 7 || rep.Converted != 7 || rep.Unopened != 1 || rep.OwnPassLegacy != 1 || rep.Backup == "" {
 		t.Fatalf("report %+v", rep)
 	}
 	if !h.DB.Current() {
-		t.Fatalf("schema %d, go-ca %d", h.DB.Schema, h.DB.GoCA)
+		t.Fatal(h.DB.Version())
 	}
-	got := schemaSQL(t, filepath.Join(s.Dir, "variants.xdb"))
-	if strings.Join(got, "\n") != strings.Join(gocaDDL(t), "\n") {
-		t.Fatal("upgraded DDL differs from XCA's schema 8 plus go-ca's tables")
+	if got := schemaSQL(t, path); strings.Join(got, "\n") != strings.Join(gocaDDL(t), "\n") {
+		t.Fatal("converted DDL differs from a new go-ca database")
 	}
-	if st, v, _ := Classify(ctx, filepath.Join(s.Dir, "variants.xdb"), true); st != Supported || v.GoCA != xdb.CurrentSchema {
-		t.Fatalf("after upgrade: %s %+v", st, v)
+	if st, v, _ := Classify(ctx, path, true); st != Supported || v.GoCA != xdb.CurrentSchema {
+		t.Fatalf("after conversion: %s %+v", st, v)
+	}
+	if st, _, _ := Classify(ctx, rep.Backup, true); st != Upgradable {
+		t.Fatalf("backup: %s", st)
 	}
 	snap, _ := h.Snapshot(ctx)
+	if _, ok := snap.Settings["pwhash"]; ok {
+		t.Fatal("XCA's password hash is still stored")
+	}
+	if _, err := h.Unlock(ctx, fixturePassword); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := h.DB.PrivateKeyRows(ctx, true)
+	for _, r := range rows {
+		switch r.ID {
+		case 10, 18: // own password: mail (XCA), pending (did not open)
+			if r.OwnPass != xdb.PassPrivate || vault.IsSealed(r.Blob) {
+				t.Errorf("key %d: ownPass %d, sealed %v", r.ID, r.OwnPass, vault.IsSealed(r.Blob))
+			}
+			continue
+		}
+		if r.OwnPass != xdb.PassCommon || vault.Mode(r.Blob) != vault.ModeDEK {
+			t.Errorf("key %d: ownPass %d, mode %d", r.ID, r.OwnPass, vault.Mode(r.Blob))
+			continue
+		}
+		der, err := kr.Open(r.Blob, r.Public)
+		if err != nil {
+			t.Errorf("key %d: %v", r.ID, err)
+			continue
+		}
+		priv, err := pki.ParsePKCS8(der)
+		if err != nil {
+			t.Errorf("key %d: %v", r.ID, err)
+			continue
+		}
+		if ok, _ := pki.MatchesPublic(priv, r.Public); !ok {
+			t.Errorf("key %d: mismatch after conversion", r.ID)
+		}
+		if r.ID == 12 && !r.Deleted {
+			t.Error("the deleted item is listed as live")
+		}
+	}
 	for _, k := range snap.Keys {
-		if !k.HasPrivate {
-			continue
-		}
-		blob, own, _ := h.DB.PrivateKey(ctx, k.ID)
-		if !pki.IsEncryptedPKCS8(blob) {
-			t.Errorf("%s still legacy", k.Name)
-		}
-		pw := "secret"
-		if own == xdb.PassPrivate {
-			pw = "mailpass"
-		}
-		priv, legacy, err := pki.DecryptPrivateKey(blob, k.KeyType, []byte(pw))
-		if err != nil || legacy {
-			t.Errorf("%s: %v legacy=%v", k.Name, err, legacy)
-			continue
-		}
-		if ok, _ := pki.MatchesPublic(priv, k.Public); !ok {
-			t.Errorf("%s: mismatch after conversion", k.Name)
-		}
 		if k.Name == "www" && k.Stamp != snap.Stamp {
 			t.Errorf("converted key stamp %d, max %d", k.Stamp, snap.Stamp)
 		}
 	}
-	// A second run changes nothing.
-	if rep, err := h.PrepareAfterLogin(ctx, []byte("secret")); err != nil || rep.Backup != "" {
-		t.Fatalf("second run %+v %v", rep, err)
+
+	// Keys with their own password move to go-ca's form once it opens them.
+	for id, pw := range map[int64]string{10: "mailpass", 18: "other"} {
+		k := findKey(snap, id)
+		if _, err := h.unlock(ctx, id, k.KeyType, kr, nil); !errors.Is(err, ErrNeedKeyPassword) {
+			t.Errorf("key %d without password: %v", id, err)
+		}
+		if _, err := h.unlock(ctx, id, k.KeyType, kr, KeyPasswords{id: []byte("wrong")}); !errors.Is(err, ErrNeedKeyPassword) {
+			t.Errorf("key %d with a wrong password: %v", id, err)
+		}
+		if _, err := h.unlock(ctx, id, k.KeyType, kr, KeyPasswords{id: []byte(pw)}); err != nil {
+			t.Errorf("key %d: %v", id, err)
+		}
+		blob, own, _ := h.DB.PrivateKey(ctx, id)
+		if own != xdb.PassPrivate || vault.Mode(blob) != vault.ModePassword {
+			t.Errorf("key %d not upgraded: ownPass %d, mode %d", id, own, vault.Mode(blob))
+		}
+		if algo, ok, err := h.CheckKey(ctx, k, kr, []byte(pw)); err != nil || !ok || algo == "" {
+			t.Errorf("key %d check: %s %v %v", id, algo, ok, err)
+		}
+	}
+
+	// A second conversion is the finished one: no new backup.
+	before, _ := s.Backups("variants")
+	if _, _, err := h.Convert(ctx, fixturePassword, testKDF); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := s.Backups("variants"); len(after) != len(before) {
+		t.Fatal("second conversion took a backup")
+	}
+}
+
+// Every fixture converts, also those with XCA's older password hashes.
+func TestConvertFixtures(t *testing.T) {
+	s := copyFixtures(t)
+	ctx := context.Background()
+	for _, name := range []string{"sample", "schema8", "md5"} {
+		h, _ := load(t, s, name)
+		ok, err := h.VerifyLegacyPassword(ctx, fixturePassword)
+		if err != nil || !ok {
+			t.Fatalf("%s: password %v %v", name, ok, err)
+		}
+		if ok, _ := h.VerifyLegacyPassword(ctx, []byte("wrong")); ok {
+			t.Fatalf("%s: wrong password accepted", name)
+		}
+		kr, rep, err := h.Convert(ctx, fixturePassword, testKDF)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if rep.Converted != 10 || rep.Unopened != 0 {
+			t.Errorf("%s: report %+v", name, rep)
+		}
+		snap, _ := h.Snapshot(ctx)
+		for _, k := range snap.Keys {
+			if k.HasPrivate {
+				if _, err := h.unlock(ctx, k.ID, k.KeyType, kr, nil); err != nil {
+					t.Errorf("%s/%s: %v", name, k.Name, err)
+				}
+			}
+		}
 	}
 }
 
@@ -200,7 +337,7 @@ func TestPrepareAfterLogin(t *testing.T) {
 func TestNewerGoCA(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
-	if err := s.Create(ctx, "next", []byte("pw")); err != nil {
+	if err := s.Create(ctx, "next", testPassword, vault.Default); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.Dir, "next.xdb")
@@ -218,79 +355,5 @@ func TestNewerGoCA(t *testing.T) {
 	}
 	if _, err := s.Acquire(ctx, "next"); err == nil {
 		t.Fatal("opened a newer go-ca database")
-	}
-}
-
-// Keys under the database password with fewer PBKDF2 iterations than
-// pki.PBKDF2Iterations are re-encrypted on login, once; keys with their own
-// password are left alone.
-func TestPrepareStrengthensKeys(t *testing.T) {
-	s := copyFixtures(t)
-	ctx := context.Background()
-	h, _ := load(t, s, "variants")
-	if _, err := h.PrepareAfterLogin(ctx, []byte("secret")); err != nil {
-		t.Fatal(err)
-	}
-	old := pki.PBKDF2Iterations
-	pki.PBKDF2Iterations = 4096
-	t.Cleanup(func() { pki.PBKDF2Iterations = old })
-
-	snap, _ := h.Snapshot(ctx)
-	want, own := 0, map[int64]int{}
-	for _, k := range snap.Keys {
-		if !k.HasPrivate {
-			continue
-		}
-		blob, ownPass, _ := h.DB.PrivateKey(ctx, k.ID)
-		n, ok := pki.PKCS8Iterations(blob)
-		switch {
-		case !ok || n >= 4096:
-		case ownPass == xdb.PassPrivate:
-			own[k.ID] = n
-		default:
-			want++
-		}
-	}
-	if want == 0 {
-		t.Fatal("fixture has no key to strengthen")
-	}
-	rep, err := h.PrepareAfterLogin(ctx, []byte("secret"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rep.Strengthened != want || rep.ConvertedKeys != 0 || rep.Backup == "" {
-		t.Fatalf("report %+v, want %d strengthened", rep, want)
-	}
-	snap, _ = h.Snapshot(ctx)
-	for _, k := range snap.Keys {
-		if !k.HasPrivate {
-			continue
-		}
-		blob, ownPass, _ := h.DB.PrivateKey(ctx, k.ID)
-		n, _ := pki.PKCS8Iterations(blob)
-		if ownPass == xdb.PassPrivate {
-			if was, ok := own[k.ID]; ok && n != was {
-				t.Errorf("%s: own-password key changed from %d to %d iterations", k.Name, was, n)
-			}
-			continue
-		}
-		if n < 4096 {
-			t.Errorf("%s: %d iterations", k.Name, n)
-		}
-		pw := "secret"
-		if ownPass == xdb.PassBogus {
-			pw = "Bogus"
-		}
-		priv, _, err := pki.DecryptPrivateKey(blob, k.KeyType, []byte(pw))
-		if err != nil {
-			t.Errorf("%s: %v", k.Name, err)
-			continue
-		}
-		if ok, _ := pki.MatchesPublic(priv, k.Public); !ok {
-			t.Errorf("%s: mismatch after re-encryption", k.Name)
-		}
-	}
-	if rep, err := h.PrepareAfterLogin(ctx, []byte("secret")); err != nil || rep.Backup != "" || rep.Strengthened != 0 {
-		t.Fatalf("second run %+v %v", rep, err)
 	}
 }

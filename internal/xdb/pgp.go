@@ -19,7 +19,7 @@ type PGPCert struct {
 }
 
 func (d *DB) loadPGP(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
-	if d.GoCA == 0 {
+	if _, goca := d.Version(); goca == 0 {
 		return nil // an XCA database not converted yet
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT g.item, g.fingerprint, g.cert FROM gca_pgp g

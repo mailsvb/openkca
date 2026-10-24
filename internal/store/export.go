@@ -16,6 +16,7 @@ import (
 	"github.com/mailsvb/go-ca/internal/pkcs12"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
+	"github.com/mailsvb/go-ca/internal/vault"
 	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
@@ -29,7 +30,7 @@ type ExportRequest struct {
 	IDs        []int64
 	Password   []byte // export password for formats with codec.FCrypt
 	PEMComment bool   // XCA's "Include internal name and comment" option
-	DBPass     []byte
+	Keyring    *vault.Keyring
 	Keys       KeyPasswords
 	T          Translator
 	Now        time.Time
@@ -236,53 +237,20 @@ func contentType(f codec.Format) string {
 	return "text/plain; charset=utf-8"
 }
 
-// keyPassword returns the password a stored private key is encrypted with.
-func keyPassword(keyID int64, own int, dbPass []byte, kp KeyPasswords) ([]byte, error) {
-	switch own {
-	case xdb.PassPrivate:
-		if pw := kp[keyID]; len(pw) > 0 {
-			return pw, nil
-		}
-		return nil, ErrNeedKeyPassword
-	case xdb.PassBogus:
-		return []byte("Bogus"), nil
-	case xdb.PassPIN:
-		return nil, errors.New("the key is on a security token, which go-ca does not access")
-	}
-	return dbPass, nil
-}
-
 // privateDER decrypts a stored key to an unencrypted PKCS#8 structure,
 // also for algorithms Go cannot compute with.
-func (h *Handle) privateDER(ctx context.Context, k *xdb.Key, dbPass []byte, kp KeyPasswords) ([]byte, error) {
+func (h *Handle) privateDER(ctx context.Context, k *xdb.Key, kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
 	if !k.HasPrivate {
 		return nil, ErrNoPrivateKey
 	}
-	if s, err := h.unlock(ctx, k.ID, k.KeyType, dbPass, kp); err == nil {
-		return pki.MarshalPKCS8(s)
-	} else if errors.Is(err, ErrNeedKeyPassword) {
-		return nil, err
-	}
-	blob, own, err := h.DB.PrivateKey(ctx, k.ID)
-	if err != nil {
-		return nil, err
-	}
-	pw, err := keyPassword(k.ID, own, dbPass, kp)
-	if err != nil {
-		return nil, err
-	}
-	der, err := pki.DecryptPKCS8(blob, pw)
-	if errors.Is(err, pki.ErrWrongPassword) && own == xdb.PassPrivate {
-		return nil, ErrNeedKeyPassword
-	}
-	return der, err
+	return h.keyDER(ctx, k.ID, k.KeyType, kr, kp)
 }
 
-func (h *Handle) signer(ctx context.Context, k *xdb.Key, dbPass []byte, kp KeyPasswords) (crypto.Signer, error) {
+func (h *Handle) signer(ctx context.Context, k *xdb.Key, kr *vault.Keyring, kp KeyPasswords) (crypto.Signer, error) {
 	if k == nil || !k.HasPrivate {
 		return nil, ErrNoPrivateKey
 	}
-	return h.unlock(ctx, k.ID, k.KeyType, dbPass, kp)
+	return h.unlock(ctx, k.ID, k.KeyType, kr, kp)
 }
 
 // chain returns a certificate followed by its issuers up to the root.
@@ -472,7 +440,7 @@ func (e *exporter) certs() error {
 				if err != nil {
 					return err
 				}
-				der, err := e.h.privateDER(e.ctx, k, e.req.DBPass, e.req.Keys)
+				der, err := e.h.privateDER(e.ctx, k, e.req.Keyring, e.req.Keys)
 				if err != nil {
 					return err
 				}
@@ -484,7 +452,7 @@ func (e *exporter) certs() error {
 				e.out.Write(e.keyComment(k))
 				e.out.Write(b)
 			} else {
-				s, err := e.h.signer(e.ctx, k, e.req.DBPass, e.req.Keys)
+				s, err := e.h.signer(e.ctx, k, e.req.Keyring, e.req.Keys)
 				if err != nil {
 					return err
 				}
@@ -502,7 +470,7 @@ func (e *exporter) certs() error {
 	case f&codec.FOVPN != 0:
 		var ca, extra, cert, key []byte
 		if k := keyOf(e.snap, first); k != nil && k.HasPrivate {
-			s, err := e.h.signer(e.ctx, k, e.req.DBPass, e.req.Keys)
+			s, err := e.h.signer(e.ctx, k, e.req.Keyring, e.req.Keys)
 			if err != nil {
 				return err
 			}
@@ -545,7 +513,7 @@ func (e *exporter) certs() error {
 		if k == nil {
 			return ErrNoPrivateKey
 		}
-		key, err := e.h.privateDER(e.ctx, k, e.req.DBPass, e.req.Keys)
+		key, err := e.h.privateDER(e.ctx, k, e.req.Keyring, e.req.Keys)
 		if err != nil {
 			return err
 		}
@@ -653,7 +621,7 @@ func (e *exporter) keys() error {
 		var err error
 		needSigner := f&codec.FPrivate != 0 && f&codec.FPKCS8 == 0
 		if needSigner {
-			if s, err = e.h.signer(e.ctx, k, e.req.DBPass, e.req.Keys); err != nil {
+			if s, err = e.h.signer(e.ctx, k, e.req.Keyring, e.req.Keys); err != nil {
 				return err
 			}
 		}
@@ -683,7 +651,7 @@ func (e *exporter) keys() error {
 		case f&codec.FDER != 0:
 			e.out.Write(k.Public)
 		case f&codec.FPKCS8 != 0:
-			der, err := e.h.privateDER(e.ctx, k, e.req.DBPass, e.req.Keys)
+			der, err := e.h.privateDER(e.ctx, k, e.req.Keyring, e.req.Keys)
 			if err != nil {
 				return err
 			}
@@ -746,7 +714,7 @@ func (e *exporter) keys() error {
 			var s crypto.Signer
 			if f&codec.FPrivate != 0 {
 				var err error
-				if s, err = e.h.signer(e.ctx, r.key, e.req.DBPass, e.req.Keys); err != nil {
+				if s, err = e.h.signer(e.ctx, r.key, e.req.Keyring, e.req.Keys); err != nil {
 					return err
 				}
 			}

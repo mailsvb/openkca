@@ -31,8 +31,8 @@ func TestTransferPages(t *testing.T) {
 		}
 		return r
 	}
-	post("/", url.Values{"name": {"tx"}, "password": {"pw"}, "password2": {"pw"}})
-	post("/db/tx/login", url.Values{"password": {"pw"}})
+	post("/", url.Values{"name": {"tx"}, "password": {"password1"}, "password2": {"password1"}})
+	post("/db/tx/login", url.Values{"password": {"password1"}})
 	ca := url.Values{"name": {"Root"}, "dn.O": {"Web"}, "dn.CN": {"Root"}, "keymode": {"new"}, "newkey": {"EC:P-256"}, "signer": {"self"},
 		"hash": {"sha256"}, "notbefore": {"2026-01-01T00:00"}, "validn": {"10"}, "validunit": {"y"}, "ca": {"1"}, "subkey": {"1"}, "ku.5": {"1"}}
 	r := post("/db/tx/new/cert", ca)
@@ -119,7 +119,11 @@ func TestTransferPages(t *testing.T) {
 	}
 
 	// Dump
-	r = post("/db/tx/dump", url.Values{})
+	r = post("/db/tx/dump", url.Values{"password": {"a"}, "password2": {"b"}})
+	if loc := r.Header.Get("Location"); !strings.Contains(loc, "dump.error.password") {
+		t.Fatalf("dump with mismatched passwords: %q", loc)
+	}
+	r = post("/db/tx/dump", url.Values{"password": {"dump pass"}, "password2": {"dump pass"}})
 	if ct := r.Header.Get("Content-Type"); ct != "application/zip" {
 		t.Fatalf("dump: %s", ct)
 	}
@@ -150,8 +154,8 @@ func TestImportDuplicateInBatch(t *testing.T) {
 	ts, _ := newTestServer(t)
 	c := client(t, ts)
 	csrf := login(t, ts, c)
-	c.PostForm(ts.URL+"/", url.Values{"name": {"dup"}, "password": {"pw"}, "password2": {"pw"}, "csrf": {csrf}})
-	c.PostForm(ts.URL+"/db/dup/login", url.Values{"password": {"pw"}, "csrf": {csrf}})
+	c.PostForm(ts.URL+"/", url.Values{"name": {"dup"}, "password": {"password1"}, "password2": {"password1"}, "csrf": {csrf}})
+	c.PostForm(ts.URL+"/db/dup/login", url.Values{"password": {"password1"}, "csrf": {csrf}})
 	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tpl := &x509.Certificate{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "Twice"}, NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
 	der, _ := x509.CreateCertificate(rand.Reader, tpl, tpl, k.Public(), k)
