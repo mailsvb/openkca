@@ -246,7 +246,7 @@ still be exported in XCA's formats.
 
 Releases with binaries for Linux (amd64, arm64), Windows (amd64) and macOS
 (amd64, arm64) are on the
-[releases page](https://github.com/mailsvb/go-ca/releases). `openkca version`
+[releases page](https://github.com/mailsvb/openkca/releases). `openkca version`
 prints the version of a binary.
 
 ## Build
