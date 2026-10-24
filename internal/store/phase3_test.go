@@ -64,7 +64,7 @@ func TestIssueHierarchy(t *testing.T) {
 	if root.IssuerID != rootID || sub.IssuerID != rootID || leaf.IssuerID != subID {
 		t.Fatalf("issuers: root %d sub %d leaf %d", root.IssuerID, sub.IssuerID, leaf.IssuerID)
 	}
-	if root.Authority == nil || sub.Authority == nil || leaf.Authority != nil || root.Authority.CRLDays != 30 {
+	if root.Authority == nil || sub.Authority == nil || leaf.Authority != nil || root.Authority.CRLDays != 180 || sub.Authority.CRLDays != 7 {
 		t.Fatal("authority rows")
 	}
 	if !req.Signed || !strings.Contains(req.Comment, "by 'Sub'") || leaf.KeyID == 0 || leaf.KeyID != req.KeyID {

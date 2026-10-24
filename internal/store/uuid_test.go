@@ -127,10 +127,14 @@ func TestItemUUIDs(t *testing.T) {
 		t.Fatal("index of the restored CA missing")
 	}
 
-	// A trashed CA's folder holding only index files is removed.
+	// A trashed CA keeps its published files; a folder holding only index
+	// files (nothing published) is removed.
 	root := findCert(snap, p.root)
 	rootDir, _ := h.CADir(root.Authority.UUID)
-	if _, err := os.Stat(rootDir); err != nil {
+	if _, err := os.Stat(filepath.Join(rootDir, "ca.crt")); err != nil {
+		t.Fatal("CA certificate not published:", err)
+	}
+	if err := os.Remove(filepath.Join(rootDir, "ca.crt")); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Delete(ctx, p.root); err != nil {

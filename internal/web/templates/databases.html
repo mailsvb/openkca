@@ -1,5 +1,8 @@
 {{template "head" .}}
 <h1>{{T "databases.heading"}}</h1>
+{{range .Data.CRLAlerts}}
+<p class="{{if .Expired}}error{{else}}warn{{end}}">{{if .Expired}}{{T "crlalert.expired" .Issuer .DBLabel (time .NextUpdate)}}{{else}}{{T "crlalert.expiring" .Issuer .DBLabel (time .NextUpdate)}}{{end}}</p>
+{{end}}
 {{$open := .Data.Open}}{{$sel := .Data.Selected}}{{$csrf := .CSRF}}
 {{if not .Data.Databases}}<p class="muted">{{T "databases.empty"}}</p>{{end}}
 <ul class="dblist">

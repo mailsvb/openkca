@@ -39,11 +39,19 @@
     <dt>{{T "ca.crldays"}}</dt><dd>{{$a.CRLDays}}</dd>
     <dt>{{T "ca.crlno"}}</dt><dd>{{$a.CRLNo}}</dd>
     <dt>{{T "ca.crlexpire"}}</dt><dd>{{if eq $a.CRLExpire.Year 9999}}{{T "ca.nocrl"}}{{else}}{{time $a.CRLExpire}}{{end}}</dd>
+    <dt>{{T "ca.autocrl"}}</dt><dd>{{T $d.AutoCRL}}</dd>
     <dt>{{T "ca.authority"}}</dt><dd class="mono">{{$a.UUID}}</dd>
     {{with $d.CADir}}<dt>{{T "ca.folder"}}</dt><dd class="mono small">{{.}}</dd>{{end}}
+    {{if $d.CRLURLs}}<dt>{{T "ca.crlurls"}}</dt><dd class="mono small">{{range $d.CRLURLs}}<div>{{.}}</div>{{end}}</dd>
+    <dt>{{T "ca.certurls"}}</dt><dd class="mono small">{{range $d.CertURLs}}<div>{{.}}</div>{{end}}</dd>{{end}}
   </dl>
   <div class="actionbar">
-    {{if $d.KeyPrivate}}<a class="button" href="/db/{{$db}}/item/{{$d.Item.ID}}/crl">{{T "ca.gencrl"}}</a>{{end}}
+    {{if $d.KeyPrivate}}<form method="post" action="/db/{{$db}}/item/{{$d.Item.ID}}/crl/now" class="inline-fields">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      {{if $d.KeyOwnPass}}<input type="password" name="keypass" autocomplete="off" required placeholder="{{T "editor.keypass"}}" aria-label="{{T "editor.keypass"}}">{{end}}
+      <button type="submit">{{T "ca.resign"}}</button>
+    </form>
+    <a class="button secondary" href="/db/{{$db}}/item/{{$d.Item.ID}}/crl">{{T "ca.gencrl"}}</a>{{end}}
     <a class="button secondary" href="/db/{{$db}}/item/{{$d.Item.ID}}/revocations">{{T "ca.managerev"}}</a>
   </div>
   <details>

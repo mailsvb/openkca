@@ -92,7 +92,7 @@ func TestCAOperations(t *testing.T) {
 	// CRL with defaults
 	sub := findCert(snap, subID)
 	opts := DefaultCRLOptions(snap, sub)
-	if opts.Number != 1 || opts.NextUpdate.Sub(opts.ThisUpdate) != 30*24*time.Hour {
+	if opts.Number != 1 || opts.NextUpdate.Sub(opts.ThisUpdate) != 7*24*time.Hour {
 		t.Fatalf("defaults %+v", opts)
 	}
 	crlID, err := h.GenerateCRL(ctx, subID, opts, krOf(t, h), nil)
@@ -129,11 +129,11 @@ func TestCAOperations(t *testing.T) {
 	if DefaultCRLOptions(snap, sub).Number != 2 {
 		t.Fatal("next CRL number")
 	}
-	if err := h.SetCAProperties(ctx, subID, 7, 0); err != nil {
+	if err := h.SetCAProperties(ctx, subID, 14, 0); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ = h.Snapshot(ctx)
-	if d := DefaultCRLOptions(snap, findCert(snap, subID)); d.NextUpdate.Sub(d.ThisUpdate) != 7*24*time.Hour {
+	if d := DefaultCRLOptions(snap, findCert(snap, subID)); d.NextUpdate.Sub(d.ThisUpdate) != 14*24*time.Hour {
 		t.Fatal("crlDays not used")
 	}
 

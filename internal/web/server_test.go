@@ -381,7 +381,8 @@ func TestEditorFlow(t *testing.T) {
 	// Mandatory subject entry from the options.
 	opts := url.Values{"default_hash": {"sha384"}, "mandatory_dn": {"O"}, "explicit_dn": {"C,O,CN"}, "string_opt": {"MASK:0x2002"},
 		"serial_len": {"128"}, "cert_expiry.n": {"30"}, "cert_expiry.u": {"D"}, "ical_expiry.n": {"1"}, "ical_expiry.u": {"W"},
-		"pkcs12_enc_algo": {"AES-256-CBC"}, "pkcs12_iterations": {"1000"}, "backup_keep": {"5"}, "backup_days": {"30"}}
+		"pkcs12_enc_algo": {"AES-256-CBC"}, "pkcs12_iterations": {"1000"}, "backup_keep": {"5"}, "backup_days": {"30"},
+		"crl_days_root": {"180"}, "crl_days_sub": {"7"}}
 	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "error=options.error.value&key=pkcs12_iterations") {
 		t.Fatalf("pkcs12_iterations below the minimum: %s", loc)
 	}

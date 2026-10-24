@@ -229,6 +229,32 @@ func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, s
 	}})
 }
 
+// crlNow signs a new CRL with the CA's defaults (one click on the CA page).
+func (s *Server) crlNow(w http.ResponseWriter, r *http.Request) {
+	snap, ca, ok := s.caFor(w, r)
+	if !ok {
+		return
+	}
+	ds := dbSession(r)
+	if s.keyLimit.Blocked(ds.ID) {
+		s.toItem(w, r, ca.ID, "error=item.error.ratelimit")
+		return
+	}
+	_, err := ds.Handle.SignCRLNow(r.Context(), ca.ID, ds.Keyring(), keyPasswords(r, snap))
+	switch {
+	case errors.Is(err, store.ErrNeedKeyPassword), errors.Is(err, pki.ErrWrongPassword):
+		s.keyLimit.Fail(ds.ID)
+		s.toItem(w, r, ca.ID, "error=item.error.keypass")
+		return
+	case err != nil:
+		s.log.Warn("CRL signing failed", "ca", ca.ID, "err", err)
+		s.toItem(w, r, ca.ID, "error=item.error.crl")
+		return
+	}
+	s.log.Info("CRL signed", "db", ds.DBName, "ca", ca.ID)
+	s.toItem(w, r, ca.ID, "notice=crlsigned")
+}
+
 func (s *Server) crlSubmit(w http.ResponseWriter, r *http.Request) {
 	snap, ca, ok := s.caFor(w, r)
 	if !ok {

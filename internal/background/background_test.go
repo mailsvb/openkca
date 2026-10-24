@@ -2,11 +2,14 @@ package background
 
 import (
 	"context"
+	"crypto/x509"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
 	"github.com/mailsvb/go-ca/internal/vault"
 )
@@ -122,4 +125,79 @@ func TestNilHolder(t *testing.T) {
 		t.Fatal("nil holder")
 	}
 	h.Close()
+}
+
+// TestRunSignsCRLs: the background loop signs every CA's first CRL and a
+// new one right after a revocation made in a web session.
+func TestRunSignsCRLs(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := newStore(t, "one")
+	h, err := Open(ctx, s, []string{"one"}, map[string][]byte{"one": []byte("password-one")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	// A web session issues a CA and a leaf.
+	web, err := s.Acquire(ctx, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer web.Release()
+	kr, err := web.Unlock(ctx, []byte("password-one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := func(name string, signer int64, ca bool) int64 {
+		ext := pki.ExtSpec{CA: 2, AuthKey: true}
+		if ca {
+			ext = pki.ExtSpec{CA: 1, SubKey: true, KeyUse: 1<<5 | 1<<6}
+		}
+		id, err := web.Issue(ctx, store.IssueParams{Name: name, Subject: []pki.DNAttr{{Name: "CN", Value: name}},
+			NewKey: &pki.KeySpec{Type: "EC", Curve: "P-256"}, SignerID: signer, NotBefore: time.Now().Add(-time.Hour),
+			NotAfter: time.Now().AddDate(1, 0, 0), Hash: "sha256", Ext: ext}, kr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	rootID := issue("Root", 0, true)
+	done := make(chan struct{})
+	go func() { h.Run(ctx); close(done) }()
+	crlEntries := func() int {
+		snap, _ := web.Snapshot(ctx)
+		for _, c := range snap.Certs {
+			if c.ID == rootID {
+				dir, _ := web.CADir(c.Authority.UUID)
+				der, err := os.ReadFile(filepath.Join(dir, "crl.der"))
+				if err != nil {
+					return -1
+				}
+				l, err := x509.ParseRevocationList(der)
+				if err != nil {
+					return -1
+				}
+				return len(l.RevokedCertificateEntries)
+			}
+		}
+		return -1
+	}
+	waitFor := func(want int) {
+		t.Helper()
+		for range 100 {
+			if crlEntries() == want {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("CRL entries %d, want %d", crlEntries(), want)
+	}
+	waitFor(0)
+	leafID := issue("leaf", rootID, false)
+	if err := web.Revoke(ctx, leafID, store.Revocation{Reason: 1}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(1)
+	cancel()
+	<-done
 }

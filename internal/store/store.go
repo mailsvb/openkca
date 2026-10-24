@@ -26,6 +26,7 @@ import (
 	"github.com/mailsvb/go-ca/internal/cadir"
 	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/index"
+	"github.com/mailsvb/go-ca/internal/publish"
 	"github.com/mailsvb/go-ca/internal/xcaimport"
 )
 
@@ -386,8 +387,11 @@ type Handle struct {
 	lock  *flock.Flock
 	refs  int
 
-	mu   sync.Mutex
-	snap *gcadb.Snapshot
+	mu       sync.Mutex
+	snap     *gcadb.Snapshot
+	watchers []chan struct{}
+
+	crlMu sync.Mutex // CRLs signed with the CA's defaults, one at a time
 }
 
 // Acquire opens the named database or returns the already open handle. Each
@@ -481,6 +485,10 @@ func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 	if err := index.Write(h.store.Dir, h.Name, snap); err != nil {
 		slog.Error("writing index files failed", "db", h.Name, "err", err)
 	}
+	// ... and the published CA certificates and CRLs.
+	if err := publish.Write(h.store.Dir, h.Name, snap); err != nil {
+		slog.Error("publishing CA files failed", "db", h.Name, "err", err)
+	}
 	return snap, nil
 }
 
@@ -500,6 +508,7 @@ func (h *Handle) changed(ctx context.Context) {
 	if _, err := h.Snapshot(ctx); err != nil {
 		slog.Error("reload after change failed", "db", h.Name, "err", err)
 	}
+	h.notify()
 }
 
 // Invalidate drops the cached snapshot.

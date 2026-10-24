@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
@@ -109,6 +110,44 @@ func (h *Holder) Databases() []*Database {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]*Database(nil), h.dbs...)
+}
+
+// TickInterval is how often the background work runs without a change:
+// it catches CRLs whose half validity passed and entries that aged out.
+var TickInterval = time.Minute
+
+// Run does the background CA work of every database until ctx ends:
+// after each change to a database and every TickInterval, it signs the
+// CRLs that are due (store.Handle.SignDueCRLs). It returns when ctx ends.
+func (h *Holder) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	for _, d := range h.Databases() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.run(ctx)
+		}()
+	}
+	wg.Wait()
+}
+
+func (d *Database) run(ctx context.Context) {
+	changed := d.Handle.Watch()
+	t := time.NewTicker(TickInterval)
+	defer t.Stop()
+	for {
+		if kr := d.Keyring(); kr != nil {
+			if _, err := d.Handle.SignDueCRLs(ctx, kr, time.Now()); err != nil && ctx.Err() == nil {
+				slog.Error("background CRL check failed", "db", d.Name, "err", err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-changed:
+		case <-t.C:
+		}
+	}
 }
 
 // Close wipes every keyring and releases the databases.

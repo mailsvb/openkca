@@ -19,6 +19,11 @@ general:
   idle_timeout: 45m
   max_upload_mb: 64
   password_hash: " $argon2id$x "
+crl:
+  listen: "127.0.0.1:8081"
+  base_urls:
+    - http://pki.example.org/
+    - http://pki.lan:8080/pki
 databases:
   - name: Home Lab CA
     type: file
@@ -50,6 +55,26 @@ databases:
 	}
 	if !c.HasPasswords() {
 		t.Fatal("HasPasswords = false")
+	}
+	if c.CRL.ListenAddr() != "127.0.0.1:8081" || strings.Join(c.CRL.BaseURLs, " ") != "http://pki.example.org http://pki.lan:8080/pki" {
+		t.Fatalf("crl = %q %v", c.CRL.ListenAddr(), c.CRL.BaseURLs)
+	}
+}
+
+func TestCRLListen(t *testing.T) {
+	for yaml, want := range map[string]string{
+		"":                            DefaultCRLListen,
+		"crl:\n  base_urls: []\n":     DefaultCRLListen,
+		"crl:\n  listen: \"\"\n":      "",
+		"crl:\n  listen: \":9000\"\n": ":9000",
+	} {
+		c, err := Parse([]byte("general:\n  data_dir: d\n"+yaml), "/b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.CRL.ListenAddr(); got != want {
+			t.Errorf("%q: listen %q, want %q", yaml, got, want)
+		}
 	}
 }
 
@@ -90,6 +115,11 @@ func TestParseErrors(t *testing.T) {
 		{db("  - name: A\n    path: a.db\n"), ".gca"},
 		{db("  - name: A\n    path: a.gca\n  - name: B\n    path: sub/A.gca\n"), "file name"},
 		{db("  - name: A\n    path: a.gca\n    passwd: x\n"), "field passwd not found"},
+		{gen + "crl:\n  base_urls: [https://pki.example.org]\n", "http://"},
+		{gen + "crl:\n  base_urls: [\"http://\"]\n", "no host"},
+		{gen + "crl:\n  base_urls: [\"http://x/?a=1\"]\n", "query"},
+		{gen + "crl:\n  base_urls: [http://x/, http://x]\n", "twice"},
+		{gen + "crl:\n  lisen: x\n", "field lisen not found"},
 	} {
 		_, err := Parse([]byte(tc.yaml), "/base")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {

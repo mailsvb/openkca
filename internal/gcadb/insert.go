@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -257,7 +258,9 @@ func (t *Tx) InsertCert(ctx context.Context, n NewCert) (int64, error) {
 	}
 	days := n.CRLDays
 	if days == 0 {
-		days = 30
+		if days, err = t.defaultCRLDays(ctx, issuer.Valid && issuer.Int64 == id); err != nil {
+			return 0, err
+		}
 	}
 	var tmplID sql.NullInt64
 	if n.TemplateID != 0 {
@@ -331,6 +334,15 @@ func (t *Tx) takeOver(ctx context.Context, newID int64, c *x509.Certificate) err
 	if _, err := t.ExecContext(ctx, "UPDATE authorities SET uuid=? WHERE cert=?", auth, newID); err != nil {
 		return err
 	}
+	// The renewal is the same CA: it keeps the CRL interval and default
+	// template, and its CRL numbers continue.
+	if _, err := t.ExecContext(ctx, `UPDATE authorities SET
+		crl_days = (SELECT crl_days FROM authorities WHERE cert=?),
+		crl_number = MAX(crl_number, (SELECT crl_number FROM authorities WHERE cert=?)),
+		template = COALESCE(template, (SELECT template FROM authorities WHERE cert=?))
+		WHERE cert=?`, from.id, from.id, from.id, newID); err != nil {
+		return err
+	}
 	// Every other CA with this authority ID (the one renewed, and CAs it
 	// took the ID over from itself) must give it up if it stays live.
 	rows, err := t.QueryContext(ctx, "SELECT cert FROM authorities WHERE uuid=? AND cert<>?", auth, newID)
@@ -346,6 +358,31 @@ func (t *Tx) takeOver(ctx context.Context, newID int64, c *x509.Certificate) err
 		t.displaced = append(t.displaced, id)
 	}
 	return rows.Err()
+}
+
+// Defaults of the CRL interval of new CAs; the database settings
+// crl_days_root and crl_days_sub override them.
+const (
+	DefaultCRLDaysRoot = 180
+	DefaultCRLDaysSub  = 7
+	MaxCRLDays         = 36500
+)
+
+// defaultCRLDays is the CRL interval of a new root (self-signed) or
+// subordinate CA from the database settings.
+func (t *Tx) defaultCRLDays(ctx context.Context, root bool) (int, error) {
+	key, days := "crl_days_sub", DefaultCRLDaysSub
+	if root {
+		key, days = "crl_days_root", DefaultCRLDaysRoot
+	}
+	v, err := querySetting(ctx, t, key)
+	if err != nil {
+		return 0, err
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= MaxCRLDays {
+		days = n
+	}
+	return days, nil
 }
 
 // adoptChildren sets the issuer of live certificates and CRLs that ca
