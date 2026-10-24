@@ -57,7 +57,7 @@ func (s *Store) place(tmp, file string) error {
 }
 
 // placeUnique places tmp as base+ext, or base-1+ext, base-2+ext, … when
-// taken, and returns the base name used. A go-ca database name is free
+// taken, and returns the base name used. An OpenKCA database name is free
 // only when neither name.okca nor name.xdb exists, except for the file
 // ignore (the .xdb being imported).
 func (s *Store) placeUnique(tmp, base, ext, ignore string) (string, error) {
@@ -179,7 +179,7 @@ func SanitizeName(filename string) string {
 	return name
 }
 
-// Upload stores an uploaded database after validating it: a go-ca database
+// Upload stores an uploaded database after validating it: an OpenKCA database
 // as name.okca, an XCA database as name.xdb, to be imported at its first
 // login. It returns the name it is listed under (with -1, -2, … appended on
 // collision, and .xdb for an XCA file).

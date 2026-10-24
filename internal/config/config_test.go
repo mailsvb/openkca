@@ -15,7 +15,7 @@ general:
   data_dir: data
   listen: "127.0.0.1:9443"
   tls_cert: tls/cert.pem
-  tls_key: /etc/go-ca/key.pem
+  tls_key: /etc/openkca/key.pem
   idle_timeout: 45m
   max_upload_mb: 64
   password_hash: " $argon2id$x "
@@ -40,7 +40,7 @@ databases:
 		g.MaxUploadMB != 64 || g.PasswordHash != "$argon2id$x" {
 		t.Fatalf("general = %+v", g)
 	}
-	if g.TLSCert != filepath.Join(base, "tls/cert.pem") || g.TLSKey != "/etc/go-ca/key.pem" {
+	if g.TLSCert != filepath.Join(base, "tls/cert.pem") || g.TLSKey != "/etc/openkca/key.pem" {
 		t.Fatalf("tls = %q %q", g.TLSCert, g.TLSKey)
 	}
 	if len(c.Databases) != 2 {

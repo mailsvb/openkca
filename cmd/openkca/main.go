@@ -1,10 +1,10 @@
-// Command go-ca serves a web UI for XCA databases. Its settings and the
+// Command openkca serves a web UI for XCA databases. Its settings and the
 // databases it keeps open come from a YAML configuration file (package
 // config).
 //
-//	go-ca [serve] [--config FILE]   run the server
-//	go-ca set-password              print a server password hash for general.password_hash
-//	go-ca version                   print the version
+//	openkca [serve] [--config FILE]   run the server
+//	openkca set-password              print a server password hash for general.password_hash
+//	openkca version                   print the version
 //
 // The configuration file defaults to config.yaml next to the executable.
 package main
@@ -51,12 +51,12 @@ func main() {
 	case "set-password":
 		err = setPassword(args)
 	case "version", "--version", "-version":
-		fmt.Println("go-ca", version)
+		fmt.Println("openkca", version)
 	default:
 		err = fmt.Errorf("unknown command %q (use serve, set-password or version)", cmd)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "go-ca:", err)
+		fmt.Fprintln(os.Stderr, "openkca:", err)
 		os.Exit(1)
 	}
 }
@@ -136,11 +136,11 @@ func serve(args []string) error {
 		log.Warn(w)
 	}
 	if g.PasswordHash == "" {
-		msg := "general.password_hash is missing; run \"go-ca set-password\" and put its output into " + cfg.File
+		msg := "general.password_hash is missing; run \"openkca set-password\" and put its output into " + cfg.File
 		return errors.New(msg)
 	}
 	if !auth.ValidHash(g.PasswordHash) {
-		return errors.New("general.password_hash is not a hash made by \"go-ca set-password\"")
+		return errors.New("general.password_hash is not a hash made by \"openkca set-password\"")
 	}
 
 	st, err := store.New(g.DataDir)
@@ -219,7 +219,7 @@ func serve(args []string) error {
 	}
 	go func() { errc <- hs.ListenAndServeTLS("", "") }()
 	leaf := certs.Leaf()
-	log.Info("go-ca listening", "version", version, "config", cfg.File, "addr", g.Listen, "data", st.Dir,
+	log.Info("OpenKCA listening", "version", version, "config", cfg.File, "addr", g.Listen, "data", st.Dir,
 		"databases", len(names), "background", len(bg.Databases()),
 		"cert", leaf.Subject.CommonName, "expires", leaf.NotAfter.Format(time.DateOnly))
 	select {

@@ -60,7 +60,7 @@ func (f Format) Text() bool {
 }
 
 // Formats follows XCA's pki_export::init_elements without the OpenVPN
-// tls-auth key, with go-ca's SSH and OpenPGP formats next to XCA's.
+// tls-auth key, with OpenKCA's SSH and OpenPGP formats next to XCA's.
 var Formats = []Format{
 	{1, db.TypeCert, "crt", "fmt.pem", "fmt.help.cert_pem", FPEM | FUsual | FSingle | FClipboard},
 	{3, db.TypeCert, "pem", "fmt.pem_selected", "fmt.help.cert_pem_selected", FPEM | FMulti},

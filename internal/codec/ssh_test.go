@@ -113,7 +113,7 @@ func TestSSHFormatsRoundTrip(t *testing.T) {
 		probeOne(t, name+" rfc4716", pub, "", k, comment, false)
 		line, _ := SSHPublic(k.Public(), comment)
 		probeOne(t, name+" authorized_keys", line, "", k, comment, false)
-		// x/crypto's own reader takes go-ca's OpenSSH files
+		// x/crypto's own reader takes OpenKCA's OpenSSH files
 		if _, ok := k.(pki.DSAKey); !ok {
 			enc, _ := OpenSSHPrivate(k, comment, []byte("secret"))
 			if _, err := ssh.ParseRawPrivateKeyWithPassphrase(enc, []byte("secret")); err != nil {
@@ -209,7 +209,7 @@ func TestSSHKeygenFiles(t *testing.T) {
 			t.Fatalf("%s.pub: %+v", f, pr)
 		}
 	}
-	// go-ca's files read by ssh-keygen; one with the default bcrypt rounds
+	// OpenKCA's files read by ssh-keygen; one with the default bcrypt rounds
 	_, edKey, _ := ed25519.GenerateKey(rand.Reader)
 	b, _ := OpenSSHPrivate(edKey, "c", []byte("secret"))
 	os.WriteFile(filepath.Join(dir, "okca-default"), b, 0o600)
@@ -275,7 +275,7 @@ func TestPuTTYgenFiles(t *testing.T) {
 			}
 		}
 	}
-	// go-ca's files read by puttygen
+	// OpenKCA's files read by puttygen
 	for name, k := range sshTestKeys(t) {
 		want, _ := SSHPublic(k.Public(), "")
 		for _, v := range []int{2, 3} {

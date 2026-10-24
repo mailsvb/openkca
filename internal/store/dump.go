@@ -68,7 +68,7 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, kr *vault.Keyring, expor
 		}
 	}
 	if len(ownPass) > 0 {
-		note := "These keys have their own password and are stored in a form only go-ca reads.\n" +
+		note := "These keys have their own password and are stored in a form only OpenKCA reads.\n" +
 			"Their files hold the public key only; export each key on its own with its password.\n\n" +
 			strings.Join(ownPass, "\n") + "\n"
 		if err := file("keys", "OWN-PASSWORD", ".txt", []byte(note)); err != nil {
@@ -116,7 +116,7 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, kr *vault.Keyring, expor
 // dumpKey writes a private key under the export password as encrypted
 // PKCS#8 (PBES2 with pki.PBKDF2Iterations), as XCA's "Dump database" does
 // with the database password. A key with its own password is written as
-// it is when that is a standard encrypted PKCS#8 file; otherwise (go-ca's
+// it is when that is a standard encrypted PKCS#8 file; otherwise (OpenKCA's
 // own format, or XCA's legacy form, which no other program reads) only its
 // public key is written and ownPass reports it.
 func (h *Handle) dumpKey(ctx context.Context, k *db.Key, kr *vault.Keyring, exportPass []byte) (data []byte, ownPass bool, err error) {

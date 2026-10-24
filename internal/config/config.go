@@ -1,5 +1,5 @@
-// Package config reads go-ca's YAML configuration file: the server's
-// settings (formerly command line options) and the databases go-ca keeps
+// Package config reads OpenKCA's YAML configuration file: the server's
+// settings (formerly command line options) and the databases OpenKCA keeps
 // open.
 //
 //	general:
@@ -9,7 +9,7 @@
 //	  tls_key: ""
 //	  idle_timeout: 30m
 //	  max_upload_mb: 256
-//	  password_hash: "$argon2id$…"  # from "go-ca set-password"
+//	  password_hash: "$argon2id$…"  # from "openkca set-password"
 //	crl:
 //	  listen: ":8080"               # plain HTTP for CRLs and CA certificates; "" = off
 //	  base_urls:                    # offered as CDP/AIA in new certificates
@@ -20,8 +20,8 @@
 //	    path: homelab.okca           # relative to data_dir
 //	    password: "…"               # optional: open in the background
 //
-// A database with a password is opened when go-ca starts and stays open
-// with its keys unlocked, so that go-ca can do CA work on its own. Users
+// A database with a password is opened when OpenKCA starts and stays open
+// with its keys unlocked, so that OpenKCA can do CA work on its own. Users
 // still log into it with the database password in the web UI. A database
 // without a password is only listed under its name.
 package config
@@ -93,7 +93,7 @@ type Database struct {
 	Password string `yaml:"password"`
 }
 
-// Background reports whether go-ca keeps the database open on its own.
+// Background reports whether OpenKCA keeps the database open on its own.
 func (d Database) Background() bool { return d.Password != "" }
 
 // Config is a parsed and checked configuration. Paths are absolute.
@@ -278,7 +278,7 @@ func dataPath(dataDir, p string) (string, error) {
 	case ".xdb":
 		return "", errors.New("an XCA database (.xdb) cannot be configured: open it once in the web UI to convert it, then configure the .okca file")
 	default:
-		return "", errors.New("path must name a go-ca database (.okca)")
+		return "", errors.New("path must name an OpenKCA database (.okca)")
 	}
 	return filepath.Join(dataDir, clean), nil
 }

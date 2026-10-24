@@ -1,4 +1,4 @@
-// Package publish keeps the files go-ca publishes for each CA in its CA
+// Package publish keeps the files OpenKCA publishes for each CA in its CA
 // folder (package cadir), for the plain HTTP server (package pubserve) and
 // for anyone who serves the folder otherwise:
 //

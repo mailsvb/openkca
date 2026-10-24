@@ -544,7 +544,7 @@ func (e *exporter) certs() error {
 		e.out.Write(b)
 	case f&codec.FIndex != 0:
 		// The issued certificates of the selected CAs, as in the index
-		// file go-ca maintains for each CA.
+		// file OpenKCA maintains for each CA.
 		for _, ca := range certs {
 			var issued []*db.Cert
 			for _, c := range e.snap.Certs {

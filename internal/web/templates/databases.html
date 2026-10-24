@@ -51,7 +51,7 @@
   <h2>{{T "import.heading"}}</h2>
   <form class="stack" hx-post="/import" hx-encoding="multipart/form-data">
     <label for="import-file">{{T "import.file"}}</label>
-    <input type="file" id="import-file" name="file" accept=".xdb" required>
+    <input type="file" id="import-file" name="file" accept=".xdb,.okca" required>
     <span class="muted small">{{T "import.help" .Data.MaxUploadMB}}</span>
     <button type="submit">{{T "import.submit"}}</button>
   </form>

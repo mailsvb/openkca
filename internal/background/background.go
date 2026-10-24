@@ -1,5 +1,5 @@
 // Package background keeps the databases configured with a password open
-// for as long as go-ca runs, with their keyring unlocked, so that go-ca can
+// for as long as OpenKCA runs, with their keyring unlocked, so that OpenKCA can
 // do CA work (such as signing revocation lists) without anyone logged in.
 //
 // Web sessions on the same database share its open handle (store.Acquire

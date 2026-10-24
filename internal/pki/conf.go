@@ -307,7 +307,7 @@ func indexOf(list []string, v string) int {
 	return -1
 }
 
-// lookupOID accepts a dotted OID or a name known to go-ca.
+// lookupOID accepts a dotted OID or a name known to OpenKCA.
 func lookupOID(s string) (asn1.ObjectIdentifier, error) {
 	s = strings.TrimSpace(s)
 	if o, err := parseOID(s); err == nil {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exports a small hierarchy in every format go-ca offers and lets the real
+# Exports a small hierarchy in every format OpenKCA offers and lets the real
 # XCA command line import each file into a new database. Encrypted files
 # get the password "export" through a pseudo terminal.
 set -euo pipefail
@@ -19,8 +19,8 @@ cd "$dir/export"
 for f in *; do
   case "$f" in
     *.ics|*.jwk|*.conf|*.txt|*.ovpn) continue ;; # not importable by XCA
-    *-10[0-9].*) continue ;; # go-ca's SSH formats, which XCA does not offer
-    *-11[0-9].*) continue ;; # go-ca's OpenPGP formats, which XCA does not offer
+    *-10[0-9].*) continue ;; # OpenKCA's SSH formats, which XCA does not offer
+    *-11[0-9].*) continue ;; # OpenKCA's OpenPGP formats, which XCA does not offer
     *-23.pub) case "$f" in spare-*) continue ;; esac ;; # XCA reads only nistp256 SSH keys
   esac
   out=$(answers |

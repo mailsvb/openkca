@@ -449,7 +449,7 @@ func marshalSEC1Params(k *ecdsa.PrivateKey, withPublic, withCurve bool) ([]byte,
 	return asn1.Marshal(v)
 }
 
-// MarshalECPrivateKey is x509.MarshalECPrivateKey for every curve go-ca
+// MarshalECPrivateKey is x509.MarshalECPrivateKey for every curve OpenKCA
 // knows.
 func MarshalECPrivateKey(k *ecdsa.PrivateKey) ([]byte, error) {
 	if c := CurveOf(k.Curve); c != nil && c.NIST {
@@ -485,7 +485,7 @@ func parseSEC1(der []byte, c *ECCurve) (*ecdsa.PrivateKey, error) {
 	return k, nil
 }
 
-// ParseECPrivateKey is x509.ParseECPrivateKey for every curve go-ca knows.
+// ParseECPrivateKey is x509.ParseECPrivateKey for every curve OpenKCA knows.
 func ParseECPrivateKey(der []byte) (*ecdsa.PrivateKey, error) {
 	if k, err := x509.ParseECPrivateKey(der); err == nil {
 		return k, nil

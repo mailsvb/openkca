@@ -87,11 +87,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          name="go-ca_${VERSION}_${GOOS}_${GOARCH}"
+          name="openkca_${VERSION}_${GOOS}_${GOARCH}"
           ext=""
           if [ "$GOOS" = windows ]; then ext=.exe; fi
           mkdir -p "dist/$name" pkg
-          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/$name/go-ca$ext" ./cmd/openkca
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/$name/openkca$ext" ./cmd/openkca
           cp README.md "dist/$name/"
           cp config.example.yaml "dist/$name/"
           cp internal/web/static/htmx.LICENSE "dist/$name/"
@@ -104,7 +104,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: go-ca_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          name: openkca_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}
           path: pkg/*
           if-no-files-found: error
           retention-days: 30
@@ -130,14 +130,14 @@ jobs:
           merge-multiple: true
 
       - name: Checksums
-        run: cd pkg && sha256sum * > "go-ca_${VERSION}_checksums.txt" && cat "go-ca_${VERSION}_checksums.txt"
+        run: cd pkg && sha256sum * > "openkca_${VERSION}_checksums.txt" && cat "openkca_${VERSION}_checksums.txt"
 
       # The tag marks exactly the commit that was built.
       - name: Tag and release
         run: |
           gh release create "v$VERSION" pkg/* \
             --target "$GITHUB_SHA" \
-            --title "go-ca $VERSION" \
+            --title "OpenKCA $VERSION" \
             --generate-notes
 
       - name: Record the version on main

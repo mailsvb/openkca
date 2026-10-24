@@ -16,7 +16,7 @@ import (
 	"github.com/mailsvb/openkca/internal/vault"
 )
 
-// AutoCRL says whether and why go-ca signs a CA's CRL on its own.
+// AutoCRL says whether and why OpenKCA signs a CA's CRL on its own.
 type AutoCRL string
 
 const (
@@ -25,7 +25,7 @@ const (
 	AutoCRLNoKey   AutoCRL = "nokey"   // no private key in the database (or on a token)
 )
 
-// AutoCRLState reports whether go-ca can sign a CA's CRL with the
+// AutoCRLState reports whether OpenKCA can sign a CA's CRL with the
 // database keyring alone.
 func AutoCRLState(snap *db.Snapshot, ca *db.Cert) AutoCRL {
 	k := findKey(snap, ca.KeyID)

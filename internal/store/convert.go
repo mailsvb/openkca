@@ -23,7 +23,7 @@ import (
 
 // ConvertReport says what an import changed.
 type ConvertReport struct {
-	Target        string // name of the new go-ca database
+	Target        string // name of the new OpenKCA database
 	Items         int
 	Trashed       int // items XCA had marked deleted, now in the trash
 	Skipped       []string
@@ -33,7 +33,7 @@ type ConvertReport struct {
 	Removed       []string // the imported XCA file
 }
 
-// Conversion is a running or finished import of an XCA database (.xdb) into a new go-ca database. Several logins may wait for
+// Conversion is a running or finished import of an XCA database (.xdb) into a new OpenKCA database. Several logins may wait for
 // the same conversion.
 type Conversion struct {
 	total atomic.Int64
@@ -89,7 +89,7 @@ func (c *Conversion) Result() (*vault.Keyring, ConvertReport, error) {
 }
 
 // StartImport checks password against an .xdb file (name ends with .xdb)
-// and imports it in the background into a new go-ca database with the
+// and imports it in the background into a new OpenKCA database with the
 // Argon2id cost p, or returns the import of that file already running.
 // When the new database has been verified, the .xdb file and its backups
 // are deleted. A wrong password returns pki.ErrWrongPassword.

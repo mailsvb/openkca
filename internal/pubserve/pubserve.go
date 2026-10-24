@@ -1,6 +1,6 @@
 // Package pubserve is the plain HTTP server for what package publish
 // writes: each CA's newest CRL and its certificate, addressed by the CA's
-// authority ID, the same URLs go-ca puts into CRL distribution points and
+// authority ID, the same URLs OpenKCA puts into CRL distribution points and
 // authority information access:
 //
 //	GET /<authority ID>.crl   the CRL (DER, application/pkix-crl)

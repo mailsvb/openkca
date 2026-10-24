@@ -160,7 +160,7 @@ func TestServerLoginFlow(t *testing.T) {
 	if loc := r2.Header.Get("Location"); loc != "/db/sample.xdb/converting" {
 		t.Fatalf("before the import has been picked up: %q", loc)
 	}
-	// The import ends in a session on the new go-ca database.
+	// The import ends in a session on the new OpenKCA database.
 	if loc := finishConversion(t, ts, c, "sample.xdb"); loc != "/db/sample/keys?notice=converted&name=sample.xdb" {
 		t.Fatalf("after the import: %q", loc)
 	}

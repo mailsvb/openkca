@@ -94,13 +94,13 @@ func TestUpload(t *testing.T) {
 			t.Errorf("%s accepted: %v", f, err)
 		}
 	}
-	// a go-ca database keeps its kind, whatever the file is called
+	// an OpenKCA database keeps its kind, whatever the file is called
 	if err := s.Create(ctx, "native", testPassword, testKDF); err != nil {
 		t.Fatal(err)
 	}
 	own, _ := os.ReadFile(filepath.Join(s.Dir, "native.okca"))
 	if name, err := s.Upload(ctx, "copy.xdb", bytes.NewReader(own), 1<<20); err != nil || name != "copy" {
-		t.Fatalf("go-ca upload: %q %v", name, err)
+		t.Fatalf("OpenKCA upload: %q %v", name, err)
 	}
 	if got := SanitizeName("../../etc/passwd"); got != "passwd" {
 		t.Errorf("sanitize: %q", got)
@@ -287,7 +287,7 @@ func TestImport(t *testing.T) {
 		}
 	}
 
-	// Keys with their own password move to go-ca's form once it opens them.
+	// Keys with their own password move to OpenKCA's form once it opens them.
 	for id, pw := range map[int64]string{10: "mailpass", 18: "other"} {
 		k := findKey(snap, id)
 		if !k.Legacy {
@@ -335,7 +335,7 @@ func TestImportFixtures(t *testing.T) {
 	}
 }
 
-// A database from a newer go-ca is refused.
+// A database from a newer OpenKCA is refused.
 func TestNewerOKCA(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
@@ -353,9 +353,9 @@ func TestNewerOKCA(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st, _, v, _ := Classify(ctx, path, true); st != Newer || v.Schema != db.Schema+1 {
-		t.Fatalf("newer go-ca: %s %+v", st, v)
+		t.Fatalf("newer OpenKCA: %s %+v", st, v)
 	}
 	if _, err := s.Acquire(ctx, "next"); err == nil {
-		t.Fatal("opened a newer go-ca database")
+		t.Fatal("opened a newer OpenKCA database")
 	}
 }

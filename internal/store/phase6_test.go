@@ -129,7 +129,7 @@ func TestExportAllFormats(t *testing.T) {
 	if _, err := ssh.ParseRawPrivateKey(files["ed-22.priv"]); err != nil {
 		t.Fatalf("ssh ed25519 private: %v", err)
 	}
-	// go-ca's SSH formats read back to the stored keys
+	// OpenKCA's SSH formats read back to the stored keys
 	for name, id := range map[string]int64{"www.example.org": p.leafKey, "ed": p.edKey} {
 		for _, f := range []string{"-100.priv", "-101.priv", "-102.ppk", "-103.ppk", "-104.ppk", "-105.ppk", "-106.pub"} {
 			r := codec.Probe(name+f, files[name+f], codec.ProbeOptions{Password: []byte("export")})
@@ -386,7 +386,7 @@ func TestDump(t *testing.T) {
 	ctx := context.Background()
 	pw := testPassword
 	p := buildSet(t, s, "dump", pw)
-	// A key with its own password in go-ca's form cannot be dumped.
+	// A key with its own password in OpenKCA's form cannot be dumped.
 	if err := p.h.SetKeyPassword(ctx, p.pubK, krOf(t, p.h), nil, []byte("own")); err != nil {
 		t.Fatal(err)
 	}

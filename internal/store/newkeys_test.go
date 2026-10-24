@@ -182,7 +182,7 @@ func TestNewKeyTypesExport(t *testing.T) {
 				if len(res.Data) == 0 && f.ID != 16 && f.ID != 40 { // 40: no unusable certificates
 					t.Errorf("%s: format %d: empty", name, f.ID)
 				}
-				// what go-ca writes, it reads back
+				// what OpenKCA writes, it reads back
 				if f.Flags&(codec.FPKCS8|codec.FPKCS12) != 0 || f.ID == 20 || f.ID == 21 || f.ID == 25 {
 					r := codec.Probe("x."+f.Ext, res.Data, codec.ProbeOptions{Password: []byte("export")})
 					if len(r.Objects) == 0 || r.Objects[0].Type == db.TypeKey && !bytes.Equal(r.Objects[0].DER, findKey(snap, keyID).Public) {

@@ -1,5 +1,5 @@
 // Package xcaimport reads XCA databases (.xdb, schema 5 to 8) and writes
-// their content into a new go-ca database. It is the only package that knows
+// their content into a new OpenKCA database. It is the only package that knows
 // XCA's schema; the source file is only ever opened read-only.
 //
 // Item IDs are kept, so every link (issuer, key, CA template, revocation)
@@ -221,8 +221,8 @@ func b64(s sql.NullString) ([]byte, error) {
 // internal settings that do not carry over
 var dropSettings = map[string]bool{"schema": true, "pwhash": true, "legacy-keys-updated": true}
 
-// upgradeDefaults maps options still at XCA's default to go-ca's:
-// {XCA default, go-ca default}.
+// upgradeDefaults maps options still at XCA's default to OpenKCA's:
+// {XCA default, OpenKCA default}.
 var upgradeDefaults = map[string][2]string{
 	"default_hash": {"sha256", "auto"},
 	"serial_len":   {"64", "128"},
@@ -261,7 +261,7 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 		}
 	}
 	rows.Close()
-	// XCA's defaults give way to go-ca's; deliberate other values stay.
+	// XCA's defaults give way to OpenKCA's; deliberate other values stay.
 	for k, xcaDefault := range upgradeDefaults {
 		if settings[k] == xcaDefault[0] {
 			settings[k] = xcaDefault[1]

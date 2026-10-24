@@ -210,7 +210,7 @@ func TestPKCS12AllKeyTypes(t *testing.T) {
 	}
 }
 
-// TestPKCS12UnknownKey: a key go-ca cannot read is reported, not dropped
+// TestPKCS12UnknownKey: a key OpenKCA cannot read is reported, not dropped
 // silently, and its certificate is still imported.
 func TestPKCS12UnknownKey(t *testing.T) {
 	unknown, _ := asn1.Marshal(struct {
@@ -273,7 +273,7 @@ func TestPKCS12Iterations(t *testing.T) {
 }
 
 // TestProbeEncryptedKeys: legacy PKCS#8 encryptions import, and schemes
-// go-ca cannot decrypt are reported as such, not as a wrong password.
+// OpenKCA cannot decrypt are reported as such, not as a wrong password.
 func TestProbeEncryptedKeys(t *testing.T) {
 	if _, err := exec.LookPath("openssl"); err != nil {
 		t.Skip("openssl not installed")

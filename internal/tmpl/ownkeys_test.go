@@ -6,7 +6,7 @@ import (
 	"github.com/mailsvb/openkca/internal/pki"
 )
 
-// TestOwnKeys: the CDP/AIA flags round-trip through go-ca's settings but
+// TestOwnKeys: the CDP/AIA flags round-trip through OpenKCA's settings but
 // are left out of XCA's export form.
 func TestOwnKeys(t *testing.T) {
 	tp := New(nil, pki.ExtSpec{PubCDP: true}, Validity{N: 1, Unit: 2})

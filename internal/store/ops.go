@@ -311,7 +311,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 		// item has it, so keys that cannot sign (ML-KEM, X25519, X448)
 		// are certified as well.
 		if _, err := pki.ParsePublicKey(spki); err != nil {
-			return 0, fmt.Errorf("go-ca cannot issue certificates for this key type: %w", err)
+			return 0, fmt.Errorf("OpenKCA cannot issue certificates for this key type: %w", err)
 		}
 		cr := pki.CertRequest{Subject: subject, SPKI: spki, NotBefore: p.NotBefore, NotAfter: p.NotAfter,
 			Extensions: exts, Hash: p.Hash, SignerKey: subjectKey}

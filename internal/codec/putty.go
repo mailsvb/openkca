@@ -275,7 +275,7 @@ func parsePPK(data []byte, password func() ([]byte, bool)) (crypto.Signer, strin
 			return nil, "", errors.New("ppk: invalid Argon2 parameters")
 		}
 		if memory*passes > ppkMaxArgon2Work {
-			return nil, "", errors.New("ppk: the Argon2 parameters exceed go-ca's limit")
+			return nil, "", errors.New("ppk: the Argon2 parameters exceed OpenKCA's limit")
 		}
 		if kdf != "Argon2id" && kdf != "Argon2i" {
 			return nil, "", fmt.Errorf("ppk: key derivation %q is not supported", kdf)

@@ -36,20 +36,20 @@ type ExtSpec struct {
 	NSBaseURL, NSRevocationURL, NSCARevocationURL, NSRenewalURL, NSCAPolicyURL, NSSSLServerName string
 	AdvExt                                                                                      string // "adv_ext": further extensions in OpenSSL config syntax
 
-	// PubCDP and PubAIA ask for the issuer's CRL and certificate as go-ca
+	// PubCDP and PubAIA ask for the issuer's CRL and certificate as OpenKCA
 	// publishes them (config crl.base_urls); store resolves them into
 	// CRLMirrors and CAIssuers when the issuer is known.
 	PubCDP, PubAIA bool
 
 	// CRLMirrors are URLs of one CRL, put as mirrors into one distribution
-	// point ahead of CRLDist's (go-ca's published CRL of the issuer).
+	// point ahead of CRLDist's (OpenKCA's published CRL of the issuer).
 	CRLMirrors []string
 	// CAIssuers are caIssuers URLs put into authorityInfoAccess ahead of
-	// AuthInfAcc's (go-ca's published certificate of the issuer).
+	// AuthInfAcc's (OpenKCA's published certificate of the issuer).
 	CAIssuers []string
 }
 
-// PublishedURLs returns where go-ca publishes a CA's CRL and certificate
+// PublishedURLs returns where OpenKCA publishes a CA's CRL and certificate
 // (package pubserve) below each base URL, in the base URLs' order.
 func PublishedURLs(baseURLs []string, authorityID string) (crl, cert []string) {
 	for _, b := range baseURLs {

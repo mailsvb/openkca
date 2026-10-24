@@ -97,7 +97,7 @@ func TestIssueChain(t *testing.T) {
 	interSpec.AuthInfAcc = "OCSP;URI:http://ocsp.example.org, caIssuers;URI:http://example.org/root.crt"
 	inter := issue(t, mustName(t, "CN", "Inter"), interKey, interSpec, root, rootKey)
 	leafSpec := ExtSpec{CA: 2, BCCritical: true, SubKey: true, AuthKey: true, KeyUse: 1, EKU: []string{"serverAuth", "clientAuth"},
-		SubAltName: "DNS:copycn, DNS:alt.example.org, IP:192.0.2.1, email:copy", NSCertType: 1 << 1, NSComment: "go-ca", OCSPStaple: true}
+		SubAltName: "DNS:copycn, DNS:alt.example.org, IP:192.0.2.1, email:copy", NSCertType: 1 << 1, NSComment: "OpenKCA", OCSPStaple: true}
 	leaf := issue(t, mustName(t, "CN", "www.example.org", "emailAddress", "hostmaster@example.org"), leafKey, leafSpec, inter, interKey)
 
 	if len(root.AuthorityKeyId) != 0 {

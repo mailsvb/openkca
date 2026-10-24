@@ -18,7 +18,7 @@ import (
 )
 
 // TestPGPUseNewAlgorithms signs and encrypts with keys of the algorithms
-// GnuPG 2.4 does not know, through go-crypto: a secret key go-ca exports
+// GnuPG 2.4 does not know, through go-crypto: a secret key OpenKCA exports
 // signs a message the certificate verifies, and decrypts a message
 // encrypted to the certificate.
 func TestPGPUseNewAlgorithms(t *testing.T) {
@@ -45,7 +45,7 @@ func TestPGPUseNewAlgorithms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s v%d: go-crypto reads the secret key: %v", c.name, v, err)
 			}
-			msg := []byte("signed and sealed by go-ca")
+			msg := []byte("signed and sealed by OpenKCA")
 
 			var sig bytes.Buffer
 			if err := openpgp.DetachSign(&sig, secret, bytes.NewReader(msg), nil); err != nil {

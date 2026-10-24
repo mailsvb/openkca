@@ -104,7 +104,7 @@ func (h *Handle) retention(ctx context.Context) (keep, days int) {
 	return keep, days
 }
 
-// Backups lists the backup files of one go-ca database, newest first.
+// Backups lists the backup files of one OpenKCA database, newest first.
 func (s *Store) Backups(name string) ([]string, error) { return s.backupsWithExt(name, ExtOKCA) }
 
 func (s *Store) backupsWithExt(name, ext string) ([]string, error) {

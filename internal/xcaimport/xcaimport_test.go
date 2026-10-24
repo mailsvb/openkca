@@ -143,7 +143,7 @@ func TestImportRefusesOld(t *testing.T) {
 }
 
 // TestImportUpgradesDefaults checks that options left at XCA's defaults
-// get go-ca's, and that other values stay.
+// get OpenKCA's, and that other values stay.
 func TestImportUpgradesDefaults(t *testing.T) {
 	ctx := context.Background()
 	b, err := os.ReadFile(filepath.Join(fixtures, "sample.xdb"))

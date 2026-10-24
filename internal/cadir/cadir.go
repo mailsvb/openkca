@@ -1,4 +1,4 @@
-// Package cadir lays out the folders in which go-ca keeps a CA's files on
+// Package cadir lays out the folders in which OpenKCA keeps a CA's files on
 // disk (its OpenSSL index and any other per-CA data):
 //
 //	<data-dir>/ca/<database>/<authority ID>/

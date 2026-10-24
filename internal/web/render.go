@@ -32,7 +32,7 @@ type page struct {
 type dbHeader struct {
 	Name       string // the name in URLs
 	Label      string // the name shown: the configured name, else Name
-	Background bool   // go-ca keeps the database open on its own
+	Background bool   // OpenKCA keeps the database open on its own
 	Schema     int
 }
 

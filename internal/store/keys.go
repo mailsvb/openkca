@@ -44,7 +44,7 @@ func keyAlgorithm(spki []byte) (string, int) {
 
 // legacyDER decrypts a key in one of XCA's forms (encrypted PKCS#8 or the
 // legacy 3DES form) to an unencrypted PKCS#8 PrivateKeyInfo. Encrypted
-// PKCS#8 is decrypted without parsing the key, so keys of algorithms go-ca
+// PKCS#8 is decrypted without parsing the key, so keys of algorithms OpenKCA
 // cannot compute with survive.
 func legacyDER(blob []byte, keyType string, password []byte) ([]byte, error) {
 	if pki.IsEncryptedPKCS8(blob) {
@@ -59,7 +59,7 @@ func legacyDER(blob []byte, keyType string, password []byte) ([]byte, error) {
 
 // keyDER returns the unencrypted PKCS#8 PrivateKeyInfo of a stored key.
 // The caller clears it. A key with its own password still in an XCA form
-// is re-sealed in go-ca's form once its password has opened it.
+// is re-sealed in OpenKCA's form once its password has opened it.
 func (h *Handle) keyDER(ctx context.Context, keyID int64, keyType string, kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
 	sk, err := h.DB.StoredPrivateKey(ctx, keyID)
 	if err != nil {
@@ -67,7 +67,7 @@ func (h *Handle) keyDER(ctx context.Context, keyID int64, keyType string, kr *va
 	}
 	switch sk.Protection {
 	case db.ProtToken:
-		return nil, errors.New("the key is on a security token, which go-ca does not access")
+		return nil, errors.New("the key is on a security token, which OpenKCA does not access")
 	case db.ProtPassword:
 		pw := kp[keyID]
 		if len(pw) == 0 {
@@ -94,13 +94,13 @@ func (h *Handle) keyDER(ctx context.Context, keyID int64, keyType string, kr *va
 		return nil, vault.ErrLocked
 	}
 	if vault.Mode(sk.Blob) != vault.ModeDEK {
-		return nil, fmt.Errorf("key %d is not stored in go-ca's format", keyID)
+		return nil, fmt.Errorf("key %d is not stored in OpenKCA's format", keyID)
 	}
 	return kr.Open(sk.Blob, sk.Public)
 }
 
 // upgradeOwnPassword re-seals a key with its own password from an XCA form
-// into go-ca's form. Failure only costs the upgrade, so it is logged.
+// into OpenKCA's form. Failure only costs the upgrade, so it is logged.
 func (h *Handle) upgradeOwnPassword(ctx context.Context, keyID int64, spki, der, pw []byte, kr *vault.Keyring) {
 	p := vault.Default
 	if kr != nil {
@@ -114,7 +114,7 @@ func (h *Handle) upgradeOwnPassword(ctx context.Context, keyID int64, spki, der,
 		slog.Warn("upgrading a key with its own password failed", "db", h.Name, "id", keyID, "err", err)
 		return
 	}
-	slog.Info("key with its own password upgraded to go-ca's format", "db", h.Name, "id", keyID)
+	slog.Info("key with its own password upgraded to OpenKCA's format", "db", h.Name, "id", keyID)
 	h.auditIf(ctx, nil, "key.upgrade", keyID, "own password, from XCA's encryption")
 	h.changed(ctx)
 }

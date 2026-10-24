@@ -233,19 +233,19 @@ type Snapshot struct {
 	Trashed     int // items in the trash, not listed
 }
 
-// DB wraps an open go-ca database.
+// DB wraps an open OpenKCA database.
 type DB struct {
 	SQL *sql.DB
 }
 
-// Open wraps an already opened *sql.DB of a current go-ca database.
+// Open wraps an already opened *sql.DB of a current OpenKCA database.
 func Open(ctx context.Context, db *sql.DB) (*DB, error) {
 	s, own, err := ReadSchema(ctx, db)
 	if err != nil {
 		return nil, err
 	}
 	if !own || s != Schema {
-		return nil, fmt.Errorf("db: not a go-ca database of schema %d", Schema)
+		return nil, fmt.Errorf("db: not an OpenKCA database of schema %d", Schema)
 	}
 	return &DB{SQL: db}, nil
 }

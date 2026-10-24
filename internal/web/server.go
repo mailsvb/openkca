@@ -455,7 +455,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
 	if store.IsXCAName(name) {
-		// An XCA file is imported into a new go-ca
+		// An XCA file is imported into a new OpenKCA
 		// database in the background; the session waits for it on the
 		// progress page.
 		conv, err := s.store.StartImport(r.Context(), name, pw, vault.Default)
@@ -496,7 +496,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // convertingPage shows the progress of an import; htmx polls it. When
-// the import has finished, the browser gets a session on the new go-ca
+// the import has finished, the browser gets a session on the new OpenKCA
 // database and continues there; when it failed, the session ends.
 func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
