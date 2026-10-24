@@ -1,0 +1,30 @@
+{{template "head" .}}
+<h1>{{T "audit.heading"}}</h1>
+<p class="muted">{{T "audit.intro"}}</p>
+{{$db := .DB.Name}}
+{{if .Data.Entries}}
+{{template "auditrows" .Data.Entries}}
+{{if .Data.Next}}<p><a href="/db/{{$db}}/audit?before={{.Data.Next}}">{{T "audit.older"}}</a></p>{{end}}
+{{else}}
+<p class="muted">{{T "audit.none"}}</p>
+{{end}}
+{{template "foot" .}}
+
+{{define "auditrows"}}
+<div class="tablewrap">
+<table class="list audit">
+  <thead><tr><th>{{T "audit.col.at"}}</th><th>{{T "audit.col.action"}}</th><th>{{T "audit.col.item"}}</th><th>{{T "audit.col.detail"}}</th><th>{{T "audit.col.client"}}</th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td>{{time .At}}</td>
+    <td>{{T (print "audit.action." .Action)}}</td>
+    <td>{{if .ItemID}}{{.ItemName}} <span class="muted">#{{.ItemID}}</span>{{end}}</td>
+    <td class="small">{{.Detail}}</td>
+    <td class="mono small">{{.Client}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}

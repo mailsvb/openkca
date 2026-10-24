@@ -143,7 +143,9 @@ func (m *Manager) Get(id, serverID, dbName string) *Session {
 
 func (m *Manager) close(s *Session) {
 	s.wipe()
-	s.Handle.Release()
+	if s.Handle != nil {
+		s.Handle.Release()
+	}
 }
 
 // End closes one session.

@@ -12,12 +12,11 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/index"
 	"github.com/mailsvb/go-ca/internal/pkcs12"
 	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // Translator renders a message key for texts that end up in exported
@@ -52,26 +51,26 @@ var ErrNoPrivateKey = errors.New("there is no private key for this item")
 
 type itemRef struct {
 	typ     int
-	item    *xdb.Item
-	key     *xdb.Key
-	cert    *xdb.Cert
-	req     *xdb.Request
-	crl     *xdb.CRL
-	tmpl    *xdb.Template
+	item    *gcadb.Item
+	key     *gcadb.Key
+	cert    *gcadb.Cert
+	req     *gcadb.Request
+	crl     *gcadb.CRL
+	tmpl    *gcadb.Template
 	pub     crypto.PublicKey // keys and certificates
 	pubSPKI []byte
 }
 
-func refOf(snap *xdb.Snapshot, id int64) *itemRef {
+func refOf(snap *gcadb.Snapshot, id int64) *itemRef {
 	for _, k := range snap.Keys {
 		if k.ID == id {
 			pub, _ := codec.ParsePublic(k.Public)
-			return &itemRef{typ: xdb.TypeKey, item: &k.Item, key: k, pub: pub, pubSPKI: k.Public}
+			return &itemRef{typ: gcadb.TypeKey, item: &k.Item, key: k, pub: pub, pubSPKI: k.Public}
 		}
 	}
 	for _, c := range snap.Certs {
 		if c.ID == id {
-			r := &itemRef{typ: xdb.TypeCert, item: &c.Item, cert: c}
+			r := &itemRef{typ: gcadb.TypeCert, item: &c.Item, cert: c}
 			if x, err := pki.ParseCertificate(c.DER); err == nil {
 				r.pub, r.pubSPKI = x.PublicKey, x.RawSubjectPublicKeyInfo
 			}
@@ -80,23 +79,23 @@ func refOf(snap *xdb.Snapshot, id int64) *itemRef {
 	}
 	for _, q := range snap.Requests {
 		if q.ID == id {
-			return &itemRef{typ: xdb.TypeRequest, item: &q.Item, req: q}
+			return &itemRef{typ: gcadb.TypeRequest, item: &q.Item, req: q}
 		}
 	}
 	for _, l := range snap.CRLs {
 		if l.ID == id {
-			return &itemRef{typ: xdb.TypeCRL, item: &l.Item, crl: l}
+			return &itemRef{typ: gcadb.TypeCRL, item: &l.Item, crl: l}
 		}
 	}
 	for _, t := range snap.Templates {
 		if t.ID == id {
-			return &itemRef{typ: xdb.TypeTemplate, item: &t.Item, tmpl: t}
+			return &itemRef{typ: gcadb.TypeTemplate, item: &t.Item, tmpl: t}
 		}
 	}
 	return nil
 }
 
-func itemRefs(snap *xdb.Snapshot, ids []int64) ([]*itemRef, error) {
+func itemRefs(snap *gcadb.Snapshot, ids []int64) ([]*itemRef, error) {
 	if len(ids) == 0 {
 		return nil, errors.New("nothing selected")
 	}
@@ -115,7 +114,7 @@ func itemRefs(snap *xdb.Snapshot, ids []int64) ([]*itemRef, error) {
 }
 
 // keyOf returns the key item belonging to a certificate.
-func keyOf(snap *xdb.Snapshot, c *xdb.Cert) *xdb.Key {
+func keyOf(snap *gcadb.Snapshot, c *gcadb.Cert) *gcadb.Key {
 	if c.KeyID == 0 {
 		return nil
 	}
@@ -123,10 +122,10 @@ func keyOf(snap *xdb.Snapshot, c *xdb.Cert) *xdb.Key {
 }
 
 // disabledFlags mirrors the exportFlags functions of XCA's models.
-func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
+func disabledFlags(snap *gcadb.Snapshot, r *itemRef) codec.Flags {
 	var d codec.Flags
 	switch r.typ {
-	case xdb.TypeCert:
+	case gcadb.TypeCert:
 		c := r.cert
 		if c.IssuerID == 0 || c.IssuerID == c.ID {
 			d |= codec.FChain
@@ -142,7 +141,7 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 		if r.pub == nil || !codec.JWKSupported(r.pub) {
 			d |= codec.FJWK
 		}
-	case xdb.TypeKey:
+	case gcadb.TypeKey:
 		k := r.key
 		if r.pub == nil {
 			// a key Go cannot use: public PEM/DER and PKCS#8 only
@@ -174,7 +173,7 @@ func disabledFlags(snap *xdb.Snapshot, r *itemRef) codec.Flags {
 }
 
 // ExportFormats lists the formats available for a selection.
-func ExportFormats(snap *xdb.Snapshot, ids []int64) []codec.Format {
+func ExportFormats(snap *gcadb.Snapshot, ids []int64) []codec.Format {
 	var d codec.Flags
 	typ := 0
 	for _, id := range ids {
@@ -195,7 +194,7 @@ func ExportFormats(snap *xdb.Snapshot, ids []int64) []codec.Format {
 	}
 	var out []codec.Format
 	for _, f := range codec.Select(typ, d) {
-		if typ == xdb.TypeKey && refOf(snap, ids[0]).pub == nil && f.Flags&codec.FDER != 0 && f.Flags&codec.FPrivate != 0 {
+		if typ == gcadb.TypeKey && refOf(snap, ids[0]).pub == nil && f.Flags&codec.FDER != 0 && f.Flags&codec.FPrivate != 0 {
 			continue // DER private is the traditional form
 		}
 		out = append(out, f)
@@ -239,14 +238,14 @@ func contentType(f codec.Format) string {
 
 // privateDER decrypts a stored key to an unencrypted PKCS#8 structure,
 // also for algorithms Go cannot compute with.
-func (h *Handle) privateDER(ctx context.Context, k *xdb.Key, kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
+func (h *Handle) privateDER(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
 	if !k.HasPrivate {
 		return nil, ErrNoPrivateKey
 	}
 	return h.keyDER(ctx, k.ID, k.KeyType, kr, kp)
 }
 
-func (h *Handle) signer(ctx context.Context, k *xdb.Key, kr *vault.Keyring, kp KeyPasswords) (crypto.Signer, error) {
+func (h *Handle) signer(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, kp KeyPasswords) (crypto.Signer, error) {
 	if k == nil || !k.HasPrivate {
 		return nil, ErrNoPrivateKey
 	}
@@ -254,8 +253,8 @@ func (h *Handle) signer(ctx context.Context, k *xdb.Key, kr *vault.Keyring, kp K
 }
 
 // chain returns a certificate followed by its issuers up to the root.
-func chain(snap *xdb.Snapshot, c *xdb.Cert) []*xdb.Cert {
-	out := []*xdb.Cert{c}
+func chain(snap *gcadb.Snapshot, c *gcadb.Cert) []*gcadb.Cert {
+	out := []*gcadb.Cert{c}
 	seen := map[int64]bool{c.ID: true}
 	for c.IssuerID != 0 && !seen[c.IssuerID] {
 		p := findCert(snap, c.IssuerID)
@@ -269,7 +268,7 @@ func chain(snap *xdb.Snapshot, c *xdb.Cert) []*xdb.Cert {
 	return out
 }
 
-func revocationOf(snap *xdb.Snapshot, c *xdb.Cert) *xdb.Revocation {
+func revocationOf(snap *gcadb.Snapshot, c *gcadb.Cert) *gcadb.Revocation {
 	if c.IssuerID == 0 || c.IssuerID == c.ID {
 		return nil
 	}
@@ -282,12 +281,12 @@ func revocationOf(snap *xdb.Snapshot, c *xdb.Cert) *xdb.Revocation {
 }
 
 // unusable is pki_x509::unusable: expired or revoked.
-func unusable(snap *xdb.Snapshot, c *xdb.Cert, now time.Time) bool {
+func unusable(snap *gcadb.Snapshot, c *gcadb.Cert, now time.Time) bool {
 	info := pki.DescribeCert(c.DER)
 	return (!info.NoExpiry && info.NotAfter.Before(now)) || revocationOf(snap, c) != nil
 }
 
-func (e *exporter) certPEM(c *xdb.Cert) []byte {
+func (e *exporter) certPEM(c *gcadb.Cert) []byte {
 	var b []byte
 	if e.req.PEMComment {
 		subj, _ := pki.RawSubject(c.DER)
@@ -296,7 +295,7 @@ func (e *exporter) certPEM(c *xdb.Cert) []byte {
 	return append(b, codec.PEM(codec.PEMCert, c.DER)...)
 }
 
-func (e *exporter) keyComment(k *xdb.Key) []byte {
+func (e *exporter) keyComment(k *gcadb.Key) []byte {
 	if !e.req.PEMComment {
 		return nil
 	}
@@ -306,7 +305,7 @@ func (e *exporter) keyComment(k *xdb.Key) []byte {
 type exporter struct {
 	h    *Handle
 	ctx  context.Context
-	snap *xdb.Snapshot
+	snap *gcadb.Snapshot
 	req  ExportRequest
 	refs []*itemRef
 	f    codec.Format
@@ -349,19 +348,24 @@ func (h *Handle) Export(ctx context.Context, req ExportRequest) (*ExportResult, 
 	}
 	e := &exporter{h: h, ctx: ctx, snap: snap, req: req, refs: refs, f: f}
 	switch f.Type {
-	case xdb.TypeCert:
+	case gcadb.TypeCert:
 		err = e.certs()
-	case xdb.TypeKey:
+	case gcadb.TypeKey:
 		err = e.keys()
-	case xdb.TypeRequest:
+	case gcadb.TypeRequest:
 		err = e.requests()
-	case xdb.TypeCRL:
+	case gcadb.TypeCRL:
 		err = e.crls()
-	case xdb.TypeTemplate:
+	case gcadb.TypeTemplate:
 		err = e.templates()
 	}
 	if err != nil {
 		return nil, err
+	}
+	if f.Flags&codec.FPrivate != 0 {
+		for _, r := range refs {
+			h.auditIf(ctx, nil, "key.export", r.item.ID, "%s", f.Label)
+		}
 	}
 	name := FileName(refs[0].item.Name)
 	if f.Flags&codec.FUnusable != 0 {
@@ -370,9 +374,9 @@ func (h *Handle) Export(ctx context.Context, req ExportRequest) (*ExportResult, 
 	return &ExportResult{Filename: name + "." + f.Ext, ContentType: contentType(f), Data: e.out.Bytes(), Text: f.Text()}, nil
 }
 
-func (e *exporter) dbName() string { return e.h.Name + ".xdb" }
+func (e *exporter) dbName() string { return e.h.Name + ExtGCA }
 
-func (e *exporter) certVEvent(c *xdb.Cert) []string {
+func (e *exporter) certVEvent(c *gcadb.Cert) []string {
 	info := pki.DescribeCert(c.DER)
 	t := e.req.T
 	return codec.VEvent(c.DER, info.NotAfter, t("vcal.cert.summary", c.Name),
@@ -380,7 +384,7 @@ func (e *exporter) certVEvent(c *xdb.Cert) []string {
 		c.Comment, e.alarm(), e.req.Now)
 }
 
-func (e *exporter) crlVEvent(l *xdb.CRL) []string {
+func (e *exporter) crlVEvent(l *gcadb.CRL) []string {
 	info := pki.DescribeCRL(l.DER)
 	t := e.req.T
 	if ca := findCert(e.snap, l.IssuerID); ca != nil {
@@ -406,12 +410,12 @@ func (e *exporter) vcal(events []string) {
 func (e *exporter) certs() error {
 	f := e.f.Flags
 	first := e.refs[0].cert
-	var certs []*xdb.Cert
+	var certs []*gcadb.Cert
 	for _, r := range e.refs {
 		certs = append(certs, r.cert)
 	}
-	unusableCerts := func() []*xdb.Cert {
-		var out []*xdb.Cert
+	unusableCerts := func() []*gcadb.Cert {
+		var out []*gcadb.Cert
 		for _, c := range e.snap.Certs {
 			if unusable(e.snap, c, e.req.Now) {
 				out = append(out, c)
@@ -419,7 +423,7 @@ func (e *exporter) certs() error {
 		}
 		return out
 	}
-	ders := func(l []*xdb.Cert) [][]byte {
+	ders := func(l []*gcadb.Cert) [][]byte {
 		var out [][]byte
 		for _, c := range l {
 			out = append(out, c.DER)
@@ -542,7 +546,7 @@ func (e *exporter) certs() error {
 		// The issued certificates of the selected CAs, as in the index
 		// file go-ca maintains for each CA.
 		for _, ca := range certs {
-			var issued []*xdb.Cert
+			var issued []*gcadb.Cert
 			for _, c := range e.snap.Certs {
 				if c.IssuerID == ca.ID && c.ID != ca.ID {
 					issued = append(issued, c)
@@ -560,7 +564,7 @@ func (e *exporter) certs() error {
 			if f&codec.FCA == 0 {
 				continue
 			}
-			var latest *xdb.CRL
+			var latest *gcadb.CRL
 			for _, ch := range e.snap.Certs {
 				if ch.IssuerID == c.ID && ch.ID != c.ID && !unusable(e.snap, ch, e.req.Now) {
 					ev = append(ev, e.certVEvent(ch)...)
@@ -785,10 +789,7 @@ func (e *exporter) crls() error {
 
 func (e *exporter) templates() error {
 	for _, r := range e.refs {
-		t, err := tmpl.Decode(r.tmpl.Blob, r.tmpl.Version)
-		if err != nil {
-			return err
-		}
+		t := r.tmpl.Data
 		if e.req.PEMComment {
 			e.out.Write(codec.Comment(r.tmpl.Name, r.tmpl.Comment, codec.RFC2253(t.Subject)))
 		}

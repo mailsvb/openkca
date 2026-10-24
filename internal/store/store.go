@@ -23,16 +23,17 @@ import (
 	"github.com/gofrs/flock"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/index"
-	"github.com/mailsvb/go-ca/internal/xdb"
+	"github.com/mailsvb/go-ca/internal/xcaimport"
 )
 
 // Status is the classifier's verdict for one file.
 type Status string
 
 const (
-	Supported  Status = "supported"  // a go-ca database of the current schema
-	Upgradable Status = "upgradable" // XCA schema 5 to 8 or an older go-ca schema: converted after login
+	Supported  Status = "supported"  // a go-ca database (.gca) of the current schema
+	Upgradable Status = "upgradable" // an XCA or older go-ca database (.xdb): imported after login
 	Outdated   Status = "outdated"   // XCA schema below 5: refused
 	Newer      Status = "newer"      // a newer XCA or go-ca schema: refused
 	Legacy     Status = "legacy"     // pre-2.0 XCA binary format: refused
@@ -42,20 +43,25 @@ const (
 // Openable reports whether a database with this status can be logged into.
 func (s Status) Openable() bool { return s == Supported || s == Upgradable }
 
-var (
-	legacyMagic = []byte{0xca, 0xdb, 0x19, 0x69}
-	sqliteMagic = []byte("SQLite format 3\x00")
+// File extensions: go-ca databases, and XCA databases (or go-ca's former
+// XCA based ones) waiting to be imported.
+const (
+	ExtGCA = ".gca"
+	ExtXCA = ".xdb"
 )
+
+var sqliteMagic = []byte("SQLite format 3\x00")
 
 // Info describes one database file in the data folder.
 type Info struct {
-	Name    string // file name without .xdb
+	Name    string // a go-ca database's name (file name without .gca), or an XCA file's name with .xdb
 	Path    string
 	Size    int64
 	ModTime time.Time
 	Status  Status
-	Schema  int    // XCA schema, xdb.LockoutSchema for a go-ca database
-	GoCA    int    // go-ca schema, 0 for an XCA database
+	XCA     bool   // an .xdb file to import
+	Schema  int    // go-ca's schema, or XCA's (xcaimport.LockoutSchema for go-ca's former format)
+	GoCA    int    // go-ca's former schema of an .xdb file, 0 for XCA's own
 	Detail  string // why a file is invalid
 }
 
@@ -68,7 +74,7 @@ type Version struct{ Schema, GoCA int }
 func dsn(path string, readOnly bool) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "foreign_keys(0)")
+	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "secure_delete(1)")
 	if readOnly {
 		q.Set("mode", "ro")
@@ -76,77 +82,80 @@ func dsn(path string, readOnly bool) string {
 	return "file:" + (&url.URL{Path: path}).EscapedPath() + "?" + q.Encode()
 }
 
-// Classify inspects one file. deep selects PRAGMA integrity_check (uploads)
-// instead of quick_check (scans).
-func Classify(ctx context.Context, path string, deep bool) (Status, Version, string) {
-	var ver Version
-	st, detail := classify(ctx, path, deep, &ver)
-	return st, ver, detail
-}
-
-func classify(ctx context.Context, path string, deep bool, ver *Version) (Status, string) {
+// Classify inspects one file by its content: a go-ca database, or a file
+// xcaimport reads. deep selects PRAGMA integrity_check (uploads) instead
+// of quick_check (scans).
+func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool, v Version, detail string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return Invalid, err.Error()
+		return Invalid, false, v, err.Error()
 	}
 	head := make([]byte, 16)
 	n, _ := io.ReadFull(f, head)
 	f.Close()
-	head = head[:n]
-	if bytes.HasPrefix(head, legacyMagic) {
-		return Legacy, ""
+	if bytes.Equal(head[:n], sqliteMagic) {
+		if st, v, detail, ok := classifyGCA(ctx, path, deep); ok {
+			return st, false, v, detail
+		}
 	}
-	if !bytes.Equal(head, sqliteMagic) {
-		return Invalid, "not an SQLite database"
+	info, err := xcaimport.Inspect(ctx, path, deep)
+	if err != nil {
+		return Invalid, true, v, err.Error()
 	}
+	v = Version{info.Schema, info.GoCA}
+	switch info.Kind {
+	case xcaimport.KindXCA, xcaimport.KindGoCA:
+		return Upgradable, true, v, ""
+	case xcaimport.KindOld:
+		return Outdated, true, v, ""
+	case xcaimport.KindNewer:
+		return Newer, true, v, ""
+	case xcaimport.KindLegacy:
+		return Legacy, true, v, ""
+	}
+	return Invalid, true, v, "unknown format"
+}
+
+// classifyGCA classifies a go-ca database; ok is false when the file is
+// not one.
+func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Version, detail string, ok bool) {
 	db, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
-		return Invalid, err.Error()
+		return Invalid, v, err.Error(), false
 	}
 	defer db.Close()
+	schema, gca, err := gcadb.ReadSchema(ctx, db)
+	if !gca {
+		return Invalid, v, "", false
+	}
+	v.Schema = schema
+	if err != nil {
+		return Invalid, v, err.Error(), true
+	}
 	check := "PRAGMA quick_check"
 	if deep {
 		check = "PRAGMA integrity_check"
 	}
 	var res string
 	if err := db.QueryRowContext(ctx, check).Scan(&res); err != nil {
-		return Invalid, err.Error()
+		return Invalid, v, err.Error(), true
 	}
 	if res != "ok" {
-		return Invalid, "integrity check: " + res
+		return Invalid, v, "integrity check: " + res, true
 	}
-	var rows int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key_='schema'").Scan(&rows); err != nil || rows == 0 {
-		return Invalid, "no schema setting"
+	if schema > gcadb.Schema {
+		return Newer, v, "", true
 	}
-	v, g, err := xdb.ReadVersion(ctx, db)
-	if err != nil {
-		return Invalid, "invalid schema setting"
+	if schema < gcadb.Schema {
+		return Invalid, v, "unknown go-ca schema", true
 	}
-	*ver = Version{v, g}
-	switch {
-	case v == xdb.LockoutSchema && g > xdb.CurrentSchema, v != xdb.LockoutSchema && v > xdb.XCASchema:
-		return Newer, ""
-	case v < 5:
-		return Outdated, ""
-	}
-	if v != xdb.LockoutSchema || g < xdb.CurrentSchema {
-		// XCA's password hash checks the password before the conversion.
-		if !hasSetting(ctx, db, "pwhash") {
-			return Invalid, "no password hash"
+	for _, k := range []string{"kdf", "dek"} {
+		var val string
+		if err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
+			return Invalid, v, "no key encryption settings", true
 		}
-		return Upgradable, ""
 	}
-	if !hasSetting(ctx, db, "kdf") || !hasSetting(ctx, db, "dek") {
-		return Invalid, "no key encryption settings"
-	}
-	return Supported, ""
-}
-
-func hasSetting(ctx context.Context, db *sql.DB, key string) bool {
-	var v sql.NullString
-	err := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key_=?", key).Scan(&v)
-	return err == nil && strings.TrimSpace(v.String) != ""
+	return Supported, v, "", true
 }
 
 // Store is the data folder and the registry of open databases.
@@ -155,6 +164,9 @@ type Store struct {
 
 	mu   sync.Mutex
 	open map[string]*Handle
+
+	importMu sync.Mutex
+	imports  map[string]*Conversion // by source path
 }
 
 // New returns a Store for dir, creating dir if needed.
@@ -166,18 +178,38 @@ func New(dir string) (*Store, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{Dir: abs, open: map[string]*Handle{}}, nil
+	return &Store{Dir: abs, open: map[string]*Handle{}, imports: map[string]*Conversion{}}, nil
 }
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-// ValidName reports whether name (without .xdb) is an acceptable database name.
+// ValidName reports whether name is an acceptable go-ca database name
+// (without .gca).
 func ValidName(name string) bool {
-	return nameRE.MatchString(name) && !strings.HasPrefix(name, ".")
+	lower := strings.ToLower(name)
+	return nameRE.MatchString(name) && !strings.HasPrefix(name, ".") &&
+		!strings.HasSuffix(lower, ExtGCA) && !strings.HasSuffix(lower, ExtXCA)
 }
 
-// Scan lists the *.xdb files directly in the data folder. Symlinks,
-// subfolders and hidden files are ignored.
+// IsXCAName reports whether name addresses an .xdb file ("ca.xdb").
+func IsXCAName(name string) bool {
+	base, ok := strings.CutSuffix(name, ExtXCA)
+	return ok && ValidName(base)
+}
+
+// path returns the file of a database name, "" for an invalid name.
+func (s *Store) path(name string) string {
+	switch {
+	case IsXCAName(name):
+		return filepath.Join(s.Dir, name)
+	case ValidName(name):
+		return filepath.Join(s.Dir, name+ExtGCA)
+	}
+	return ""
+}
+
+// Scan lists the .gca and .xdb files directly in the data folder.
+// Symlinks, subfolders and hidden files are ignored.
 func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
@@ -185,18 +217,20 @@ func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 	}
 	var out []Info
 	for _, e := range entries {
-		name, ok := strings.CutSuffix(e.Name(), ".xdb")
-		if !ok || !e.Type().IsRegular() || !ValidName(name) {
+		var name string
+		if base, ok := strings.CutSuffix(e.Name(), ExtGCA); ok && ValidName(base) {
+			name = base
+		} else if IsXCAName(e.Name()) {
+			name = e.Name()
+		} else {
 			continue
 		}
-		fi, err := e.Info()
-		if err != nil {
+		if !e.Type().IsRegular() {
 			continue
 		}
-		path := filepath.Join(s.Dir, e.Name())
-		st, v, detail := Classify(ctx, path, false)
-		out = append(out, Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(),
-			Status: st, Schema: v.Schema, GoCA: v.GoCA, Detail: detail})
+		if info, err := s.Lookup(ctx, name); err == nil {
+			out = append(out, info)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil
@@ -204,10 +238,10 @@ func (s *Store) Scan(ctx context.Context) ([]Info, error) {
 
 // Lookup classifies a single database by name.
 func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
-	if !ValidName(name) {
+	path := s.path(name)
+	if path == "" {
 		return Info{}, os.ErrNotExist
 	}
-	path := filepath.Join(s.Dir, name+".xdb")
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return Info{}, err
@@ -215,9 +249,13 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 	if !fi.Mode().IsRegular() {
 		return Info{}, os.ErrNotExist
 	}
-	st, v, detail := Classify(ctx, path, false)
-	return Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, Schema: v.Schema, GoCA: v.GoCA,
-		Detail: detail}, nil
+	st, xca, v, detail := Classify(ctx, path, false)
+	if xca != IsXCAName(name) && st.Openable() {
+		// a go-ca database named .xdb or the reverse: not opened by name
+		st, detail = Invalid, "file extension does not match the content"
+	}
+	return Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, XCA: xca,
+		Schema: v.Schema, GoCA: v.GoCA, Detail: detail}, nil
 }
 
 // ErrLocked means another go-ca process serves the database.
@@ -226,16 +264,14 @@ var ErrLocked = errors.New("database is in use by another go-ca process")
 // Handle is a shared, reference counted open database.
 type Handle struct {
 	Name string
-	DB   *xdb.DB
+	DB   *gcadb.DB
 
 	store *Store
 	lock  *flock.Flock
 	refs  int
 
-	mu     sync.Mutex
-	snap   *xdb.Snapshot
-	convMu sync.Mutex // guards conv
-	conv   *Conversion
+	mu   sync.Mutex
+	snap *gcadb.Snapshot
 }
 
 // Acquire opens the named database or returns the already open handle. Each
@@ -245,7 +281,7 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Status.Openable() {
+	if info.Status != Supported || info.XCA {
 		return nil, fmt.Errorf("database %s is %s", name, info.Status)
 	}
 	s.mu.Lock()
@@ -268,7 +304,7 @@ func (s *Store) Acquire(ctx context.Context, name string) (*Handle, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(1) // serialises writes
-	d, err := xdb.Open(ctx, sqlDB)
+	d, err := gcadb.Open(ctx, sqlDB)
 	if err != nil {
 		sqlDB.Close()
 		lk.Unlock()
@@ -296,17 +332,11 @@ func (h *Handle) Release() {
 	h.DB.SQL.Close()
 	h.lock.Unlock()
 	s.mu.Unlock()
-	// A finished conversion's keyring must not outlive the database.
-	h.convMu.Lock()
-	if h.conv != nil {
-		h.conv.expire()
-	}
-	h.convMu.Unlock()
 }
 
 // Snapshot returns the cached objects, reloading them when MAX(stamp)
 // changed.
-func (h *Handle) Snapshot(ctx context.Context) (*xdb.Snapshot, error) {
+func (h *Handle) Snapshot(ctx context.Context) (*gcadb.Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	stamp, err := h.DB.MaxStamp(ctx)

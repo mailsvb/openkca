@@ -17,9 +17,9 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-ca/internal/auth"
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/i18n"
 	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 const serverPassword = "serverpass1"
@@ -133,25 +133,18 @@ func TestServerLoginFlow(t *testing.T) {
 	csrf := login(t, ts, c)
 
 	// Database login without the CSRF token is refused.
-	r, _ = c.PostForm(ts.URL+"/db/sample/login", url.Values{"password": {"secret"}})
+	r, _ = c.PostForm(ts.URL+"/db/sample.xdb/login", url.Values{"password": {"secret"}})
 	if r.StatusCode != http.StatusForbidden {
 		t.Fatalf("db login without CSRF: %d", r.StatusCode)
 	}
-	r, _ = c.PostForm(ts.URL+"/db/sample/login", url.Values{"password": {"bad"}, "csrf": {csrf}})
+	r, _ = c.PostForm(ts.URL+"/db/sample.xdb/login", url.Values{"password": {"bad"}, "csrf": {csrf}})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "dblogin.error.password") {
 		t.Fatalf("wrong db password: %s", loc)
 	}
 	// An XCA database is converted first; the session waits for it.
-	r, _ = c.PostForm(ts.URL+"/db/sample/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
-	if loc := r.Header.Get("Location"); loc != "/db/sample/converting" {
+	r, _ = c.PostForm(ts.URL+"/db/sample.xdb/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); loc != "/db/sample.xdb/converting" {
 		t.Fatalf("db login redirect %q", loc)
-	}
-	r2, _ := c.Get(ts.URL + "/db/sample/certs")
-	if loc := r2.Header.Get("Location"); loc != "/db/sample/converting" && loc != "/db/sample/keys" {
-		t.Fatalf("before the conversion has been picked up: %q", loc)
-	}
-	if loc := finishConversion(t, ts, c, "sample"); loc != "/db/sample/keys" {
-		t.Fatalf("after the conversion: %q", loc)
 	}
 	var sess *http.Cookie
 	for _, ck := range r.Cookies() {
@@ -159,17 +152,29 @@ func TestServerLoginFlow(t *testing.T) {
 			sess = ck
 		}
 	}
-	if sess == nil || sess.Path != "/db/sample/" || !sess.Secure || !sess.HttpOnly || sess.SameSite != http.SameSiteStrictMode {
+	if sess == nil || sess.Path != "/db/sample.xdb/" || !sess.Secure || !sess.HttpOnly || sess.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("database cookie %+v", sess)
+	}
+	r2, _ := c.Get(ts.URL + "/db/sample.xdb/certs")
+	if loc := r2.Header.Get("Location"); loc != "/db/sample.xdb/converting" {
+		t.Fatalf("before the import has been picked up: %q", loc)
+	}
+	// The import ends in a session on the new go-ca database.
+	if loc := finishConversion(t, ts, c, "sample.xdb"); loc != "/db/sample/keys?notice=converted&name=sample.xdb" {
+		t.Fatalf("after the import: %q", loc)
+	}
+	r2, _ = c.Get(ts.URL + "/db/sample/keys?notice=converted&name=sample.xdb")
+	if b := body(t, r2); r2.StatusCode != http.StatusOK || !strings.Contains(b, "sample.xdb was imported") {
+		t.Fatalf("keys after the import: %d", r2.StatusCode)
 	}
 
 	// A second database in parallel.
-	r, _ = c.PostForm(ts.URL+"/db/variants/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
-	if loc := r.Header.Get("Location"); loc != "/db/variants/converting" {
+	r, _ = c.PostForm(ts.URL+"/db/variants.xdb/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); loc != "/db/variants.xdb/converting" {
 		t.Fatalf("second db login redirect %q", loc)
 	}
 	// variants has a key with its own password still in XCA's form
-	if loc := finishConversion(t, ts, c, "variants"); !strings.Contains(loc, "notice=converted.ownpass&n=1") {
+	if loc := finishConversion(t, ts, c, "variants.xdb"); loc != "/db/variants/keys?notice=converted.ownpass&n=1" {
 		t.Fatalf("variants conversion: %q", loc)
 	}
 	for _, db := range []string{"sample", "variants"} {
@@ -222,7 +227,7 @@ func TestLegacyRefused(t *testing.T) {
 	ts, _ := newTestServer(t)
 	c := client(t, ts)
 	csrf := login(t, ts, c)
-	r, _ := c.PostForm(ts.URL+"/db/legacy/login", url.Values{"password": {"x"}, "csrf": {csrf}})
+	r, _ := c.PostForm(ts.URL+"/db/legacy.xdb/login", url.Values{"password": {"x"}, "csrf": {csrf}})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "dblogin.error.unsupported") {
 		t.Fatalf("legacy login: %s", loc)
 	}
@@ -284,18 +289,18 @@ func TestCreateImportUpgrade(t *testing.T) {
 		t.Fatalf("legacy import: %s", r.Header.Get("HX-Redirect"))
 	}
 
-	// Login to the schema 7 import upgrades it after a backup.
-	r, _ = c.PostForm(ts.URL+"/db/uploaded/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
-	if loc := r.Header.Get("Location"); loc != "/db/uploaded/converting" {
+	// Login to the uploaded XCA file imports it and deletes the .xdb.
+	r, _ = c.PostForm(ts.URL+"/db/uploaded.xdb/login", url.Values{"password": {"secret"}, "csrf": {csrf}})
+	if loc := r.Header.Get("Location"); loc != "/db/uploaded.xdb/converting" {
 		t.Fatalf("login to imported db: %s", loc)
 	}
-	finishConversion(t, ts, c, "uploaded")
+	finishConversion(t, ts, c, "uploaded.xdb")
 	info, _ := srv.store.Lookup(context.Background(), "uploaded")
-	if info.Status != store.Supported || info.GoCA != xdb.CurrentSchema {
+	if info.Status != store.Supported || info.Schema != gcadb.Schema || info.XCA {
 		t.Fatalf("after login: %+v", info)
 	}
-	if b, _ := srv.store.Backups("uploaded"); len(b) != 1 {
-		t.Fatalf("backups: %v", b)
+	if _, err := srv.store.Lookup(context.Background(), "uploaded.xdb"); err == nil {
+		t.Fatal("the .xdb file is still there")
 	}
 }
 
@@ -375,11 +380,16 @@ func TestEditorFlow(t *testing.T) {
 	// Mandatory subject entry from the options.
 	opts := url.Values{"default_hash": {"sha384"}, "mandatory_dn": {"O"}, "explicit_dn": {"C,O,CN"}, "string_opt": {"MASK:0x2002"},
 		"serial_len": {"128"}, "cert_expiry.n": {"30"}, "cert_expiry.u": {"D"}, "ical_expiry.n": {"1"}, "ical_expiry.u": {"W"},
-		"pkcs12_enc_algo": {"AES-256-CBC"}, "pkcs12_iterations": {"1000"}}
+		"pkcs12_enc_algo": {"AES-256-CBC"}, "pkcs12_iterations": {"1000"}, "backup_keep": {"5"}, "backup_days": {"30"}}
 	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "error=options.error.value&key=pkcs12_iterations") {
 		t.Fatalf("pkcs12_iterations below the minimum: %s", loc)
 	}
 	opts.Set("pkcs12_iterations", "300000")
+	opts.Set("backup_keep", "0")
+	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "key=backup_keep") {
+		t.Fatalf("backup_keep 0: %s", loc)
+	}
+	opts.Set("backup_keep", "5")
 	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "notice=saved") {
 		t.Fatalf("options: %s", loc)
 	}
@@ -417,8 +427,9 @@ func TestEditorFlow(t *testing.T) {
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
 		t.Fatalf("to-request after password change: %s", loc)
 	}
-	if b, _ := srv.store.Backups("ed"); len(b) != 2 {
-		t.Fatalf("a backup before each of the two changes: %v", b)
+	// after a password change only the backup of the new state remains
+	if b, _ := srv.store.Backups("ed"); len(b) != 1 {
+		t.Fatalf("backups after the changes: %v", b)
 	}
 }
 
@@ -435,8 +446,8 @@ func TestCAPages(t *testing.T) {
 		}
 		return r
 	}
-	post("/db/sample/login", url.Values{"password": {"secret"}})
-	finishConversion(t, ts, c, "sample")
+	post("/db/sample.xdb/login", url.Values{"password": {"secret"}})
+	finishConversion(t, ts, c, "sample.xdb")
 	// www.example.org is item 7, issued by Example Issuing CA (item 5)
 	if loc := post("/db/sample/item/7/revoke", url.Values{"reason": {"1"}, "invaldate": {"2026-10-01T00:00"}}).Header.Get("Location"); !strings.Contains(loc, "notice=revoked") {
 		t.Fatalf("revoke: %s", loc)
@@ -492,8 +503,8 @@ func TestTemplatePages(t *testing.T) {
 		}
 		return r
 	}
-	post("/db/sample/login", url.Values{"password": {"secret"}})
-	finishConversion(t, ts, c, "sample")
+	post("/db/sample.xdb/login", url.Values{"password": {"secret"}})
+	finishConversion(t, ts, c, "sample.xdb")
 	r := post("/db/sample/new/template", url.Values{"name": {"web tmpl"}, "dn.O": {"Web Org"}, "ca": {"2"}, "subkey": {"1"},
 		"ku.0": {"1"}, "eku.clientAuth": {"1"}, "san": {"email:copy"}, "validn": {"2"}, "validunit": {"y"},
 		"advext": {"certificatePolicies = 1.2.3.4"}})

@@ -2,30 +2,41 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gofrs/flock"
+
+	"github.com/mailsvb/go-ca/internal/gcadb"
+	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
-	"github.com/mailsvb/go-ca/internal/xdbpass"
+	"github.com/mailsvb/go-ca/internal/xcaimport"
 )
 
-// ConvertReport says what a conversion changed.
+// ConvertReport says what an import changed.
 type ConvertReport struct {
-	Backup        string // path of the backup taken before the conversion
-	UpgradedFrom  int    // schema setting before: XCA's schema, or xdb.LockoutSchema
-	Converted     int    // keys now sealed with the DEK
-	OwnPassLegacy int    // keys with their own password still in an XCA form
-	Unopened      int    // keys marked for the database password that it does not open
+	Target        string // name of the new go-ca database
+	Items         int
+	Trashed       int // items XCA had marked deleted, now in the trash
+	Skipped       []string
+	Converted     int      // keys now sealed with the DEK
+	Kept          int      // sealed keys copied unchanged
+	OwnPassLegacy int      // keys with their own password still in an XCA form
+	Unopened      int      // keys for the database password that it does not open
+	Removed       []string // the source and its backups in the old format
 }
 
-// Conversion is a running or finished conversion of an XCA or older go-ca
-// database to the current format. Several logins may wait for the same
-// conversion.
+// Conversion is a running or finished import of an XCA or older go-ca
+// database (.xdb) into a new go-ca database. Several logins may wait for
+// the same conversion.
 type Conversion struct {
 	total atomic.Int64
 	done  atomic.Int64
@@ -64,8 +75,9 @@ func (c *Conversion) Progress() (done, total int) {
 // Finished is closed when the conversion has ended.
 func (c *Conversion) Finished() <-chan struct{} { return c.fin }
 
-// Result returns, once Finished is closed, a copy of the database's
-// keyring for one session, the report and the error.
+// Result returns, once Finished is closed, a copy of the new database's
+// keyring for one session, the report (with the new database's name) and
+// the error.
 func (c *Conversion) Result() (*vault.Keyring, ConvertReport, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -78,70 +90,105 @@ func (c *Conversion) Result() (*vault.Keyring, ConvertReport, error) {
 	return c.kr.Clone(), c.report, nil
 }
 
-// VerifyLegacyPassword checks password against XCA's password hash of a
-// database that still has to be converted.
-func (h *Handle) VerifyLegacyPassword(ctx context.Context, password []byte) (bool, error) {
-	if h.DB.Current() {
-		return false, errors.New("the database is already converted")
-	}
-	stored, err := h.DB.Setting(ctx, "pwhash")
+// StartImport checks password against an .xdb file (name ends with .xdb)
+// and imports it in the background into a new go-ca database with the
+// Argon2id cost p, or returns the import of that file already running.
+// When the new database has been verified, the .xdb file and its backups
+// are deleted. A wrong password returns pki.ErrWrongPassword.
+func (s *Store) StartImport(ctx context.Context, name string, password []byte, p vault.Params) (*Conversion, error) {
+	info, err := s.Lookup(ctx, name)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	ok, _ := xdbpass.Verify(stored, password)
-	return ok, nil
-}
-
-// StartConversion converts the database in the background with password
-// (already checked with VerifyLegacyPassword) and the Argon2id cost p, or
-// returns the conversion that is already running or has succeeded. The
-// conversion holds its own reference to the handle until it ends.
-func (h *Handle) StartConversion(password []byte, p vault.Params) *Conversion {
-	h.convMu.Lock()
-	defer h.convMu.Unlock()
-	if h.conv != nil {
+	if !info.XCA || info.Status != Upgradable {
+		return nil, fmt.Errorf("%s cannot be imported (%s)", name, info.Status)
+	}
+	src, err := xcaimport.Open(ctx, info.Path)
+	if err != nil {
+		return nil, err
+	}
+	ok, kr, err := src.Unlock(ctx, password)
+	if err != nil || !ok {
+		src.Close()
+		if err == nil {
+			err = pki.ErrWrongPassword
+		}
+		return nil, err
+	}
+	discard := func() {
+		src.Close()
+		if kr != nil {
+			kr.Wipe()
+		}
+	}
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	if c, ok := s.imports[info.Path]; ok {
 		select {
-		case <-h.conv.fin:
-			h.conv.mu.Lock()
-			ok := h.conv.err == nil
-			h.conv.mu.Unlock()
-			if ok {
-				return h.conv
+		case <-c.fin:
+			c.mu.Lock()
+			failed := c.err != nil
+			c.mu.Unlock()
+			if !failed {
+				discard()
+				return c, nil
 			}
 		default:
-			return h.conv
+			discard()
+			return c, nil
 		}
 	}
+	lk := flock.New(info.Path + ".lock")
+	if locked, err := lk.TryLock(); err != nil || !locked {
+		discard()
+		if err == nil {
+			err = ErrLocked
+		}
+		return nil, err
+	}
 	c := &Conversion{fin: make(chan struct{})}
-	h.conv = c
-	h.store.mu.Lock()
-	h.refs++
-	h.store.mu.Unlock()
+	s.imports[info.Path] = c
 	pw := append([]byte(nil), password...)
 	go func() {
-		defer h.Release()
 		defer clear(pw)
-		kr, rep, err := h.convert(context.Background(), pw, p, c)
+		nk, rep, err := s.runImport(context.Background(), info, src, pw, kr, p, c)
+		src.Close()
+		lk.Unlock()
+		if err == nil {
+			os.Remove(info.Path + ".lock")
+		}
 		c.mu.Lock()
-		c.kr, c.report, c.err = kr, rep, err
+		c.kr, c.report, c.err = nk, rep, err
 		c.mu.Unlock()
 		close(c.fin)
-		// Waiting logins pick up their copy within seconds; the DEK must
-		// not stay in memory beyond that.
-		time.AfterFunc(conversionKeep, c.expire)
+		time.AfterFunc(conversionKeep, func() {
+			c.expire()
+			s.importMu.Lock()
+			if s.imports[info.Path] == c {
+				delete(s.imports, info.Path)
+			}
+			s.importMu.Unlock()
+		})
 		if err != nil {
-			slog.Error("database conversion failed", "db", h.Name, "err", err, "backup", rep.Backup)
+			slog.Error("database import failed", "file", info.Name, "err", err)
 			return
 		}
-		slog.Info("database converted", "db", h.Name, "backup", rep.Backup, "upgraded_from", rep.UpgradedFrom,
-			"converted_keys", rep.Converted, "own_password_legacy", rep.OwnPassLegacy, "unopened", rep.Unopened)
+		slog.Info("database imported", "file", info.Name, "db", rep.Target, "items", rep.Items, "trashed", rep.Trashed,
+			"converted_keys", rep.Converted, "kept_keys", rep.Kept, "own_password_legacy", rep.OwnPassLegacy,
+			"unopened", rep.Unopened, "skipped", len(rep.Skipped), "removed", strings.Join(rep.Removed, ", "))
+		for _, sk := range rep.Skipped {
+			slog.Warn("item not imported", "file", info.Name, "item", sk)
+		}
 	}()
-	return c
+	return c, nil
 }
 
-// Convert runs a conversion and waits for it (tests and tools).
-func (h *Handle) Convert(ctx context.Context, password []byte, p vault.Params) (*vault.Keyring, ConvertReport, error) {
-	c := h.StartConversion(password, p)
+// Import runs an import and waits for it (tests and tools).
+func (s *Store) Import(ctx context.Context, name string, password []byte, p vault.Params) (*vault.Keyring, ConvertReport, error) {
+	c, err := s.StartImport(ctx, name, password, p)
+	if err != nil {
+		return nil, ConvertReport{}, err
+	}
 	select {
 	case <-c.fin:
 		return c.Result()
@@ -150,94 +197,131 @@ func (h *Handle) Convert(ctx context.Context, password []byte, p vault.Params) (
 	}
 }
 
-// convert turns an XCA database (schema 5 to 8) or an older go-ca database
-// into the current format: every key under the database password (or XCA's
-// "Bogus" password) is decrypted and sealed with a new DEK, which is
-// wrapped with a key derived from password. Keys with their own password
-// stay as they are until their password opens them. A key marked for the
-// database password that the password does not open keeps its blob and is
-// marked as having its own password, so whoever knows its password can
-// still use it. Everything is written in one transaction after a backup.
-func (h *Handle) convert(ctx context.Context, password []byte, p vault.Params, c *Conversion) (*vault.Keyring, ConvertReport, error) {
+func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source, password []byte, kr *vault.Keyring,
+	p vault.Params, c *Conversion) (*vault.Keyring, ConvertReport, error) {
 	var rep ConvertReport
-	if h.DB.Current() {
-		return nil, rep, errors.New("the database is already converted")
-	}
-	rows, err := h.DB.PrivateKeyRows(ctx, true)
+	f, err := s.tempFile("import")
 	if err != nil {
 		return nil, rep, err
 	}
-	for _, r := range rows {
-		if r.OwnPass == xdb.PassCommon || r.OwnPass == xdb.PassBogus {
-			c.total.Add(1)
-		}
-	}
-	kr := vault.NewKeyring(p)
-	fail := func(err error) (*vault.Keyring, ConvertReport, error) {
-		kr.Wipe()
+	tmp := f.Name()
+	f.Close()
+	defer os.Remove(tmp)
+	if err := os.Chmod(tmp, 0o600); err != nil {
 		return nil, rep, err
 	}
-	type update struct {
-		id   int64
-		blob []byte
-		own  int
-	}
-	var updates []update
-	for _, r := range rows {
-		switch r.OwnPass {
-		case xdb.PassPIN:
-			continue
-		case xdb.PassPrivate:
-			if !vault.IsSealed(r.Blob) {
-				rep.OwnPassLegacy++
-			}
-			continue
-		}
-		pw := password
-		if r.OwnPass == xdb.PassBogus {
-			pw = []byte("Bogus")
-		}
-		der, err := legacyDER(r.Blob, r.KeyType, pw)
-		c.done.Add(1)
-		if err != nil {
-			slog.Warn("key does not open with the database password; it now needs its own password",
-				"db", h.Name, "id", r.ID, "deleted", r.Deleted, "err", err)
-			updates = append(updates, update{r.ID, r.Blob, xdb.PassPrivate})
-			rep.Unopened++
-			continue
-		}
-		blob, err := kr.Seal(der, r.Public)
-		clear(der)
-		if err != nil {
-			return fail(err)
-		}
-		updates = append(updates, update{r.ID, blob, xdb.PassCommon})
-		rep.Converted++
-	}
-	kdf, dek, err := kr.Wrap(password, p)
+	db, err := sql.Open("sqlite", dsn(tmp, false))
 	if err != nil {
-		return fail(err)
+		return nil, rep, err
 	}
-	if rep.Backup, err = h.Backup(ctx); err != nil {
-		return fail(err)
-	}
-	rep.UpgradedFrom, err = h.DB.Convert(ctx, func(tx *xdb.Tx) error {
-		for _, u := range updates {
-			if err := tx.UpdatePrivateKey(ctx, u.id, u.blob, u.own); err != nil {
-				return err
-			}
-		}
-		for k, v := range map[string]string{"kdf": kdf, "dek": dek, "legacy-keys-updated": "yes"} {
-			if err := tx.SetSetting(ctx, k, v); err != nil {
-				return err
-			}
-		}
-		return nil
+	db.SetMaxOpenConns(1)
+	nk, ir, err := src.Import(ctx, db, password, kr, p, nil, func(done, total int) {
+		c.total.Store(int64(total))
+		c.done.Store(int64(done))
 	})
-	if err != nil {
-		return fail(fmt.Errorf("conversion: %w (backup: %s)", err, rep.Backup))
+	if err == nil {
+		_, err = db.ExecContext(ctx, "VACUUM")
 	}
-	h.vacuum(ctx)
-	h.changed(ctx)
-	return kr, rep, nil
+	if cerr := db.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		if nk != nil {
+			nk.Wipe()
+		}
+		return nil, rep, err
+	}
+	rep = ConvertReport{Items: ir.Items, Trashed: ir.Trashed, Skipped: ir.Skipped, Converted: ir.Converted, Kept: ir.Kept,
+		OwnPassLegacy: ir.OwnPassLegacy, Unopened: ir.Unopened}
+	fail := func(err error) (*vault.Keyring, ConvertReport, error) {
+		nk.Wipe()
+		return nil, rep, err
+	}
+	if err := verifyImport(ctx, tmp, password, nk, ir.Items); err != nil {
+		return fail(fmt.Errorf("verifying the imported database: %w", err))
+	}
+	base := strings.TrimSuffix(info.Name, ExtXCA)
+	if rep.Target, err = s.placeUnique(tmp, base, ExtGCA, info.Path); err != nil {
+		return fail(err)
+	}
+	// A first backup of the new database, before the original goes.
+	if err := s.backupFile(ctx, filepath.Join(s.Dir, rep.Target+ExtGCA), rep.Target); err != nil {
+		slog.Error("backup of the imported database failed", "db", rep.Target, "err", err)
+	}
+	// The new database is in place and verified: nothing in the old format
+	// stays behind, neither the file nor its backups.
+	if err := os.Remove(info.Path); err != nil {
+		slog.Error("removing the imported file failed", "file", info.Path, "err", err)
+	} else {
+		rep.Removed = append(rep.Removed, info.Name)
+	}
+	old, _ := s.backupsWithExt(base, ExtXCA)
+	for _, b := range old {
+		if os.Remove(b) == nil {
+			rep.Removed = append(rep.Removed, filepath.Base(b))
+		}
+	}
+	return nk, rep, nil
+}
+
+// verifyImport reopens a freshly written database: the schema is current,
+// every item is there, every link resolves, the password opens the DEK
+// and the DEK opens every key sealed with it.
+func verifyImport(ctx context.Context, path string, password []byte, kr *vault.Keyring, items int) error {
+	st, _, _, detail := Classify(ctx, path, true)
+	if st != Supported {
+		return fmt.Errorf("status %s %s", st, detail)
+	}
+	db, err := sql.Open("sqlite", dsn(path, true))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	d, err := gcadb.Open(ctx, db)
+	if err != nil {
+		return err
+	}
+	counts, err := d.Counts(ctx)
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, c := range counts {
+		n += c
+	}
+	if n != items {
+		return fmt.Errorf("%d items written, %d found", items, n)
+	}
+	var fk int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fk); err != nil || fk != 0 {
+		return fmt.Errorf("%d broken links (%v)", fk, err)
+	}
+	kdf, err := d.Setting(ctx, "kdf")
+	if err != nil {
+		return err
+	}
+	dek, err := d.Setting(ctx, "dek")
+	if err != nil {
+		return err
+	}
+	check, err := vault.Unwrap(kdf, dek, password)
+	if err != nil {
+		return fmt.Errorf("the password does not open the new database: %w", err)
+	}
+	check.Wipe()
+	rows, err := d.PrivateKeyRows(ctx)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if r.Protection != gcadb.ProtDEK {
+			continue
+		}
+		der, err := kr.Open(r.Blob, r.Public)
+		if err != nil {
+			return fmt.Errorf("key %d: %w", r.ID, err)
+		}
+		clear(der)
+	}
+	return nil
 }

@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/store"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // reasonChoice is a revocation reason for select boxes.
@@ -95,7 +95,7 @@ func (s *Server) caProperties(w http.ResponseWriter, r *http.Request) {
 }
 
 // caFor loads a CA certificate for the CA pages.
-func (s *Server) caFor(w http.ResponseWriter, r *http.Request) (*xdb.Snapshot, *xdb.Cert, bool) {
+func (s *Server) caFor(w http.ResponseWriter, r *http.Request) (*gcadb.Snapshot, *gcadb.Cert, bool) {
 	id, ok := itemID(r)
 	if !ok {
 		http.NotFound(w, r)
@@ -116,7 +116,7 @@ func (s *Server) caFor(w http.ResponseWriter, r *http.Request) (*xdb.Snapshot, *
 }
 
 type revRow struct {
-	xdb.Revocation
+	gcadb.Revocation
 	Cert       link
 	Reason     string
 	InvalLocal string
@@ -194,7 +194,7 @@ func (s *Server) crlPage(w http.ResponseWriter, r *http.Request) {
 	s.renderCRL(w, r, http.StatusOK, snap, ca, o, "")
 }
 
-func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, snap *xdb.Snapshot, ca *xdb.Cert, o store.CRLOptions, errKey string) {
+func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, snap *gcadb.Snapshot, ca *gcadb.Cert, o store.CRLOptions, errKey string) {
 	hasSAN := false
 	for _, e := range pki.DescribeCert(ca.DER).Extensions {
 		hasSAN = hasSAN || e.OID == "2.5.29.17"
@@ -202,7 +202,7 @@ func (s *Server) renderCRL(w http.ResponseWriter, r *http.Request, status int, s
 	var keyOwn bool
 	for _, k := range snap.Keys {
 		if k.ID == ca.KeyID {
-			keyOwn = k.OwnPass == xdb.PassPrivate
+			keyOwn = k.Protection == gcadb.ProtPassword
 		}
 	}
 	n := 0
@@ -261,7 +261,7 @@ func (s *Server) renewPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	var c *xdb.Cert
+	var c *gcadb.Cert
 	for _, x := range snap.Certs {
 		if x.ID == id {
 			c = x

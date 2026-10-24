@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-ca/internal/codec"
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/tmpl"
 	"github.com/mailsvb/go-ca/internal/vault"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // Dump writes every item of the database as a ZIP archive laid out like
@@ -105,15 +104,13 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, kr *vault.Keyring, expor
 		}
 	}
 	for _, t := range snap.Templates {
-		dt, err := tmpl.Decode(t.Blob, t.Version)
-		if err != nil {
-			continue
-		}
-		if err := file("templates", t.Name, ".xca", codec.XCATemplate(t.Name, t.Comment, dt)); err != nil {
+		if err := file("templates", t.Name, ".xca", codec.XCATemplate(t.Name, t.Comment, t.Data)); err != nil {
 			return err
 		}
 	}
-	return z.Close()
+	err = z.Close()
+	h.auditIf(ctx, err, "database.dump", 0, "%d keys, %d certificates", len(snap.Keys), len(snap.Certs))
+	return err
 }
 
 // dumpKey writes a private key under the export password as encrypted
@@ -122,17 +119,17 @@ func (h *Handle) Dump(ctx context.Context, w io.Writer, kr *vault.Keyring, expor
 // it is when that is a standard encrypted PKCS#8 file; otherwise (go-ca's
 // own format, or XCA's legacy form, which no other program reads) only its
 // public key is written and ownPass reports it.
-func (h *Handle) dumpKey(ctx context.Context, k *xdb.Key, kr *vault.Keyring, exportPass []byte) (data []byte, ownPass bool, err error) {
+func (h *Handle) dumpKey(ctx context.Context, k *gcadb.Key, kr *vault.Keyring, exportPass []byte) (data []byte, ownPass bool, err error) {
 	if !k.HasPrivate || k.Token {
 		return codec.PEM(codec.PEMPublicKey, k.Public), false, nil
 	}
-	blob, own, err := h.DB.PrivateKey(ctx, k.ID)
+	sk, err := h.DB.StoredPrivateKey(ctx, k.ID)
 	if err != nil {
 		return nil, false, err
 	}
-	if own == xdb.PassPrivate {
-		if pki.IsEncryptedPKCS8(blob) {
-			return codec.PEM(codec.PEMEncrypted, blob), false, nil
+	if sk.Protection == gcadb.ProtPassword {
+		if pki.IsEncryptedPKCS8(sk.Blob) {
+			return codec.PEM(codec.PEMEncrypted, sk.Blob), false, nil
 		}
 		return codec.PEM(codec.PEMPublicKey, k.Public), true, nil
 	}

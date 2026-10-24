@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"fmt"
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"html/template"
 	"net/http"
 	"path"
@@ -162,6 +163,5 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 }
 
 func header(ds *session.Session) *dbHeader {
-	schema, _ := ds.Handle.DB.Version()
-	return &dbHeader{Name: ds.DBName, Schema: schema}
+	return &dbHeader{Name: ds.DBName, Schema: gcadb.Schema}
 }

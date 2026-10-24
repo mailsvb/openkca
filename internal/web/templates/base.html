@@ -18,6 +18,8 @@
     {{$cur := .Tab}}{{$db := .DB.Name}}
     {{range tabs}}<a href="/db/{{$db}}/{{.}}"{{if eq . $cur}} class="active" aria-current="page"{{end}}>{{T (print "tab." .)}}</a>{{end}}
     <a href="/db/{{$db}}/options"{{if eq $cur "options"}} class="active" aria-current="page"{{end}}>{{T "tab.options"}}</a>
+    <a href="/db/{{$db}}/trash"{{if eq $cur "trash"}} class="active" aria-current="page"{{end}}>{{T "tab.trash"}}</a>
+    <a href="/db/{{$db}}/audit"{{if eq $cur "audit"}} class="active" aria-current="page"{{end}}>{{T "tab.audit"}}</a>
   </nav>
   <form method="post" action="/db/{{.DB.Name}}/logout" class="inline">
     <input type="hidden" name="csrf" value="{{.CSRF}}">

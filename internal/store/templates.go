@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
 	"github.com/mailsvb/go-ca/internal/tmpl"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // TemplateData is a template as the editor handles it.
@@ -30,10 +30,7 @@ func (h *Handle) LoadTemplate(ctx context.Context, id int64) (*TemplateData, err
 	}
 	for _, t := range snap.Templates {
 		if t.ID == id {
-			tp, err := tmpl.Decode(t.Blob, t.Version)
-			if err != nil {
-				return nil, err
-			}
+			tp := t.Data
 			return &TemplateData{ID: id, Name: t.Name, Comment: t.Comment, Subject: pki.NameAttrs(tp.Subject),
 				Ext: tp.Spec(), Validity: tp.Validity(), Source: t.Source}, nil
 		}
@@ -60,13 +57,13 @@ func (h *Handle) SaveTemplate(ctx context.Context, d TemplateData) (int64, error
 	if _, err := pki.BuildExtensions(d.Ext, pki.ExtContext{SubjectSPKI: placeholderSPKI(), IssuerSPKI: placeholderSPKI()}); err != nil {
 		return 0, err
 	}
-	blob := tmpl.Encode(tmpl.New(subject, d.Ext, d.Validity))
+	blob := tmpl.New(subject, d.Ext, d.Validity)
 	id := d.ID
 	source := d.Source
 	if source == 0 {
 		source = 2
 	}
-	err = h.DB.Write(ctx, func(tx *xdb.Tx) error {
+	err = h.DB.Write(ctx, func(tx *gcadb.Tx) error {
 		if id == 0 {
 			id, err = tx.InsertTemplate(ctx, d.Name, d.Comment, source, blob)
 			return err
@@ -74,6 +71,7 @@ func (h *Handle) SaveTemplate(ctx context.Context, d TemplateData) (int64, error
 		return tx.UpdateTemplate(ctx, id, d.Name, d.Comment, blob)
 	})
 	h.changed(ctx)
+	h.auditIf(ctx, err, "template.save", id, "")
 	return id, err
 }
 

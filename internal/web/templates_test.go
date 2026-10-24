@@ -63,7 +63,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid|trash|audit|converted|converting)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -141,7 +141,16 @@ func TestMessageKeys(t *testing.T) {
 	for _, n := range []string{"created", "subkey", "removed"} {
 		keys = append(keys, "pgpkey.notice."+n)
 	}
-	keys = append(keys, "keypw.error.mismatch", "keypw.error.current", "list.deleted.notice",
+	for _, a := range []string{"database.create", "database.import", "database.unlock", "database.unlock_failed",
+		"database.password", "database.options", "database.dump", "backup.purge", "key.generate", "key.extract",
+		"key.password_set", "key.password_reset", "key.export", "key.upgrade", "request.create", "request.signed",
+		"cert.issue", "cert.renew", "cert.revoke", "cert.unrevoke", "ca.revocation", "ca.revocation_delete",
+		"ca.properties", "crl.generate", "item.rename", "item.trash", "item.restore", "item.purge", "items.import",
+		"pgp.generate", "pgp.create", "pgp.subkey", "pgp.remove", "template.save"} {
+		keys = append(keys, "audit.action."+a)
+	}
+	keys = append(keys, "trash.notice.restored", "trash.notice.purged", "trash.error", "converted.done",
+		"keypw.error.mismatch", "keypw.error.current", "list.deleted.notice",
 		"converted.ownpass", "dump.error.password", "converting.title")
 	for _, k := range keys {
 		if !cat.Has(k) {

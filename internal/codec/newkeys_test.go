@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pkcs12"
 	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // TestProbeNewKeyTypes reads certificates, requests and keys of the new
@@ -39,14 +39,14 @@ func TestProbeNewKeyTypes(t *testing.T) {
 				t.Fatalf("%s %s: %d objects, skipped %v", spec.Type, what, len(r.Objects), r.Unrecognized)
 			}
 			o := r.Objects[0]
-			if typ == xdb.TypeKey && (!bytes.Equal(o.DER, spki) || o.KeyType != wantType || o.KeyBits != wantBits) {
+			if typ == gcadb.TypeKey && (!bytes.Equal(o.DER, spki) || o.KeyType != wantType || o.KeyBits != wantBits) {
 				t.Errorf("%s %s: key %q %d", spec.Type, what, o.KeyType, o.KeyBits)
 			}
 		}
-		check("SPKI PEM", PEM(PEMPublicKey, spki), xdb.TypeKey)
-		check("SPKI DER", spki, xdb.TypeKey)
-		check("PKCS#8 PEM", PEM(PEMPrivateKey, pk8), xdb.TypeKey)
-		check("PKCS#8 DER", pk8, xdb.TypeKey)
+		check("SPKI PEM", PEM(PEMPublicKey, spki), gcadb.TypeKey)
+		check("SPKI DER", spki, gcadb.TypeKey)
+		check("PKCS#8 PEM", PEM(PEMPrivateKey, pk8), gcadb.TypeKey)
+		check("PKCS#8 DER", pk8, gcadb.TypeKey)
 
 		if !pki.CanSign(key) {
 			continue
@@ -57,14 +57,14 @@ func TestProbeNewKeyTypes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		check("certificate PEM", PEM(PEMCert, der), xdb.TypeCert)
-		check("certificate DER", der, xdb.TypeCert)
+		check("certificate PEM", PEM(PEMCert, der), gcadb.TypeCert)
+		check("certificate DER", der, gcadb.TypeCert)
 		csr, err := pki.CreateRequest(subject, nil, key, "sha256")
 		if err != nil {
 			t.Fatal(err)
 		}
-		check("request PEM", PEM(PEMRequest, csr), xdb.TypeRequest)
-		check("request DER", csr, xdb.TypeRequest)
+		check("request PEM", PEM(PEMRequest, csr), gcadb.TypeRequest)
+		check("request DER", csr, gcadb.TypeRequest)
 	}
 }
 

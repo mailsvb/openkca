@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-ca/internal/gcadb"
 	"github.com/mailsvb/go-ca/internal/pki"
-	"github.com/mailsvb/go-ca/internal/xdb"
 )
 
 // openssl ca knows these reasons in the revocation field (apps/ca.c).
@@ -51,7 +51,7 @@ func oneline(der []byte) string {
 }
 
 // Entry renders one index line for a certificate.
-func Entry(c *xdb.Cert, rev *xdb.Revocation, now time.Time) string {
+func Entry(c *gcadb.Cert, rev *gcadb.Revocation, now time.Time) string {
 	info := pki.DescribeCert(c.DER)
 	status, revField := "V", ""
 	switch {
@@ -68,7 +68,7 @@ func Entry(c *xdb.Cert, rev *xdb.Revocation, now time.Time) string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s\tunknown\t%s\n", status, indexTime(info.NotAfter), revField, c.Serial, subject)
 }
 
-func subjectOf(c *xdb.Cert) []byte {
+func subjectOf(c *gcadb.Cert) []byte {
 	if raw, err := pki.RawSubject(c.DER); err == nil {
 		return raw
 	}
@@ -98,16 +98,16 @@ func folderName(name string) string {
 // Write rewrites the index files of every CA in the snapshot under
 // dir/<db>. Folders of CAs that no longer exist are removed if they hold
 // nothing but index files.
-func Write(dir, db string, snap *xdb.Snapshot) error {
+func Write(dir, db string, snap *gcadb.Snapshot) error {
 	base := filepath.Join(dir, "index", db)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return err
 	}
-	revs := map[string]*xdb.Revocation{}
+	revs := map[string]*gcadb.Revocation{}
 	for _, r := range snap.Revocations {
 		revs[fmt.Sprint(r.CAID, "/", r.Serial)] = r
 	}
-	var cas []*xdb.Cert
+	var cas []*gcadb.Cert
 	for _, c := range snap.Certs {
 		if c.CA {
 			cas = append(cas, c)
