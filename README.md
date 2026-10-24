@@ -18,7 +18,7 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 - Shows keys, certificate signing requests, certificates (as a tree under
   their issuers), templates and revocation lists, with search, a column
   chooser and expiry colours, plus XCA's shared options.
-- An XCA database (or one from an older go-ca) is imported at its first
+- An XCA database is imported at its first
   login into a new go-ca database of the same name, with a progress page
   while the keys are re-encrypted. Item IDs, names, comments, dates and all
   links carry over; items XCA had marked deleted go to the trash. Once the
@@ -218,13 +218,18 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 
 | Database                                  | go-ca                                          |
 | ----------------------------------------- | ---------------------------------------------- |
-| go-ca `.gca` (schema 5)                   | supported                                      |
-| go-ca `.gca` (schema 4)                   | upgraded in place when opened, after a backup  |
-| go-ca `.gca` (schema 3, no item UUIDs)    | refused, not migrated                          |
+| go-ca `.gca` (schema 1)                   | supported                                      |
+| older go-ca `.gca` schema (none yet)      | upgraded in place when opened, after a backup  |
 | XCA schema 5 to 8 (XCA 2.x and later)     | imported into a new `.gca` on first login      |
-| go-ca 0.10 and earlier (`.xdb`, schema 1/2) | imported; schema 2 keeps its data key and keys |
 | XCA schema below 5, pre-2.0 format        | refused                                        |
+| go-ca's former XCA based `.xdb` format    | refused                                        |
 | newer XCA or go-ca schema                 | refused until supported                        |
+
+The go-ca schema was reset to 1 during development: `.gca` files from
+earlier development versions are not supported; import them again from
+XCA. From schema 1 on, every schema change comes with a migration step
+(`internal/gcadb`, `steps`) that upgrades older databases when they are
+opened.
 
 A go-ca database is an SQLite file with its own schema (`internal/gcadb`)
 and SQLite's application ID `gca1`: every item with a UUID (version 7)
@@ -445,7 +450,7 @@ will warn about the name until you pass a certificate for the real host name.
 ```
 
 A backup is written right after an import, before a database of an
-older schema is upgraded on opening (schema 4 to 5), and before every
+older schema is upgraded on opening, and before every
 change that rewrites a whole database (database password or Argon2id
 cost change),
 using SQLite's `VACUUM INTO`, which copies within one read transaction.
@@ -502,7 +507,7 @@ revocation certificates, and read keys gpg generated in each export form.
 `testdata/xdb/` holds databases generated with the real XCA command line and
 crafted variants (old password hashes, a legacy 3DES key, a key with its own
 password, schema 8 and 9, a pre-2.0 file); the tests import them into
-go-ca databases, also as go-ca 0.10's schema 2. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
+go-ca databases. Regenerate them with `testdata/gen/gen-fixtures.sh` (needs
 `xca`, `openssl`, `sqlite3`, `perl`).
 `testdata/gen/check-export-with-xca.sh` exports a hierarchy in every format
 and lets the XCA command line import each file, except go-ca's own SSH

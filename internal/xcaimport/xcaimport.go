@@ -1,13 +1,11 @@
-// Package xcaimport reads XCA databases (.xdb, schema 5 to 8) and go-ca's
-// former XCA based databases (go-ca schema 1 and 2) and writes their
-// content into a new go-ca database. It is the only package that knows
+// Package xcaimport reads XCA databases (.xdb, schema 5 to 8) and writes
+// their content into a new go-ca database. It is the only package that knows
 // XCA's schema; the source file is only ever opened read-only.
 //
 // Item IDs are kept, so every link (issuer, key, CA template, revocation)
 // carries over. Items XCA marked deleted go to the trash. Keys under the
 // database password (or XCA's "Bogus" password) are decrypted and sealed
-// with a new DEK; a go-ca schema 2 database keeps its DEK and its sealed
-// keys unchanged. Keys with their own password keep their blob until that
+// with a new DEK. Keys with their own password keep their blob until that
 // password opens them.
 package xcaimport
 
@@ -39,10 +37,9 @@ import (
 const (
 	MinSchema = 5
 	MaxSchema = 8
-	// LockoutSchema is the "schema" setting of go-ca's XCA based format;
-	// gca_schema then holds go-ca's version (1 or 2).
-	LockoutSchema = 1000
-	MaxGoCA       = 2
+	// formerGoCA is the "schema" setting of go-ca's former XCA based
+	// format, which is not imported.
+	formerGoCA = 1000
 )
 
 // XCA's item types and password types.
@@ -81,21 +78,19 @@ type Kind string
 
 const (
 	KindXCA    Kind = "xca"    // an XCA database this package reads
-	KindGoCA   Kind = "goca"   // a go-ca schema 1 or 2 database
 	KindOld    Kind = "old"    // XCA schema below 5
-	KindNewer  Kind = "newer"  // a newer XCA or go-ca schema
+	KindNewer  Kind = "newer"  // a newer XCA schema
 	KindLegacy Kind = "legacy" // pre-2.0 XCA binary format
 )
 
 // Info describes a source file.
 type Info struct {
 	Kind   Kind
-	Schema int // XCA's schema, or LockoutSchema
-	GoCA   int // go-ca's schema for KindGoCA
+	Schema int // XCA's schema
 }
 
 // Importable reports whether Import reads the file.
-func (i Info) Importable() bool { return i.Kind == KindXCA || i.Kind == KindGoCA }
+func (i Info) Importable() bool { return i.Kind == KindXCA }
 
 func dsn(path string) string {
 	q := url.Values{}
@@ -146,15 +141,8 @@ func Inspect(ctx context.Context, path string, deep bool) (Info, error) {
 		return info, errors.New("invalid schema setting")
 	}
 	switch {
-	case info.Schema == LockoutSchema:
-		g, _ := setting(ctx, db, "gca_schema")
-		if info.GoCA, err = strconv.Atoi(strings.TrimSpace(g)); err != nil || info.GoCA < 1 {
-			return info, errors.New("invalid gca_schema setting")
-		}
-		info.Kind = KindGoCA
-		if info.GoCA > MaxGoCA {
-			info.Kind = KindNewer
-		}
+	case info.Schema == formerGoCA:
+		return info, errors.New("a database of go-ca's former format, which is not imported")
 	case info.Schema > MaxSchema:
 		info.Kind = KindNewer
 	case info.Schema < MinSchema:
@@ -163,9 +151,7 @@ func Inspect(ctx context.Context, path string, deep bool) (Info, error) {
 		info.Kind = KindXCA
 	}
 	if info.Importable() {
-		pw, _ := setting(ctx, db, "pwhash")
-		kdf, _ := setting(ctx, db, "kdf")
-		if pw == "" && kdf == "" {
+		if pw, _ := setting(ctx, db, "pwhash"); pw == "" {
 			return info, errors.New("no password hash")
 		}
 	}
@@ -207,31 +193,14 @@ func Open(ctx context.Context, path string) (*Source, error) {
 // Close closes the source.
 func (s *Source) Close() error { return s.db.Close() }
 
-// Unlock checks the database password. For a go-ca schema 2 database it
-// returns its keyring; otherwise the keyring is nil and Import creates
-// one. A wrong password returns ok false.
-func (s *Source) Unlock(ctx context.Context, password []byte) (ok bool, kr *vault.Keyring, err error) {
-	if s.Kind == KindGoCA && s.GoCA >= 2 {
-		kdf, err := setting(ctx, s.db, "kdf")
-		if err != nil {
-			return false, nil, err
-		}
-		dek, err := setting(ctx, s.db, "dek")
-		if err != nil {
-			return false, nil, err
-		}
-		kr, err := vault.Unwrap(kdf, dek, password)
-		if errors.Is(err, vault.ErrWrongPassword) {
-			return false, nil, nil
-		}
-		return err == nil, kr, err
-	}
+// Unlock checks the database password; a wrong password returns false.
+func (s *Source) Unlock(ctx context.Context, password []byte) (bool, error) {
 	stored, err := setting(ctx, s.db, "pwhash")
 	if err != nil {
-		return false, nil, err
+		return false, err
 	}
-	ok, _ = xdbpass.Verify(stored, password)
-	return ok, nil, nil
+	ok, _ := xdbpass.Verify(stored, password)
+	return ok, nil
 }
 
 // Report says what Import did.
@@ -240,7 +209,6 @@ type Report struct {
 	Trashed       int // items XCA had marked deleted, now in the trash
 	Skipped       []string
 	Converted     int // keys sealed with the DEK
-	Kept          int // sealed keys copied unchanged (go-ca schema 2)
 	OwnPassLegacy int // keys with their own password still in an XCA form
 	Unopened      int // keys for the database password that it did not open
 }
@@ -256,8 +224,7 @@ func b64(s sql.NullString) ([]byte, error) {
 }
 
 // internal settings that do not carry over
-var dropSettings = map[string]bool{"schema": true, "pwhash": true, "gca_schema": true, "legacy-keys-updated": true,
-	"kdf": true, "dek": true}
+var dropSettings = map[string]bool{"schema": true, "pwhash": true, "legacy-keys-updated": true}
 
 // upgradeDefaults maps options still at XCA's default to go-ca's:
 // {XCA default, go-ca default}.
@@ -267,24 +234,19 @@ var upgradeDefaults = map[string][2]string{
 }
 
 // Import writes the source's content into dst, an empty database, with
-// password (already checked with Unlock), the keyring Unlock returned (nil
-// for a new one, with cost p) and settings added to the copied options.
-// It returns the keyring of the new database.
-func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, kr *vault.Keyring, p vault.Params,
+// password (already checked with Unlock) protecting a new keyring of cost
+// p, and settings added to the copied options. It returns the keyring of
+// the new database.
+func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vault.Params,
 	extra map[string]string, progress Progress) (*vault.Keyring, Report, error) {
 	var rep Report
 	items, err := s.read(ctx)
 	if err != nil {
 		return nil, rep, err
 	}
-	fresh := kr == nil
-	if fresh {
-		kr = vault.NewKeyring(p)
-	}
+	kr := vault.NewKeyring(p)
 	fail := func(err error) (*vault.Keyring, Report, error) {
-		if fresh {
-			kr.Wipe()
-		}
+		kr.Wipe()
 		return nil, rep, err
 	}
 	settings := map[string]string{}
@@ -313,19 +275,11 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, kr *v
 	for k, v := range extra {
 		settings[k] = v
 	}
-	if fresh {
-		kdf, dek, err := kr.Wrap(password, p)
-		if err != nil {
-			return fail(err)
-		}
-		settings["kdf"], settings["dek"] = kdf, dek
-	} else {
-		for _, k := range []string{"kdf", "dek"} {
-			if settings[k], err = setting(ctx, s.db, k); err != nil {
-				return fail(err)
-			}
-		}
+	kdf, dek, err := kr.Wrap(password, p)
+	if err != nil {
+		return fail(err)
 	}
+	settings["kdf"], settings["dek"] = kdf, dek
 
 	// Keys first: decrypting is the slow part.
 	total := 0
@@ -347,14 +301,6 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, kr *v
 				rep.OwnPassLegacy++
 			}
 		default:
-			if !fresh {
-				if vault.Mode(it.blob) != vault.ModeDEK {
-					return fail(fmt.Errorf("key %d is not sealed with the database's DEK", it.raw.ID))
-				}
-				k.Protection, k.Private = gcadb.ProtDEK, it.blob
-				rep.Kept++
-				break
-			}
 			pw := password
 			if it.own == passBogus {
 				pw = []byte("Bogus")
@@ -402,17 +348,8 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, kr *v
 				return err
 			}
 		}
-		for _, c := range items.pgp {
-			if err := tx.PutPGPCert(ctx, c); err != nil {
-				return err
-			}
-		}
-		detail := fmt.Sprintf("from %s schema %d", s.Kind, s.Schema)
-		if s.Kind == KindGoCA {
-			detail = fmt.Sprintf("from go-ca schema %d", s.GoCA)
-		}
-		return tx.Audit(ctx, "database.import", 0, fmt.Sprintf("%s: %d items, %d keys converted, %d kept",
-			detail, rep.Items, rep.Converted, rep.Kept))
+		return tx.Audit(ctx, "database.import", 0, fmt.Sprintf("from XCA schema %d: %d items, %d keys converted",
+			s.Schema, rep.Items, rep.Converted))
 	})
 	if err != nil {
 		return fail(err)
@@ -445,7 +382,6 @@ type contents struct {
 	keys        []keyItem
 	all         []gcadb.RawItem // everything but keys
 	revocations []gcadb.Revocation
-	pgp         []gcadb.PGPCert
 	skipped     []string
 }
 
@@ -459,7 +395,7 @@ func (s *Source) hasTable(ctx context.Context, name string) bool {
 func (s *Source) read(ctx context.Context) (*contents, error) {
 	c := &contents{}
 	del := "0"
-	if s.Kind == KindGoCA || s.Schema >= 7 {
+	if s.Schema >= 7 {
 		del = "i.del"
 	}
 	now := time.Now()
@@ -726,26 +662,6 @@ func (s *Source) read(ctx context.Context) (*contents, error) {
 	}
 	rows.Close()
 
-	if s.Kind == KindGoCA && s.hasTable(ctx, "gca_pgp") {
-		rows, err = s.db.QueryContext(ctx, "SELECT item, fingerprint, cert FROM gca_pgp")
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var id int64
-			var fpr, cert sql.NullString
-			if err := rows.Scan(&id, &fpr, &cert); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			b, err := b64(cert)
-			if err != nil || types[id] != xcaKey {
-				continue
-			}
-			c.pgp = append(c.pgp, gcadb.PGPCert{KeyID: id, Fingerprint: fpr.String, Cert: b})
-		}
-		rows.Close()
-	}
 	return c, nil
 }
 

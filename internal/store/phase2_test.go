@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,10 +212,10 @@ func TestImport(t *testing.T) {
 		}
 		db.Close()
 	}
-	// a backup from go-ca's former format, deleted with the file
+	// a file in the backup folder named like the source is not touched
 	os.MkdirAll(s.BackupDir(), 0o700)
-	oldBackup := filepath.Join(s.BackupDir(), "variants.20260101000000.xdb")
-	os.WriteFile(oldBackup, []byte("old"), 0o600)
+	other := filepath.Join(s.BackupDir(), "variants.20260101000000.xdb")
+	os.WriteFile(other, []byte("other"), 0o600)
 
 	if _, err := s.StartImport(ctx, "variants.xdb", []byte("wrong"), testKDF); !errors.Is(err, pki.ErrWrongPassword) {
 		t.Fatalf("wrong password: %v", err)
@@ -232,16 +233,19 @@ func TestImport(t *testing.T) {
 		t.Errorf("progress %d/%d", done, total)
 	}
 	if rep.Target != "variants" || rep.Converted != 7 || rep.Unopened != 1 || rep.OwnPassLegacy != 1 ||
-		rep.Trashed != 1 || len(rep.Skipped) != 0 || len(rep.Removed) != 2 {
+		rep.Trashed != 1 || len(rep.Skipped) != 0 || len(rep.Removed) != 1 {
 		t.Fatalf("report %+v", rep)
 	}
 	if b, _ := s.Backups("variants"); len(b) != 1 {
 		t.Errorf("backups of the new database: %v", b)
 	}
-	for _, p := range []string{src, oldBackup, src + ".lock"} {
+	for _, p := range []string{src, src + ".lock"} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("%s still exists", filepath.Base(p))
 		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Error("a file in the backup folder was removed")
 	}
 	h, snap := load(t, s, "variants")
 	setKR(h, kr)
@@ -332,9 +336,8 @@ func TestImportFixtures(t *testing.T) {
 	}
 }
 
-// A database from go-ca's former XCA based format (go-ca schema 2) keeps
-// its DEK and its sealed keys.
-func TestImportGoCA2(t *testing.T) {
+// A database from go-ca's former XCA based format is not imported.
+func TestFormerGoCARefused(t *testing.T) {
 	s := copyFixtures(t)
 	ctx := context.Background()
 	path := filepath.Join(s.Dir, "sample.xdb")
@@ -342,68 +345,21 @@ func TestImportGoCA2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := vault.NewKeyring(testKDF)
-	kdf, dek, err := old.Wrap(fixturePassword, testKDF)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := db.Query(`SELECT p.item, k.type, k."public", p.private FROM private_keys p JOIN public_keys k ON k.item = p.item`)
-	type upd struct {
-		id   int64
-		blob string
-	}
-	var ups []upd
-	for rows.Next() {
-		var id int64
-		var typ, pub, priv string
-		rows.Scan(&id, &typ, &pub, &priv)
-		spki, _ := b64.StdEncoding.DecodeString(pub)
-		raw, _ := b64.StdEncoding.DecodeString(priv)
-		der, err := legacyDER(raw, typ, fixturePassword)
-		if err != nil {
-			t.Fatal(err)
-		}
-		sealed, _ := old.Seal(der, spki)
-		ups = append(ups, upd{id, b64.StdEncoding.EncodeToString(sealed)})
-	}
-	rows.Close()
-	for _, u := range ups {
-		db.Exec("UPDATE private_keys SET private=? WHERE item=?", u.blob, u.id)
-	}
 	for _, q := range []string{
 		"UPDATE settings SET value='1000' WHERE key_='schema'",
-		"DELETE FROM settings WHERE key_='pwhash'",
 		"INSERT INTO settings (key_, value) VALUES ('gca_schema', '2')",
-		"CREATE TABLE gca_pgp (item INTEGER UNIQUE, fingerprint VARCHAR(64), cert TEXT)",
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}
 	}
-	db.Exec("INSERT INTO settings (key_, value) VALUES ('kdf', ?), ('dek', ?)", kdf, dek)
 	db.Close()
-
 	info, _ := s.Lookup(ctx, "sample.xdb")
-	if info.Status != Upgradable || info.GoCA != 2 {
+	if info.Status != Invalid || !strings.Contains(info.Detail, "former") {
 		t.Fatalf("lookup %+v", info)
 	}
-	kr, rep, err := s.Import(ctx, "sample.xdb", fixturePassword, testKDF)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rep.Kept != 10 || rep.Converted != 0 {
-		t.Fatalf("report %+v", rep)
-	}
-	h, snap := load(t, s, "sample")
-	for _, k := range snap.Keys {
-		if !k.HasPrivate {
-			continue
-		}
-		for _, r := range []*vault.Keyring{kr, old} {
-			if _, err := h.unlock(ctx, k.ID, k.KeyType, r, nil); err != nil {
-				t.Errorf("%s: %v", k.Name, err)
-			}
-		}
+	if _, _, err := s.Import(ctx, "sample.xdb", fixturePassword, testKDF); err == nil {
+		t.Fatal("imported go-ca's former format")
 	}
 }
 

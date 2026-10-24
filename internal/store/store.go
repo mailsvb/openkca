@@ -35,7 +35,7 @@ type Status string
 
 const (
 	Supported  Status = "supported"  // a go-ca database (.gca) of the current schema
-	Upgradable Status = "upgradable" // an XCA or older go-ca database (.xdb): imported after login
+	Upgradable Status = "upgradable" // an XCA database (.xdb): imported after login
 	Outdated   Status = "outdated"   // XCA schema below 5: refused
 	Newer      Status = "newer"      // a newer XCA or go-ca schema: refused
 	Legacy     Status = "legacy"     // pre-2.0 XCA binary format: refused
@@ -45,8 +45,8 @@ const (
 // Openable reports whether a database with this status can be logged into.
 func (s Status) Openable() bool { return s == Supported || s == Upgradable }
 
-// File extensions: go-ca databases, and XCA databases (or go-ca's former
-// XCA based ones) waiting to be imported.
+// File extensions: go-ca databases, and XCA databases waiting to be
+// imported.
 const (
 	ExtGCA = ".gca"
 	ExtXCA = ".xdb"
@@ -62,8 +62,7 @@ type Info struct {
 	ModTime time.Time
 	Status  Status
 	XCA     bool   // an .xdb file to import
-	Schema  int    // go-ca's schema, or XCA's (xcaimport.LockoutSchema for go-ca's former format)
-	GoCA    int    // go-ca's former schema of an .xdb file, 0 for XCA's own
+	Schema  int    // go-ca's schema, or XCA's for an .xdb file
 	Detail  string // why a file is invalid
 
 	Label      string // the name shown in the UI: the configured name, else Name
@@ -71,8 +70,8 @@ type Info struct {
 	Background bool   // go-ca keeps it open on its own (configured with a password)
 }
 
-// Version is the pair of schema settings of a database file.
-type Version struct{ Schema, GoCA int }
+// Version is the schema setting of a database file.
+type Version struct{ Schema int }
 
 // dsn builds a modernc.org/sqlite connection string, with SQLite's default
 // rollback journal. secure_delete overwrites deleted content, so replaced
@@ -108,9 +107,9 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 	if err != nil {
 		return Invalid, true, v, err.Error()
 	}
-	v = Version{info.Schema, info.GoCA}
+	v = Version{info.Schema}
 	switch info.Kind {
-	case xcaimport.KindXCA, xcaimport.KindGoCA:
+	case xcaimport.KindXCA:
 		return Upgradable, true, v, ""
 	case xcaimport.KindOld:
 		return Outdated, true, v, ""
@@ -151,10 +150,6 @@ func classifyGCA(ctx context.Context, path string, deep bool) (st Status, v Vers
 	}
 	if schema > gcadb.Schema {
 		return Newer, v, "", true
-	}
-	if schema == 3 {
-		// Schema 3 had no item UUIDs and is not migrated.
-		return Invalid, v, "go-ca schema 3 (before item UUIDs) is no longer supported", true
 	}
 	if schema < gcadb.MinMigratable {
 		return Invalid, v, "unknown go-ca schema", true
@@ -372,7 +367,7 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 		st, detail = Invalid, "file extension does not match the content"
 	}
 	info := Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, XCA: xca,
-		Schema: v.Schema, GoCA: v.GoCA, Detail: detail, Label: name}
+		Schema: v.Schema, Detail: detail, Label: name}
 	if c, ok := s.conf[name]; ok {
 		info.Label, info.Configured, info.Background = c.Label, true, c.Background
 	}

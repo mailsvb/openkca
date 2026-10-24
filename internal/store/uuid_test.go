@@ -270,32 +270,3 @@ func TestImportedUUIDs(t *testing.T) {
 		t.Fatal("no items imported")
 	}
 }
-
-// TestSchema3Refused: go-ca databases from before item UUIDs are not
-// migrated; they are listed as invalid and not opened.
-func TestSchema3Refused(t *testing.T) {
-	s := copyFixtures(t)
-	ctx := context.Background()
-	if err := s.Create(ctx, "old", testPassword, testKDF); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.Dir, "old.gca")
-	db, err := sql.Open("sqlite", dsn(path, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec("UPDATE settings SET value='3' WHERE key='schema'")
-	db.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st, _, _, detail := Classify(ctx, path, true); st != Invalid || !strings.Contains(detail, "schema 3") {
-		t.Fatalf("schema 3: %s %q", st, detail)
-	}
-	if _, err := s.Acquire(ctx, "old"); err == nil {
-		t.Fatal("opened a schema 3 database")
-	}
-	if gcadb.MinMigratable != 4 {
-		t.Fatalf("oldest migratable schema %d", gcadb.MinMigratable)
-	}
-}

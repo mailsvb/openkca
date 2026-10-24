@@ -28,14 +28,12 @@ type ConvertReport struct {
 	Trashed       int // items XCA had marked deleted, now in the trash
 	Skipped       []string
 	Converted     int      // keys now sealed with the DEK
-	Kept          int      // sealed keys copied unchanged
 	OwnPassLegacy int      // keys with their own password still in an XCA form
 	Unopened      int      // keys for the database password that it does not open
-	Removed       []string // the source and its backups in the old format
+	Removed       []string // the imported XCA file
 }
 
-// Conversion is a running or finished import of an XCA or older go-ca
-// database (.xdb) into a new go-ca database. Several logins may wait for
+// Conversion is a running or finished import of an XCA database (.xdb) into a new go-ca database. Several logins may wait for
 // the same conversion.
 type Conversion struct {
 	total atomic.Int64
@@ -107,7 +105,7 @@ func (s *Store) StartImport(ctx context.Context, name string, password []byte, p
 	if err != nil {
 		return nil, err
 	}
-	ok, kr, err := src.Unlock(ctx, password)
+	ok, err := src.Unlock(ctx, password)
 	if err != nil || !ok {
 		src.Close()
 		if err == nil {
@@ -115,12 +113,7 @@ func (s *Store) StartImport(ctx context.Context, name string, password []byte, p
 		}
 		return nil, err
 	}
-	discard := func() {
-		src.Close()
-		if kr != nil {
-			kr.Wipe()
-		}
-	}
+	discard := func() { src.Close() }
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	if c, ok := s.imports[info.Path]; ok {
@@ -151,7 +144,7 @@ func (s *Store) StartImport(ctx context.Context, name string, password []byte, p
 	pw := append([]byte(nil), password...)
 	go func() {
 		defer clear(pw)
-		nk, rep, err := s.runImport(context.Background(), info, src, pw, kr, p, c)
+		nk, rep, err := s.runImport(context.Background(), info, src, pw, p, c)
 		src.Close()
 		lk.Unlock()
 		if err == nil {
@@ -174,7 +167,7 @@ func (s *Store) StartImport(ctx context.Context, name string, password []byte, p
 			return
 		}
 		slog.Info("database imported", "file", info.Name, "db", rep.Target, "items", rep.Items, "trashed", rep.Trashed,
-			"converted_keys", rep.Converted, "kept_keys", rep.Kept, "own_password_legacy", rep.OwnPassLegacy,
+			"converted_keys", rep.Converted, "own_password_legacy", rep.OwnPassLegacy,
 			"unopened", rep.Unopened, "skipped", len(rep.Skipped), "removed", strings.Join(rep.Removed, ", "))
 		for _, sk := range rep.Skipped {
 			slog.Warn("item not imported", "file", info.Name, "item", sk)
@@ -197,7 +190,7 @@ func (s *Store) Import(ctx context.Context, name string, password []byte, p vaul
 	}
 }
 
-func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source, password []byte, kr *vault.Keyring,
+func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source, password []byte,
 	p vault.Params, c *Conversion) (*vault.Keyring, ConvertReport, error) {
 	var rep ConvertReport
 	f, err := s.tempFile("import")
@@ -215,7 +208,7 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 		return nil, rep, err
 	}
 	db.SetMaxOpenConns(1)
-	nk, ir, err := src.Import(ctx, db, password, kr, p, nil, func(done, total int) {
+	nk, ir, err := src.Import(ctx, db, password, p, nil, func(done, total int) {
 		c.total.Store(int64(total))
 		c.done.Store(int64(done))
 	})
@@ -231,7 +224,7 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 		}
 		return nil, rep, err
 	}
-	rep = ConvertReport{Items: ir.Items, Trashed: ir.Trashed, Skipped: ir.Skipped, Converted: ir.Converted, Kept: ir.Kept,
+	rep = ConvertReport{Items: ir.Items, Trashed: ir.Trashed, Skipped: ir.Skipped, Converted: ir.Converted,
 		OwnPassLegacy: ir.OwnPassLegacy, Unopened: ir.Unopened}
 	fail := func(err error) (*vault.Keyring, ConvertReport, error) {
 		nk.Wipe()
@@ -248,18 +241,11 @@ func (s *Store) runImport(ctx context.Context, info Info, src *xcaimport.Source,
 	if err := s.backupFile(ctx, filepath.Join(s.Dir, rep.Target+ExtGCA), rep.Target); err != nil {
 		slog.Error("backup of the imported database failed", "db", rep.Target, "err", err)
 	}
-	// The new database is in place and verified: nothing in the old format
-	// stays behind, neither the file nor its backups.
+	// The new database is in place and verified: the XCA file goes.
 	if err := os.Remove(info.Path); err != nil {
 		slog.Error("removing the imported file failed", "file", info.Path, "err", err)
 	} else {
 		rep.Removed = append(rep.Removed, info.Name)
-	}
-	old, _ := s.backupsWithExt(base, ExtXCA)
-	for _, b := range old {
-		if os.Remove(b) == nil {
-			rep.Removed = append(rep.Removed, filepath.Base(b))
-		}
 	}
 	return nk, rep, nil
 }
