@@ -13,7 +13,7 @@ import (
 
 // RawItem is a complete item with its ID and links, as an importer writes
 // it: nothing is looked up or linked automatically. Links to items that do
-// not exist must be 0.
+// not exist must be 0. An empty UUID gets a new one.
 type RawItem struct {
 	Item
 	Key      *RawKey
@@ -56,17 +56,20 @@ type RawCRL struct {
 
 func link(id int64) sql.NullInt64 { return sql.NullInt64{Int64: id, Valid: id != 0} }
 
-// PutRaw writes an item with its ID.
+// PutRaw writes an item with its ID, and with its UUID when it has one.
 func (t *Tx) PutRaw(ctx context.Context, r RawItem) error {
 	var trashed any
 	if !r.Trashed.IsZero() {
 		trashed = fmtTime(r.Trashed)
 	}
-	if _, err := t.ExecContext(ctx, `INSERT INTO items (id, type, name, comment, source, created, trashed)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, r.ID, TypeName(r.Type), r.Name, r.Comment, SourceName(r.Source), fmtTime(r.Date), trashed); err != nil {
+	uid, err := rawUUID(r.UUID)
+	if err != nil {
 		return fmt.Errorf("item %d: %w", r.ID, err)
 	}
-	var err error
+	if _, err := t.ExecContext(ctx, `INSERT INTO items (id, uuid, type, name, comment, source, created, trashed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, r.ID, uid, TypeName(r.Type), r.Name, r.Comment, SourceName(r.Source), fmtTime(r.Date), trashed); err != nil {
+		return fmt.Errorf("item %d: %w", r.ID, err)
+	}
 	switch {
 	case r.Type == TypeKey && r.Key != nil:
 		k := r.Key
@@ -124,6 +127,13 @@ func (t *Tx) PutRaw(ctx context.Context, r RawItem) error {
 		return fmt.Errorf("item %d: %w", r.ID, err)
 	}
 	return nil
+}
+
+func rawUUID(s string) (string, error) {
+	if s == "" {
+		return NewUUID()
+	}
+	return CanonicalUUID(s)
 }
 
 // PutRevocation writes a revocation as it is.

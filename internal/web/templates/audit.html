@@ -19,7 +19,7 @@
   <tr>
     <td>{{time .At}}</td>
     <td>{{T (print "audit.action." .Action)}}</td>
-    <td>{{if .ItemID}}{{.ItemName}} <span class="muted">#{{.ItemID}}</span>{{end}}</td>
+    <td>{{if .ItemID}}{{.ItemName}} <span class="muted"{{with .ItemUUID}} title="{{.}}"{{end}}>#{{.ItemID}}</span>{{end}}</td>
     <td class="small">{{.Detail}}</td>
     <td class="mono small">{{.Client}}</td>
   </tr>

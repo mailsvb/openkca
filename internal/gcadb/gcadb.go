@@ -126,7 +126,8 @@ func Fingerprint(der []byte) []byte {
 
 // Item is one row of the items table.
 type Item struct {
-	ID      int64
+	ID      int64  // row ID, links rows inside the database
+	UUID    string // the item's identity outside the database; never changes
 	Name    string
 	Type    int
 	Source  int
@@ -284,10 +285,10 @@ func (d *DB) Load(ctx context.Context) (*Snapshot, error) {
 	return s, nil
 }
 
-const itemCols = "i.id, i.name, i.type, i.source, i.created, i.comment, i.stamp, i.trashed"
+const itemCols = "i.id, i.uuid, i.name, i.type, i.source, i.created, i.comment, i.stamp, i.trashed"
 
 func itemDest(it *Item, typ, source, created, trashed *sql.NullString) []any {
-	return []any{&it.ID, &it.Name, typ, source, created, &it.Comment, &it.Stamp, trashed}
+	return []any{&it.ID, &it.UUID, &it.Name, typ, source, created, &it.Comment, &it.Stamp, trashed}
 }
 
 func finishItem(it *Item, typ, source, created, trashed sql.NullString) {

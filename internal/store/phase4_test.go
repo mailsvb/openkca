@@ -121,8 +121,15 @@ func TestCAOperations(t *testing.T) {
 		t.Fatal("crlDays not used")
 	}
 
-	// Index file
-	idx, err := os.ReadFile(filepath.Join(s.Dir, "index", "ca", "Sub", "index.txt"))
+	// Index file, in the CA's folder named after its UUID
+	subDir, err := h.CADir(findCert(snap, subID).UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(s.Dir, "ca", "ca", findCert(snap, subID).UUID); subDir != want {
+		t.Fatalf("CA folder %s, want %s", subDir, want)
+	}
+	idx, err := os.ReadFile(filepath.Join(subDir, "index.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +147,7 @@ func TestCAOperations(t *testing.T) {
 	if !strings.HasPrefix(revLine, "R\t") || !strings.Contains(revLine, ",keyCompromise\t") || !strings.HasSuffix(revLine, "/C=DE/O=Test/CN=leaf") {
 		t.Fatalf("index line %q", revLine)
 	}
-	if b, _ := os.ReadFile(filepath.Join(s.Dir, "index", "ca", "Sub", "index.txt.attr")); string(b) != "unique_subject = no\n" {
+	if b, _ := os.ReadFile(filepath.Join(subDir, "index.txt.attr")); string(b) != "unique_subject = no\n" {
 		t.Fatal("index.txt.attr")
 	}
 	ocspCheck(t, h, s, snap, subID, leaf.Serial, "revoked")
@@ -184,8 +191,18 @@ func TestCAOperations(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("revocations after CA renewal: %d", n)
 	}
-	if _, err := os.Stat(filepath.Join(s.Dir, "index", "ca", "Sub", "index.txt")); err != nil {
-		t.Fatal("index folder of the renewed CA missing")
+	// The renewed CA is a new item with a UUID and folder of its own; the
+	// replaced one's folder held only index files and is gone.
+	newDir, _ := h.CADir(findCert(snap, newSub).UUID)
+	if newDir == subDir {
+		t.Fatal("renewed CA shares the folder of the replaced one")
+	}
+	if b, err := os.ReadFile(filepath.Join(newDir, "index.txt")); err != nil || strings.Count("\n"+string(b), "\nR\t") != 3 ||
+		!strings.Contains(string(b), "\t"+nl.Serial+"\t") {
+		t.Fatalf("index of the renewed CA: %q %v", b, err)
+	}
+	if _, err := os.Stat(subDir); !os.IsNotExist(err) {
+		t.Fatal("folder of the replaced CA not removed")
 	}
 }
 
@@ -216,7 +233,11 @@ func ocspCheck(t *testing.T, h *Handle, s *Store, snap interface{}, caID int64, 
 	}
 	req, resp := filepath.Join(dir, "req.der"), filepath.Join(dir, "resp.der")
 	run("-issuer", caPEM, "-serial", "0x"+serial, "-reqout", req, "-no_nonce")
-	run("-index", filepath.Join(s.Dir, "index", "ca", "Sub", "index.txt"), "-rsigner", caPEM, "-rkey", keyPEM,
+	caDir, err := h.CADir(ca.UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run("-index", filepath.Join(caDir, "index.txt"), "-rsigner", caPEM, "-rkey", keyPEM,
 		"-CA", caPEM, "-reqin", req, "-respout", resp)
 	if out := run("-respin", resp, "-resp_text", "-noverify"); !strings.Contains(out, "Cert Status: "+status) {
 		t.Fatalf("OCSP status for %s is not %s:\n%s", serial, status, out)

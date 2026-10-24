@@ -16,8 +16,12 @@ import (
 )
 
 func (t *Tx) insertItem(ctx context.Context, name string, typ, source int, comment string) (int64, error) {
-	res, err := t.ExecContext(ctx, "INSERT INTO items (type, name, comment, source, created) VALUES (?, ?, ?, ?, ?)",
-		TypeName(typ), name, comment, SourceName(source), fmtTime(time.Now()))
+	id, err := NewUUID()
+	if err != nil {
+		return 0, err
+	}
+	res, err := t.ExecContext(ctx, "INSERT INTO items (uuid, type, name, comment, source, created) VALUES (?, ?, ?, ?, ?, ?)",
+		id, TypeName(typ), name, comment, SourceName(source), fmtTime(time.Now()))
 	if err != nil {
 		return 0, err
 	}

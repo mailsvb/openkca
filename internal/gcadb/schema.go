@@ -2,6 +2,11 @@
 // with go-ca's own schema. It is the only package that issues SQL against
 // a go-ca database; reading XCA's files is package xcaimport's job.
 //
+// Every item has a UUID (items.uuid) next to its integer row ID. The row
+// ID links rows inside one database; the UUID is the item's identity
+// outside of it, e.g. a CA's folder for its OpenSSL index and other files
+// go-ca keeps on disk, and it never changes.
+//
 // The schema stores DER objects as BLOBs with SHA-256 fingerprints, links
 // items with foreign keys (certificate to issuer and key, request to key,
 // CRL to issuer, CA to default template, revocation to CA), keeps deleted
@@ -22,7 +27,8 @@ const ApplicationID = 0x67636131
 
 // Schema is the version this package writes (the "schema" setting).
 // Versions 1 and 2 were go-ca's XCA based format, read by xcaimport.
-const Schema = 3
+// Version 3 had no item UUIDs; it is not migrated.
+const Schema = 4
 
 var ddl = []string{
 	`CREATE TABLE settings (
@@ -31,6 +37,7 @@ var ddl = []string{
 	) WITHOUT ROWID`,
 	`CREATE TABLE items (
 		id      INTEGER PRIMARY KEY AUTOINCREMENT,
+		uuid    TEXT NOT NULL UNIQUE CHECK (length(uuid) = 36 AND uuid = lower(uuid)),
 		type    TEXT NOT NULL CHECK (type IN ('key', 'request', 'cert', 'crl', 'template')),
 		name    TEXT NOT NULL,
 		comment TEXT NOT NULL DEFAULT '',
@@ -122,11 +129,15 @@ var ddl = []string{
 		at        TEXT NOT NULL,
 		action    TEXT NOT NULL,
 		item      INTEGER,
+		item_uuid TEXT NOT NULL DEFAULT '',
 		item_name TEXT NOT NULL DEFAULT '',
 		detail    TEXT NOT NULL DEFAULT '',
 		client    TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE INDEX audit_item ON audit (item)`,
+	`CREATE INDEX audit_item_uuid ON audit (item_uuid)`,
+	// An item's UUID never changes.
+	`CREATE TRIGGER items_uuid_fixed BEFORE UPDATE OF uuid ON items BEGIN SELECT RAISE(ABORT, 'an item''s uuid never changes'); END`,
 	// The log is append-only.
 	`CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END`,
 	`CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END`,

@@ -140,8 +140,11 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
   generate CRLs with XCA's options and renew certificates (new or same
   serial, optionally revoking or deleting the old one).
 - An OpenSSL `ca` style index per CA in
-  `<data-dir>/index/<database>/<CA>/index.txt` (plus `index.txt.attr`),
-  kept current and usable directly with `openssl ocsp -index`.
+  `<data-dir>/ca/<database>/<CA UUID>/index.txt` (plus `index.txt.attr`),
+  kept current and usable directly with `openssl ocsp -index`. Every item
+  has a UUID that never changes; a CA's folder is named after the UUID of
+  its certificate, so it survives renaming the CA and a trip through the
+  trash. The item page shows the UUID and, for a CA, its folder.
 
 **Templates**
 
@@ -205,14 +208,16 @@ them over: an XCA `.xdb` file is imported once into a go-ca database
 
 | Database                                  | go-ca                                          |
 | ----------------------------------------- | ---------------------------------------------- |
-| go-ca `.gca` (schema 3)                   | supported                                      |
+| go-ca `.gca` (schema 4)                   | supported                                      |
+| go-ca `.gca` (schema 3, no item UUIDs)    | refused, not migrated                          |
 | XCA schema 5 to 8 (XCA 2.x and later)     | imported into a new `.gca` on first login      |
 | go-ca 0.10 and earlier (`.xdb`, schema 1/2) | imported; schema 2 keeps its data key and keys |
 | XCA schema below 5, pre-2.0 format        | refused                                        |
 | newer XCA or go-ca schema                 | refused until supported                        |
 
 A go-ca database is an SQLite file with its own schema (`internal/gcadb`)
-and SQLite's application ID `gca1`: DER objects as BLOBs with SHA-256
+and SQLite's application ID `gca1`: every item with a UUID (version 7)
+next to its row ID, DER objects as BLOBs with SHA-256
 fingerprints, links as foreign keys, templates as JSON, a trash and an
 append-only audit table. The `kdf` and `dek` settings hold the Argon2id
 parameters and the wrapped data key; private keys are sealed by
@@ -290,7 +295,7 @@ will warn about the name until you pass a certificate for the real host name.
     ├── server-password   argon2id hash
     ├── tls.crt, tls.key  self-issued certificate
     └── backup/           <name>.<yyyyMMddHHmmss>.gca
-/srv/xca/index/<database>/<CA>/index.txt   per-CA certificate index
+/srv/xca/ca/<database>/<CA UUID>/index.txt   per-CA folder: certificate index
 ```
 
 A backup is written right after an import and before every change that
