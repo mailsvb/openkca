@@ -335,9 +335,16 @@ func TestEditorFlow(t *testing.T) {
 	// Mandatory subject entry from the options.
 	opts := url.Values{"default_hash": {"sha384"}, "mandatory_dn": {"O"}, "explicit_dn": {"C,O,CN"}, "string_opt": {"MASK:0x2002"},
 		"serial_len": {"128"}, "cert_expiry.n": {"30"}, "cert_expiry.u": {"D"}, "ical_expiry.n": {"1"}, "ical_expiry.u": {"W"},
-		"pkcs12_enc_algo": {"AES-256-CBC"}}
+		"pkcs12_enc_algo": {"AES-256-CBC"}, "pkcs12_iterations": {"1000"}}
+	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "error=options.error.value&key=pkcs12_iterations") {
+		t.Fatalf("pkcs12_iterations below the minimum: %s", loc)
+	}
+	opts.Set("pkcs12_iterations", "300000")
 	if loc := post("/db/ed/options", opts).Header.Get("Location"); !strings.Contains(loc, "notice=saved") {
 		t.Fatalf("options: %s", loc)
+	}
+	if r, _ := c.Get(ts.URL + "/db/ed/options"); !strings.Contains(body(t, r), `name="pkcs12_iterations" value="300000" min="2048" max="10000000"`) {
+		t.Fatal("pkcs12_iterations not shown")
 	}
 	r = post("/db/ed/new/cert", url.Values{"dn.CN": {"no org"}, "keymode": {"new"}, "newkey": {"EC:P-256"}, "signer": {rootID},
 		"hash": {"sha384"}, "notbefore": {"2026-01-01T00:00"}, "validn": {"1"}, "validunit": {"y"}})

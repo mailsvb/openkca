@@ -561,7 +561,11 @@ func (e *exporter) certs() error {
 		if algo == "" {
 			algo = codec.PKCS12Algorithms[0]
 		}
-		b, err := codec.PKCS12(key, bags, string(pw), algo)
+		iter, ok := codec.ParsePKCS12Iterations(e.snap.Settings["pkcs12_iterations"])
+		if !ok {
+			iter = codec.PKCS12Iterations
+		}
+		b, err := codec.PKCS12(key, bags, string(pw), algo, iter)
 		if err != nil {
 			return err
 		}

@@ -189,6 +189,7 @@
   "opt.cert_expiry": "Certificate expiry warning threshold",
   "opt.ical_expiry": "vCalendar expiry reminder",
   "opt.pkcs12_enc_algo": "PKCS#12 encryption algorithm (PBE-SHA1-3DES and PBE-SHA1-RC2-40 only for old Windows and Java)",
+  "opt.pkcs12_iterations": "PKCS#12 iterations for AES-256-CBC (Windows and .NET import at most 200000)",
   "opt.disable_netscape": "Disable legacy Netscape extensions",
   "opt.no_expire_colors": "Do not colourise expired certificates",
   "opt.hide_unusable": "Hide unusable certificates",

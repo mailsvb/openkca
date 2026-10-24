@@ -185,6 +185,16 @@ func TestExportAllFormats(t *testing.T) {
 			t.Fatalf("pkcs12 %s:\n%s", algo, out)
 		}
 	}
+	// the pkcs12_iterations setting, as OpenSSL reports it
+	p.h.SetSettings(ctx, map[string]string{"pkcs12_enc_algo": "AES-256-CBC", "pkcs12_iterations": "3000"})
+	res, err := p.h.Export(ctx, ExportRequest{Format: 15, IDs: []int64{p.leaf}, Password: []byte("export"), DBPass: pw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(f("iter.pfx"), res.Data, 0o600)
+	if out := run("pkcs12", "-in", f("iter.pfx"), "-passin", "pass:export", "-info", "-noout"); strings.Count(out, "Iteration 3000") != 3 {
+		t.Fatalf("pkcs12_iterations:\n%s", out)
+	}
 	run("rsa", "-inform", "PVK", "-pvk-none", "-in", f("www.example.org-26.pvk"), "-check", "-noout")
 	run("pkey", "-in", f("www.example.org-21.pem"), "-passin", "pass:export", "-noout")
 	run("pkey", "-in", f("www.example.org-28.pk8"), "-passin", "pass:export", "-noout")

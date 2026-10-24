@@ -14,6 +14,7 @@ import (
 	"hash"
 
 	"golang.org/x/crypto/pbkdf2"
+	"golang.org/x/crypto/scrypt"
 )
 
 // ErrWrongPassword is returned when a private key does not decrypt.
@@ -33,6 +34,8 @@ var (
 	oidAES192CBC = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 22}
 	oidAES256CBC = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42}
 	oidDESEDE3   = asn1.ObjectIdentifier{1, 2, 840, 113549, 3, 7}
+	oidDESCBC    = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 7}
+	oidScrypt    = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11591, 4, 11}
 )
 
 // encryptedPrivateKeyInfo is PKCS#8's EncryptedPrivateKeyInfo (RFC 5208).
@@ -156,19 +159,13 @@ func HMACHash(alg asn1.ObjectIdentifier) func() hash.Hash {
 	return nil
 }
 
-// PBES2Decrypt decrypts data with DER PBES2-params (PBKDF2 with AES-CBC or
-// 3DES-CBC) and removes the padding. A padding error is ErrWrongPassword.
+// PBES2Decrypt decrypts data with DER PBES2-params (PBKDF2 or scrypt with
+// AES-CBC, 3DES-CBC or DES-CBC) and removes the padding. A padding error is
+// ErrWrongPassword.
 func PBES2Decrypt(params, data, password []byte) ([]byte, error) {
 	var p pbes2Params
 	if _, err := asn1.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("pkcs8: PBES2 parameters: %w", err)
-	}
-	if !p.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
-		return nil, fmt.Errorf("pkcs8: unsupported key derivation %v", p.KeyDerivationFunc.Algorithm)
-	}
-	kdf, err := ParsePBKDF2(p.KeyDerivationFunc.Parameters.FullBytes)
-	if err != nil {
-		return nil, fmt.Errorf("pkcs8: %w", err)
 	}
 	var keyLen int
 	var newCipher func([]byte) (cipher.Block, error)
@@ -181,20 +178,80 @@ func PBES2Decrypt(params, data, password []byte) ([]byte, error) {
 		keyLen, newCipher = 32, aes.NewCipher
 	case alg.Equal(oidDESEDE3):
 		keyLen, newCipher = 24, des.NewTripleDESCipher
+	case alg.Equal(oidDESCBC):
+		keyLen, newCipher = 8, des.NewCipher
 	default:
-		return nil, fmt.Errorf("pkcs8: unsupported cipher %v", alg)
+		return nil, fmt.Errorf("pkcs8: unsupported cipher %s", CipherName(alg))
 	}
+	var key []byte
+	switch kdfParams := p.KeyDerivationFunc.Parameters.FullBytes; {
+	case p.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2):
+		kdf, err := ParsePBKDF2(kdfParams)
+		if err != nil {
+			return nil, fmt.Errorf("pkcs8: %w", err)
+		}
+		key = kdf.Key(password, keyLen)
+	case p.KeyDerivationFunc.Algorithm.Equal(oidScrypt):
+		var err error
+		if key, err = scryptKey(kdfParams, password, keyLen); err != nil {
+			return nil, fmt.Errorf("pkcs8: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("pkcs8: unsupported key derivation %v", p.KeyDerivationFunc.Algorithm)
+	}
+	defer clear(key)
 	var iv []byte
 	if _, err := asn1.Unmarshal(p.EncryptionScheme.Parameters.FullBytes, &iv); err != nil {
 		return nil, fmt.Errorf("pkcs8: IV: %w", err)
 	}
-	key := kdf.Key(password, keyLen)
-	defer clear(key)
 	plain, err := cbcDecrypt(newCipher, key, iv, data)
 	if err != nil {
 		return nil, ErrWrongPassword
 	}
 	return plain, nil
+}
+
+// scryptParams are RFC 7914's scrypt-params.
+type scryptParams struct {
+	Salt                     []byte
+	CostParameter            int
+	BlockSize                int
+	ParallelizationParameter int
+	KeyLength                int `asn1:"optional"`
+}
+
+// scryptMaxMem bounds the memory scrypt parameters from a file may ask for.
+// OpenSSL writes N=16384, r=8, p=1 (16 MiB) by default.
+const scryptMaxMem = 256 << 20
+
+func scryptKey(params, password []byte, keyLen int) ([]byte, error) {
+	var sp scryptParams
+	if rest, err := asn1.Unmarshal(params, &sp); err != nil || len(rest) > 0 {
+		return nil, fmt.Errorf("scrypt parameters: %v", err)
+	}
+	n, r, p := sp.CostParameter, sp.BlockSize, sp.ParallelizationParameter
+	if n < 2 || n&(n-1) != 0 || r < 1 || p < 1 || p > 16 || int64(128)*int64(n)*int64(r) > scryptMaxMem {
+		return nil, fmt.Errorf("implausible scrypt parameters N=%d r=%d p=%d", n, r, p)
+	}
+	if sp.KeyLength != 0 && sp.KeyLength != keyLen {
+		return nil, fmt.Errorf("scrypt key length %d for a %d byte key", sp.KeyLength, keyLen)
+	}
+	return scrypt.Key(password, sp.Salt, n, r, p, keyLen)
+}
+
+// CipherName names a cipher OID in an error message.
+func CipherName(alg asn1.ObjectIdentifier) string {
+	names := map[string]string{
+		"1.2.392.200011.61.1.1.1.2": "Camellia-128-CBC", "1.2.392.200011.61.1.1.1.3": "Camellia-192-CBC",
+		"1.2.392.200011.61.1.1.1.4": "Camellia-256-CBC", "1.2.410.200046.1.1.2": "ARIA-128-CBC",
+		"1.2.410.200046.1.1.7": "ARIA-192-CBC", "1.2.410.200046.1.1.12": "ARIA-256-CBC",
+		"1.2.156.10197.1.104.2": "SM4-CBC", "1.2.840.113549.3.2": "RC2-CBC",
+		"1.2.840.113549.3.4": "RC4", "1.3.6.1.4.1.3029.1.2": "Blowfish-CBC",
+	}
+	if n, ok := names[alg.String()]; ok {
+		return n
+	}
+	return alg.String()
 }
 
 func cbcDecrypt(newCipher func([]byte) (cipher.Block, error), key, iv, data []byte) ([]byte, error) {

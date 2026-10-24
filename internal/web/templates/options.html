@@ -12,6 +12,7 @@
     {{else if eq .Kind "select"}}<select id="opt-{{.Key}}" name="{{.Key}}">{{range .Choices}}<option value="{{.}}"{{if eq . $o.Value}} selected{{end}}>{{with index $o.Labels .}}{{T .}}{{else}}{{.}}{{end}}</option>{{end}}</select>
     {{else if eq .Kind "expiry"}}<span class="inline-fields"><input type="number" id="opt-{{.Key}}" name="{{.Key}}.n" value="{{.Num}}" min="0" max="10000">
       <select name="{{.Key}}.u" aria-label="{{T "editor.unit"}}">{{range .Units}}<option value="{{.}}"{{if eq . $o.Unit}} selected{{end}}>{{T (print "unit.sym." .)}}</option>{{end}}</select></span>
+    {{else if eq .Kind "number"}}<input type="number" id="opt-{{.Key}}" name="{{.Key}}" value="{{.Value}}" min="{{.Min}}" max="{{.Max}}" step="1">
     {{else}}<input type="text" id="opt-{{.Key}}" name="{{.Key}}" value="{{.Value}}">{{end}}
     {{if .Default}} <span class="muted small">{{T "options.default"}}</span>{{end}}
     </td><td class="mono small muted">{{.Key}}</td></tr>
