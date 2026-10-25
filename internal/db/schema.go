@@ -34,8 +34,9 @@ const ApplicationID = 0x6f6b6331
 
 // Schema is the version this package writes (the "schema" setting). A
 // database of an older schema is upgraded by Migrate when it is opened.
-// The schema was reset to 1 during development; OpenKCA databases from
-// before the reset are not supported.
+// The schema was reset to 1 during development (last for 0.12.0, which
+// replaced the single database password with unlock methods); OpenKCA
+// databases from before the reset are not supported.
 const Schema = 1
 
 var ddl = []string{
@@ -146,6 +147,29 @@ var ddl = []string{
 		detail    TEXT NOT NULL DEFAULT '',
 		client    TEXT NOT NULL DEFAULT ''
 	)`,
+	// One row per way to unlock the database: each wraps the data key
+	// (package vault). At most one backup code.
+	`CREATE TABLE unlock_methods (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		uuid          TEXT NOT NULL UNIQUE CHECK (length(uuid) = 36 AND uuid = lower(uuid)),
+		type          TEXT NOT NULL CHECK (type IN ('password', 'security_key', 'passkey', 'backup_code')),
+		label         TEXT NOT NULL,
+		created       TEXT NOT NULL,
+		last_used     TEXT,
+		kdf           TEXT NOT NULL,
+		wrapped       BLOB NOT NULL,
+		credential_id BLOB UNIQUE,
+		public_key    BLOB,
+		sign_count    INTEGER NOT NULL DEFAULT 0,
+		prf_salt      BLOB,
+		transports    TEXT NOT NULL DEFAULT '',
+		aaguid        BLOB,
+		flags         INTEGER NOT NULL DEFAULT 0,
+		CHECK ((type IN ('security_key', 'passkey')) = (credential_id IS NOT NULL AND public_key IS NOT NULL AND prf_salt IS NOT NULL))
+	)`,
+	`CREATE UNIQUE INDEX unlock_methods_one_backup ON unlock_methods (type) WHERE type = 'backup_code'`,
+	// A method's UUID is bound into its wrapped data key.
+	`CREATE TRIGGER unlock_methods_uuid_fixed BEFORE UPDATE OF uuid ON unlock_methods BEGIN SELECT RAISE(ABORT, 'an unlock method''s uuid never changes'); END`,
 	`CREATE INDEX audit_item ON audit (item)`,
 	`CREATE INDEX audit_item_uuid ON audit (item_uuid)`,
 	// An item's UUID never changes.
@@ -155,10 +179,10 @@ var ddl = []string{
 	`CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END`,
 }
 
-// Create writes the schema and the given settings into an empty database
-// in one transaction, with every statement inside fn (the importer's) in
-// the same transaction when fn is not nil.
-func Create(ctx context.Context, db *sql.DB, settings map[string]string, fn func(*Tx) error) error {
+// Create writes the schema, the given settings and the first unlock
+// methods into an empty database in one transaction, with every statement
+// inside fn (the importer's) in the same transaction when fn is not nil.
+func Create(ctx context.Context, db *sql.DB, settings map[string]string, methods []UnlockMethod, fn func(*Tx) error) error {
 	sqlTx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -177,6 +201,11 @@ func Create(ctx context.Context, db *sql.DB, settings map[string]string, fn func
 	}
 	for k, v := range settings {
 		if _, err := sqlTx.ExecContext(ctx, "INSERT INTO settings (key, value) VALUES (?, ?)", k, v); err != nil {
+			return err
+		}
+	}
+	for _, m := range methods {
+		if err := insertUnlockMethod(ctx, sqlTx, &m); err != nil {
 			return err
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/mailsvb/openkca/internal/i18n"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/store"
+	"github.com/mailsvb/openkca/internal/vault"
 )
 
 var (
@@ -63,7 +64,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid|trash|audit|converted|converting)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid|trash|audit|converted|converting|methods)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -146,8 +147,19 @@ func TestMessageKeys(t *testing.T) {
 		"key.password_set", "key.password_reset", "key.export", "key.upgrade", "request.create", "request.signed",
 		"cert.issue", "cert.renew", "cert.revoke", "cert.unrevoke", "ca.revocation", "ca.revocation_delete",
 		"ca.properties", "crl.generate", "item.rename", "item.trash", "item.restore", "item.purge", "items.import",
-		"pgp.generate", "pgp.create", "pgp.subkey", "pgp.remove", "template.save"} {
+		"pgp.generate", "pgp.create", "pgp.subkey", "pgp.remove", "template.save",
+		"method.add", "method.remove", "method.rename", "method.password", "method.clone_warning",
+		"backupcode.generate", "backupcode.used", "database.rekey", "database.kdf"} {
 		keys = append(keys, "audit.action."+a)
+	}
+	for _, t := range vault.SlotTypes {
+		keys = append(keys, "methods.type."+t)
+	}
+	for n := range methodNotices {
+		keys = append(keys, "methods.notice."+n)
+	}
+	for e := range methodErrors {
+		keys = append(keys, "methods.error."+e)
 	}
 	keys = append(keys, "trash.notice.restored", "trash.notice.purged", "trash.error", "converted.done",
 		"keypw.error.mismatch", "keypw.error.current", "list.deleted.notice",

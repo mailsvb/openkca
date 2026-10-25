@@ -1,17 +1,14 @@
 // Package vault protects private keys at rest with envelope encryption.
 //
-// The database password is stretched with Argon2id into a key encryption
-// key (KEK). The KEK wraps a random 256-bit data encryption key (DEK) with
-// AES-256-GCM; unwrapping the DEK is the password check, so no separate
-// password hash is stored. Every private key is an unencrypted PKCS#8
-// PrivateKeyInfo sealed with the DEK (AES-256-GCM), bound to its public key
-// through the associated data. A key with its own password is sealed with a
-// key derived from that password instead.
+// A random 256-bit data encryption key (DEK) seals every private key: an
+// unencrypted PKCS#8 PrivateKeyInfo sealed with AES-256-GCM, bound to its
+// public key through the associated data. A key with its own password is
+// sealed with a key derived from that password instead.
 //
-// Stored settings of a database:
-//
-//	kdf  argon2id$v=19$m=<KiB>,t=<passes>,p=<lanes>$<salt, base64>
-//	dek  base64(nonce || AES-256-GCM(KEK, DEK))
+// The DEK itself is stored once per unlock method (a slot, see slots.go):
+// each method derives a key encryption key (KEK) from its secret and wraps
+// the DEK with AES-256-GCM. Unwrapping the DEK is the check of the secret,
+// so no separate password hash is stored.
 //
 // A key blob (private_keys.private, before base64):
 //
@@ -194,52 +191,6 @@ func (k *Keyring) Wipe() {
 	k.mu.Unlock()
 }
 
-func dekAAD(kdf string) []byte { return append([]byte("openkca dek v1\x00"), kdf...) }
-
-// Wrap derives a KEK from password with fresh salt and parameters p and
-// wraps the DEK. It returns the "kdf" and "dek" settings. The keyring
-// takes p as its parameters.
-func (k *Keyring) Wrap(password []byte, p Params) (kdf, wrapped string, err error) {
-	salt := random(saltLen)
-	kek, err := derive(password, salt, p)
-	if err != nil {
-		return "", "", err
-	}
-	defer clear(kek)
-	kdf = FormatKDF(p, salt)
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.dek == nil {
-		return "", "", ErrLocked
-	}
-	nonce := random(nonceLen)
-	ct := gcm(kek).Seal(nil, nonce, k.dek, dekAAD(kdf))
-	k.params = p
-	return kdf, base64.StdEncoding.EncodeToString(append(nonce, ct...)), nil
-}
-
-// Unwrap opens the DEK stored in the kdf and dek settings with password.
-func Unwrap(kdf, wrapped string, password []byte) (*Keyring, error) {
-	p, salt, err := ParseKDF(kdf)
-	if err != nil {
-		return nil, err
-	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(wrapped))
-	if err != nil || len(raw) != nonceLen+keyLen+16 {
-		return nil, errors.New("vault: invalid dek setting")
-	}
-	kek, err := derive(password, salt, p)
-	if err != nil {
-		return nil, err
-	}
-	defer clear(kek)
-	dek, err := gcm(kek).Open(nil, raw[:nonceLen], raw[nonceLen:], dekAAD(kdf))
-	if err != nil {
-		return nil, ErrWrongPassword
-	}
-	return &Keyring{dek: dek, params: p}, nil
-}
-
 // Blob modes.
 const (
 	ModeDEK      byte = 1
@@ -351,4 +302,17 @@ func OpenWithPassword(blob, spki, password []byte) ([]byte, error) {
 		return nil, ErrWrongPassword
 	}
 	return plain, nil
+}
+
+// FormatCost encodes Argon2id parameters without a salt, as a database
+// stores its cost: "argon2id$v=19$m=<KiB>,t=<passes>,p=<lanes>".
+func FormatCost(p Params) string {
+	return fmt.Sprintf("argon2id$v=%d$m=%d,t=%d,p=%d", argon2.Version, p.MemoryKiB, p.Time, p.Threads)
+}
+
+// ParseCost decodes a cost written by FormatCost and checks it against the
+// limits.
+func ParseCost(s string) (Params, error) {
+	p, _, err := ParseKDF(strings.TrimSpace(s) + "$AAAAAAAAAAA")
+	return p, err
 }

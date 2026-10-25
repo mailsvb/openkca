@@ -19,6 +19,15 @@ general:
   # Hash of the server password that protects the whole web UI.
   # Create it with: openkca set-password
   password_hash: ""
+  # Security keys (YubiKey, Nitrokey, ...) and passkeys as unlock methods
+  # of databases. They are bound to rp_id, the host name you open OpenKCA
+  # with (a domain name, not an IP address), and the browser must trust
+  # OpenKCA's TLS certificate. Without rp_id they are not offered.
+  webauthn:
+    rp_id: ""                  # e.g. ca.example.org
+    # rp_name: OpenKCA         # shown by the authenticator
+    # origins:                 # default: https://<rp_id> and https://<rp_id>:<port of listen>
+    #   - https://ca.example.org:8443
 
 # Publication of CRLs and CA certificates.
 crl:
@@ -39,8 +48,8 @@ crl:
 databases:
   # A database with a password is opened when OpenKCA starts and stays open,
   # so that OpenKCA can do CA work on it in the background (CRLs are signed
-  # automatically). Its password cannot be changed in the web UI; logging
-  # in there still needs it.
+  # automatically). The unlock method this password opens cannot be changed
+  # or removed in the web UI; logging in there still needs an unlock method.
   - name: Home Lab CA          # shown in the web UI
     type: file                 # the only type: an OpenKCA database file
     path: homelab.okca          # relative to data_dir, may be in a subfolder

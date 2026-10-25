@@ -3,7 +3,7 @@
 {{range .Data.CRLAlerts}}
 <p class="{{if .Expired}}error{{else}}warn{{end}}">{{if .Expired}}{{T "crlalert.expired" .Issuer .DBLabel (time .NextUpdate)}}{{else}}{{T "crlalert.expiring" .Issuer .DBLabel (time .NextUpdate)}}{{end}}</p>
 {{end}}
-{{$open := .Data.Open}}{{$sel := .Data.Selected}}{{$csrf := .CSRF}}
+{{$open := .Data.Open}}{{$sel := .Data.Selected}}{{$csrf := .CSRF}}{{$wa := .Data.WebAuthn}}
 {{if not .Data.Databases}}<p class="muted">{{T "databases.empty"}}</p>{{end}}
 <ul class="dblist">
 {{range .Data.Databases}}
@@ -24,7 +24,22 @@
         <label class="sr-only" for="pw-{{.Name}}">{{T "databases.password"}}</label>
         <input type="password" id="pw-{{.Name}}" name="password" placeholder="{{T "databases.password"}}" autocomplete="off"{{if eq .Name $sel}} autofocus{{end}}>
         <button type="submit">{{T "databases.open"}}</button>
+        {{if and $wa .HasWebAuthn}}<button type="button" class="secondary" data-webauthn="login" data-db="{{.Name}}" data-csrf="{{$csrf}}" hidden>{{T "databases.key"}}</button>{{end}}
       </form>
+      {{if .HasBackupCode}}
+      <details class="fullrow small backupcode-login">
+        <summary>{{T "databases.backupcode"}}</summary>
+        <form method="post" action="/db/{{.Name}}/login" class="dblogin">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="method" value="backup_code">
+          <label class="sr-only" for="code-{{.Name}}">{{T "databases.backupcode.label"}}</label>
+          <input type="text" id="code-{{.Name}}" name="code" placeholder="{{T "databases.backupcode.placeholder"}}" autocomplete="off" spellcheck="false" required>
+          <button type="submit" class="secondary">{{T "databases.open"}}</button>
+        </form>
+        <p class="muted small">{{T "databases.backupcode.help"}}</p>
+      </details>
+      {{end}}
+      <p class="error small fullrow" role="alert" data-webauthn-error data-cancelled="{{T "methods.error.cancelled"}}" data-failed="{{T "methods.error.webauthn"}}" hidden></p>
     {{else}}
       <p class="muted">{{T (print "dbstatus.help." .Status)}}</p>
     {{end}}

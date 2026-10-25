@@ -10,6 +10,11 @@
 //	  idle_timeout: 30m
 //	  max_upload_mb: 256
 //	  password_hash: "$argon2id$…"  # from "openkca set-password"
+//	  webauthn:                     # optional: security keys and passkeys
+//	    rp_id: ca.example.org       # the host name users open OpenKCA with
+//	    rp_name: OpenKCA            # optional, shown by the authenticator
+//	    origins:                    # optional; default https://<rp_id>[:port]
+//	      - https://ca.example.org:8443
 //	crl:
 //	  listen: ":8080"               # plain HTTP for CRLs and CA certificates; "" = off
 //	  base_urls:                    # offered as CDP/AIA in new certificates
@@ -31,9 +36,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -83,7 +90,22 @@ type General struct {
 	IdleTimeout  time.Duration `yaml:"idle_timeout"`
 	MaxUploadMB  int64         `yaml:"max_upload_mb"`
 	PasswordHash string        `yaml:"password_hash"`
+	WebAuthn     WebAuthn      `yaml:"webauthn"`
 }
+
+// WebAuthn configures security keys and passkeys as unlock methods. They
+// are bound to RPID, so they are offered only when it is set.
+type WebAuthn struct {
+	RPID    string   `yaml:"rp_id"`
+	RPName  string   `yaml:"rp_name"`
+	Origins []string `yaml:"origins"`
+}
+
+// Enabled reports whether security keys and passkeys can be used.
+func (w WebAuthn) Enabled() bool { return w.RPID != "" }
+
+// DefaultRPName is the relying party name shown by authenticators.
+const DefaultRPName = "OpenKCA"
 
 // Database is one database section.
 type Database struct {
@@ -184,6 +206,9 @@ func (c *Config) check(base string) error {
 		return errors.New("general.max_upload_mb must be between 1 and 1048576")
 	}
 	g.PasswordHash = strings.TrimSpace(g.PasswordHash)
+	if err := g.WebAuthn.check(g.Listen); err != nil {
+		return err
+	}
 	if err := c.CRL.check(); err != nil {
 		return err
 	}
@@ -247,6 +272,60 @@ func (c *CRL) check() error {
 		}
 		seen[norm] = true
 		c.BaseURLs[i] = norm
+	}
+	return nil
+}
+
+var hostLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// check validates the WebAuthn section: rp_id a domain name (WebAuthn does
+// not work with IP addresses), each origin an https:// URL on rp_id or a
+// subdomain of it. Without origins, https://<rp_id> and, for another port
+// than 443, https://<rp_id>:<port of listen> are allowed.
+func (w *WebAuthn) check(listen string) error {
+	w.RPID = strings.ToLower(strings.TrimSpace(w.RPID))
+	w.RPName = strings.TrimSpace(w.RPName)
+	if w.RPID == "" {
+		if len(w.Origins) > 0 || w.RPName != "" {
+			return errors.New("general.webauthn: rp_id is required")
+		}
+		return nil
+	}
+	if net.ParseIP(strings.Trim(w.RPID, "[]")) != nil {
+		return fmt.Errorf("general.webauthn.rp_id: %q is an IP address; security keys and passkeys need a domain name", w.RPID)
+	}
+	labels := strings.Split(w.RPID, ".")
+	for _, l := range labels {
+		if !hostLabel.MatchString(l) {
+			return fmt.Errorf("general.webauthn.rp_id: %q is not a domain name (no scheme, port or path)", w.RPID)
+		}
+	}
+	if w.RPName == "" {
+		w.RPName = DefaultRPName
+	}
+	if len(w.Origins) == 0 {
+		w.Origins = []string{"https://" + w.RPID}
+		if _, port, err := net.SplitHostPort(listen); err == nil && port != "" && port != "443" {
+			w.Origins = append(w.Origins, "https://"+net.JoinHostPort(w.RPID, port))
+		}
+		return nil
+	}
+	for i, raw := range w.Origins {
+		where := fmt.Sprintf("general.webauthn.origins[%d]", i)
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		host := strings.ToLower(u.Hostname())
+		switch {
+		case u.Scheme != "https":
+			return fmt.Errorf("%s: %q must be an https:// URL", where, raw)
+		case host != w.RPID && !strings.HasSuffix(host, "."+w.RPID):
+			return fmt.Errorf("%s: %q is not on %s or a subdomain of it", where, raw, w.RPID)
+		case u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "":
+			return fmt.Errorf("%s: %q must be scheme, host and port only", where, raw)
+		}
+		w.Origins[i] = "https://" + strings.ToLower(u.Host)
 	}
 	return nil
 }

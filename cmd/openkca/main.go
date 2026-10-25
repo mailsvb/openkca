@@ -184,7 +184,8 @@ func serve(args []string) error {
 	}
 	monitor := &pubserve.Monitor{Dir: st.Dir, Log: log}
 	srv, err := web.New(web.Config{Store: st, PasswordHash: g.PasswordHash, Catalog: cat, IdleTimeout: g.IdleTimeout,
-		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts})
+		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts,
+		WebAuthn: web.WebAuthnConfig{RPID: g.WebAuthn.RPID, RPName: g.WebAuthn.RPName, Origins: g.WebAuthn.Origins}})
 	if err != nil {
 		return err
 	}

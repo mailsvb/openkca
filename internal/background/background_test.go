@@ -81,12 +81,16 @@ func TestOpenAndClose(t *testing.T) {
 	}
 	found := false
 	for _, e := range log {
-		if e.Action == "database.unlock" && e.Detail == "background" {
+		if e.Action == "database.unlock" && strings.HasPrefix(e.Detail, "background") {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("no background unlock in the audit log: %+v", log)
+	}
+	// The configured password slot is protected while it runs.
+	if d.Handle.ConfiguredMethod() == "" {
+		t.Fatal("configured unlock method not recorded")
 	}
 	h.Close()
 	if d.Keyring() != nil || h.Get("one") != nil {

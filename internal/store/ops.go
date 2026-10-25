@@ -9,7 +9,6 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/mailsvb/openkca/internal/db"
@@ -509,94 +508,6 @@ func (h *Handle) CertToRequest(ctx context.Context, id int64, kr *vault.Keyring,
 	return rid, err
 }
 
-// ChangeDatabasePassword protects the database with newPass and the
-// Argon2id cost p. It also rotates the DEK: every key under the database
-// password is re-sealed with a fresh DEK. A backup is taken before; once
-// the change is written, every backup is deleted (they open with the old
-// password) and a new one is taken. It returns the new keyring; other
-// sessions' keyrings no longer open the keys.
-func (h *Handle) ChangeDatabasePassword(ctx context.Context, oldPass, newPass []byte, p vault.Params) (*vault.Keyring, error) {
-	if err := p.Valid(); err != nil {
-		return nil, err
-	}
-	old, err := h.Unlock(ctx, oldPass)
-	if err != nil {
-		return nil, err
-	}
-	defer old.Wipe()
-	oldParams := old.Params()
-	rows, err := h.DB.PrivateKeyRows(ctx)
-	if err != nil {
-		return nil, err
-	}
-	nk := vault.NewKeyring(p)
-	fail := func(err error) (*vault.Keyring, error) {
-		nk.Wipe()
-		return nil, err
-	}
-	type re struct {
-		id   int64
-		blob []byte
-	}
-	var updates []re
-	for _, r := range rows {
-		if r.Protection != db.ProtDEK {
-			continue
-		}
-		der, err := old.Open(r.Blob, r.Public)
-		if err != nil {
-			return fail(fmt.Errorf("key %d: %w", r.ID, err))
-		}
-		blob, err := nk.Seal(der, r.Public)
-		clear(der)
-		if err != nil {
-			return fail(err)
-		}
-		updates = append(updates, re{r.ID, blob})
-	}
-	kdf, dek, err := nk.Wrap(newPass, p)
-	if err != nil {
-		return fail(err)
-	}
-	if _, err := h.Backup(ctx); err != nil {
-		return fail(err)
-	}
-	what := "password"
-	if string(oldPass) == string(newPass) {
-		what = "key derivation"
-	}
-	err = h.DB.Write(ctx, func(tx *db.Tx) error {
-		for _, u := range updates {
-			if err := tx.UpdatePrivateKey(ctx, u.id, u.blob, db.ProtDEK); err != nil {
-				return err
-			}
-		}
-		if err := tx.SetSetting(ctx, "kdf", kdf); err != nil {
-			return err
-		}
-		if err := tx.SetSetting(ctx, "dek", dek); err != nil {
-			return err
-		}
-		return tx.Audit(ctx, "database.password", 0, fmt.Sprintf("%s changed, data key replaced, %d keys re-sealed; argon2id %d→%d MiB, %d→%d passes",
-			what, len(updates), oldParams.MemoryMiB(), p.MemoryMiB(), oldParams.Time, p.Time))
-	})
-	if err != nil {
-		return fail(err)
-	}
-	h.vacuum(ctx)
-	h.changed(ctx)
-	// The backups, the one just taken included, open with the old password.
-	n, err := h.PurgeBackups()
-	if err != nil {
-		slog.Error("deleting backups after a password change failed", "db", h.Name, "err", err)
-	} else if _, err := h.Backup(ctx); err != nil {
-		slog.Error("backup after a password change failed", "db", h.Name, "err", err)
-	} else {
-		h.DB.Audit(ctx, "backup.purge", 0, fmt.Sprintf("%d backups with the old password deleted", n))
-	}
-	return nk, nil
-}
-
 // SetKeyPassword gives a key its own password (ownPass = 1), sealed with
 // the database's Argon2id cost.
 func (h *Handle) SetKeyPassword(ctx context.Context, keyID int64, kr *vault.Keyring, kp KeyPasswords, newPass []byte) error {
@@ -633,7 +544,7 @@ func (h *Handle) rekey(ctx context.Context, keyID int64, kr *vault.Keyring, kp K
 		blob, err = kr.Seal(der, k.Public)
 	} else {
 		own = db.ProtPassword
-		blob, err = vault.SealWithPassword(der, k.Public, newPass, kr.Params())
+		blob, err = vault.SealWithPassword(der, k.Public, newPass, cost(ctx, h.DB))
 	}
 	if err != nil {
 		return err

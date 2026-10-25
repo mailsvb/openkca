@@ -13,6 +13,7 @@ import (
 
 	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/vault"
+	"github.com/mailsvb/openkca/internal/xcaimport"
 )
 
 var (
@@ -115,7 +116,7 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	}
 	kr := vault.NewKeyring(p)
 	defer kr.Wipe()
-	kdf, dek, err := kr.Wrap(password, p)
+	method, err := xcaimport.PasswordMethod(kr, password, p)
 	if err != nil {
 		return err
 	}
@@ -130,7 +131,7 @@ func (s *Store) Create(ctx context.Context, name string, password []byte, p vaul
 	if err != nil {
 		return err
 	}
-	err = db.Create(ctx, sqldb, map[string]string{"kdf": kdf, "dek": dek}, func(tx *db.Tx) error {
+	err = db.Create(ctx, sqldb, map[string]string{db.SettingArgon2id: vault.FormatCost(p)}, []db.UnlockMethod{method}, func(tx *db.Tx) error {
 		return tx.Audit(ctx, "database.create", 0, "")
 	})
 	if cerr := sqldb.Close(); err == nil {

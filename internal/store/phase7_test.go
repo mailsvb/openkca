@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/openkca/internal/db"
-	"github.com/mailsvb/openkca/internal/vault"
 )
 
 // The trash: links read as unknown while an item is there, come back on
@@ -124,11 +123,14 @@ func TestPasswordChangePurgesBackups(t *testing.T) {
 		}
 		old = append(old, p)
 	}
-	nk, err := h.ChangeDatabasePassword(ctx, testPassword, []byte("another password"), testKDF)
+	kr, m, err := h.UnlockPassword(ctx, testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nk.Wipe()
+	defer kr.Wipe()
+	if err := h.ChangePassword(ctx, kr, m.UUID, []byte("another password")); err != nil {
+		t.Fatal(err)
+	}
 	all, _ := s.Backups("pw")
 	if len(all) != 1 {
 		t.Fatalf("backups after the change: %v", all)
@@ -141,9 +143,7 @@ func TestPasswordChangePurgesBackups(t *testing.T) {
 	}
 	defer sqldb.Close()
 	g, _ := db.Open(ctx, sqldb)
-	kdf, _ := g.Setting(ctx, "kdf")
-	dek, _ := g.Setting(ctx, "dek")
-	if _, err := vault.Unwrap(kdf, dek, []byte("another password")); err != nil {
+	if _, _, err := unlockPassword(ctx, g, []byte("another password")); err != nil {
 		t.Fatalf("the backup does not open with the new password: %v", err)
 	}
 	actions := map[string]bool{}
@@ -151,7 +151,7 @@ func TestPasswordChangePurgesBackups(t *testing.T) {
 	for _, e := range log {
 		actions[e.Action] = true
 	}
-	if !actions["database.password"] || !actions["backup.purge"] {
+	if !actions["method.password"] || !actions["backup.purge"] {
 		t.Fatalf("audit %+v", log)
 	}
 }

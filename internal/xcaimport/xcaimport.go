@@ -219,13 +219,32 @@ func b64(s sql.NullString) ([]byte, error) {
 }
 
 // internal settings that do not carry over
-var dropSettings = map[string]bool{"schema": true, "pwhash": true, "legacy-keys-updated": true}
+var dropSettings = map[string]bool{"schema": true, "pwhash": true, "legacy-keys-updated": true,
+	// OpenKCA's own key settings never come from the source file.
+	"kdf": true, "dek": true, db.SettingArgon2id: true, db.SettingWebAuthnUser: true}
 
 // upgradeDefaults maps options still at XCA's default to OpenKCA's:
 // {XCA default, OpenKCA default}.
 var upgradeDefaults = map[string][2]string{
 	"default_hash": {"sha256", "auto"},
 	"serial_len":   {"64", "128"},
+}
+
+// DefaultPasswordLabel names the password a database is created with.
+const DefaultPasswordLabel = "Password"
+
+// PasswordMethod wraps the keyring's data key with password at cost p as
+// the first unlock method of a new database.
+func PasswordMethod(kr *vault.Keyring, password []byte, p vault.Params) (db.UnlockMethod, error) {
+	id, err := db.NewUUID()
+	if err != nil {
+		return db.UnlockMethod{}, err
+	}
+	kdf, wrapped, err := kr.WrapSlot(id, vault.SlotPassword, password, p)
+	if err != nil {
+		return db.UnlockMethod{}, err
+	}
+	return db.UnlockMethod{UUID: id, Type: vault.SlotPassword, Label: DefaultPasswordLabel, KDF: kdf, Wrapped: wrapped}, nil
 }
 
 // Import writes the source's content into dst, an empty database, with
@@ -270,11 +289,11 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 	for k, v := range extra {
 		settings[k] = v
 	}
-	kdf, dek, err := kr.Wrap(password, p)
+	method, err := PasswordMethod(kr, password, p)
 	if err != nil {
 		return fail(err)
 	}
-	settings["kdf"], settings["dek"] = kdf, dek
+	settings[db.SettingArgon2id] = vault.FormatCost(p)
 
 	// Keys first: decrypting is the slow part.
 	total := 0
@@ -323,7 +342,7 @@ func (s *Source) Import(ctx context.Context, dst *sql.DB, password []byte, p vau
 	if progress != nil {
 		progress(total, total)
 	}
-	err = db.Create(ctx, dst, settings, func(tx *db.Tx) error {
+	err = db.Create(ctx, dst, settings, []db.UnlockMethod{method}, func(tx *db.Tx) error {
 		all := make([]db.RawItem, 0, len(items.all))
 		for _, it := range items.keys {
 			all = append(all, it.raw)

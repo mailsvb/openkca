@@ -1,0 +1,180 @@
+{{template "head" .}}
+{{$c := .Data.Confirmed}}{{$db := .DB.Name}}{{$csrf := .CSRF}}{{$min := .Data.MinLen}}{{$maxl := .Data.MaxLabel}}
+<h1>{{T "methods.heading"}}</h1>
+<p class="muted">{{T "methods.intro"}}</p>
+
+{{if .Data.NewCode}}
+<section class="card backupcode-card" aria-labelledby="newcode-h">
+  <h2 id="newcode-h">{{T "methods.backup.new.heading"}}</h2>
+  <p>{{T "methods.backup.new.help"}}</p>
+  <p><code id="backup-code" class="backupcode">{{.Data.NewCode}}</code></p>
+  <div class="actions">
+    <button type="button" data-copy="backup-code" data-copied="{{T "methods.copied"}}">{{T "methods.copy"}}</button>
+    <button type="button" class="secondary" data-download="backup-code" data-filename="{{$db}}-backup-code.txt">{{T "methods.download"}}</button>
+    <button type="button" class="secondary" data-print>{{T "methods.print"}}</button>
+  </div>
+</section>
+{{end}}
+
+{{if $c}}
+<p class="muted small">{{T "methods.confirmed" .Data.ConfirmLeft}}</p>
+{{else}}
+<section class="card" aria-labelledby="confirm-h">
+  <h2 id="confirm-h">{{T "methods.confirm.heading"}}</h2>
+  <p class="muted">{{T "methods.confirm.help"}}</p>
+  <form method="post" action="/db/{{$db}}/methods/confirm" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="confirm-pw">{{T "methods.confirm.password"}}</label>
+    <input type="password" id="confirm-pw" name="password" autocomplete="current-password" required>
+    <div class="actions">
+      <button type="submit">{{T "methods.confirm.submit"}}</button>
+      {{if and .Data.WebAuthn .Data.Keys}}<button type="button" class="secondary" data-webauthn="confirm" data-db="{{$db}}" data-csrf="{{$csrf}}" hidden>{{T "methods.confirm.key"}}</button>{{end}}
+    </div>
+  </form>
+  <p class="error" role="alert" data-webauthn-error data-cancelled="{{T "methods.error.cancelled"}}" data-failed="{{T "methods.error.webauthn"}}" hidden></p>
+</section>
+{{end}}
+
+<section class="card" aria-labelledby="list-h">
+  <h2 id="list-h">{{T "methods.list.heading"}}</h2>
+  <table class="methods">
+    <thead><tr><th>{{T "methods.col.type"}}</th><th>{{T "methods.col.name"}}</th><th>{{T "methods.col.created"}}</th><th>{{T "methods.col.used"}}</th><th><span class="sr-only">{{T "methods.col.actions"}}</span></th></tr></thead>
+    <tbody>
+    {{range .Data.Methods}}
+      <tr>
+        <td>{{T (print "methods.type." .Type)}}</td>
+        <td>{{.Label}}
+          {{if .Configured}} <span class="badge badge-background" title="{{T "methods.badge.configured.help"}}">{{T "methods.badge.configured"}}</span>{{end}}
+          {{if .Current}} <span class="badge">{{T "methods.badge.current"}}</span>{{end}}</td>
+        <td>{{date .Created}}</td>
+        <td>{{if .LastUsed.IsZero}}<span class="muted">{{T "methods.never"}}</span>{{else}}{{time .LastUsed}}{{end}}</td>
+        <td>
+        {{if $c}}
+          <details class="methodmenu">
+            <summary>{{T "methods.manage"}}</summary>
+            <form method="post" action="/db/{{$db}}/methods/{{.UUID}}/rename" class="stack">
+              <input type="hidden" name="csrf" value="{{$csrf}}">
+              <label for="rn-{{.UUID}}">{{T "methods.rename.label"}}</label>
+              <input type="text" id="rn-{{.UUID}}" name="label" value="{{.Label}}" required maxlength="{{$maxl}}">
+              <button type="submit" class="secondary">{{T "methods.rename.submit"}}</button>
+            </form>
+            {{if not .Configured}}
+            {{if eq .Type "password"}}
+            <form method="post" action="/db/{{$db}}/methods/{{.UUID}}/password" class="stack">
+              <input type="hidden" name="csrf" value="{{$csrf}}">
+              <label for="cp-{{.UUID}}">{{T "methods.change.new"}}</label>
+              <input type="password" id="cp-{{.UUID}}" name="password" autocomplete="new-password" required minlength="{{$min}}">
+              <label for="cp2-{{.UUID}}">{{T "methods.change.new2"}}</label>
+              <input type="password" id="cp2-{{.UUID}}" name="password2" autocomplete="new-password" required minlength="{{$min}}">
+              <button type="submit" class="secondary">{{T "methods.change.submit"}}</button>
+            </form>
+            {{end}}
+            <form method="post" action="/db/{{$db}}/methods/{{.UUID}}/remove">
+              <input type="hidden" name="csrf" value="{{$csrf}}">
+              <button type="submit" class="danger">{{T "methods.remove.submit"}}</button>
+            </form>
+            {{else}}
+            <p class="muted small">{{T "methods.configured.locked"}}</p>
+            {{end}}
+          </details>
+        {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <p class="muted small">{{T "methods.remove.help"}}</p>
+</section>
+
+<section class="card" aria-labelledby="backup-h">
+  <h2 id="backup-h">{{T "methods.backup.heading"}}</h2>
+  {{if .Data.Backup}}
+  <p>{{T "methods.backup.exists" (date .Data.Backup.Created)}}</p>
+  {{else}}
+  <p class="warn">{{T "methods.backup.none"}}</p>
+  {{end}}
+  <p class="muted small">{{T "methods.backup.help"}}</p>
+  {{if $c}}
+  <form method="post" action="/db/{{$db}}/methods/backup-code">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <button type="submit"{{if .Data.Backup}} class="secondary"{{end}}>{{if .Data.Backup}}{{T "methods.backup.regenerate"}}{{else}}{{T "methods.backup.generate"}}{{end}}</button>
+  </form>
+  {{end}}
+</section>
+
+{{if $c}}
+<div class="grid2">
+<section class="card" aria-labelledby="addpw-h">
+  <h2 id="addpw-h">{{T "methods.addpw.heading"}}</h2>
+  {{if lt .Data.Passwords .Data.MaxPasswords}}
+  <form method="post" action="/db/{{$db}}/methods/password" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="addpw-label">{{T "methods.add.label"}}</label>
+    <input type="text" id="addpw-label" name="label" required maxlength="{{$maxl}}" autocomplete="off">
+    <label for="addpw-pw">{{T "methods.addpw.password"}}</label>
+    <input type="password" id="addpw-pw" name="password" autocomplete="new-password" required minlength="{{$min}}">
+    <label for="addpw-pw2">{{T "methods.addpw.password2"}}</label>
+    <input type="password" id="addpw-pw2" name="password2" autocomplete="new-password" required minlength="{{$min}}">
+    <span class="muted small">{{T "methods.addpw.help" $min}}</span>
+    <button type="submit">{{T "methods.addpw.submit"}}</button>
+  </form>
+  {{else}}
+  <p class="muted">{{T "methods.limit.passwords" .Data.MaxPasswords}}</p>
+  {{end}}
+</section>
+<section class="card" aria-labelledby="addkey-h">
+  <h2 id="addkey-h">{{T "methods.addkey.heading"}}</h2>
+  {{if not .Data.WebAuthn}}
+  <p class="muted">{{T "methods.webauthn.off"}}</p>
+  {{else if ge .Data.Keys .Data.MaxKeys}}
+  <p class="muted">{{T "methods.limit.keys" .Data.MaxKeys}}</p>
+  {{else}}
+  <p class="muted small">{{T "methods.addkey.help"}}</p>
+  <form class="stack" data-webauthn="register" data-db="{{$db}}" data-csrf="{{$csrf}}">
+    <label for="addkey-label">{{T "methods.add.label"}}</label>
+    <input type="text" id="addkey-label" name="label" required maxlength="{{$maxl}}" autocomplete="off">
+    <fieldset>
+      <legend>{{T "methods.addkey.kind"}}</legend>
+      <label><input type="radio" name="type" value="security_key" checked> {{T "methods.type.security_key"}}</label>
+      <span class="muted small">{{T "methods.addkey.security_key.help"}}</span>
+      <label><input type="radio" name="type" value="passkey"> {{T "methods.type.passkey"}}</label>
+      <span class="muted small">{{T "methods.addkey.passkey.help"}}</span>
+    </fieldset>
+    <button type="submit">{{T "methods.addkey.submit"}}</button>
+    <p class="muted small" data-webauthn-status hidden>{{T "methods.addkey.touch"}}</p>
+    <p class="muted small" data-webauthn-unsupported hidden>{{T "methods.webauthn.browser"}}</p>
+  </form>
+  <p class="error" role="alert" data-webauthn-error data-cancelled="{{T "methods.error.cancelled"}}" data-failed="{{T "methods.error.webauthn"}}" hidden></p>
+  {{end}}
+</section>
+</div>
+
+<details class="card">
+  <summary>{{T "dbpw.kdf.heading"}}</summary>
+  <form method="post" action="/db/{{$db}}/methods/kdf" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <p class="muted small">{{T "methods.kdf.help" .Data.Default.MemoryMiB .Data.Default.Time}}</p>
+    <label for="kdf_memory">{{T "dbpw.kdf.memory"}}</label>
+    <select id="kdf_memory" name="kdf_memory">{{$m := .Data.Memory}}{{range .Data.MemoryChoices}}<option value="{{.}}"{{if eq . $m}} selected{{end}}>{{T "dbpw.kdf.mib" .}}</option>{{end}}</select>
+    <label for="kdf_time">{{T "dbpw.kdf.time"}}</label>
+    <select id="kdf_time" name="kdf_time">{{$t := .Data.Time}}{{range .Data.TimeChoices}}<option value="{{.}}"{{if eq . $t}} selected{{end}}>{{.}}</option>{{end}}</select>
+    <button type="submit" class="secondary">{{T "methods.kdf.submit"}}</button>
+  </form>
+</details>
+
+<section class="card danger-zone" aria-labelledby="rekey-h">
+  <h2 id="rekey-h">{{T "methods.rekey.heading"}}</h2>
+  {{if .Data.Background}}
+  <p class="muted">{{T "methods.rekey.background"}}</p>
+  {{else}}
+  <p>{{T "methods.rekey.help"}}</p>
+  <form method="post" action="/db/{{$db}}/methods/rekey" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label for="rekey-pw">{{T "methods.rekey.password"}}</label>
+    <input type="password" id="rekey-pw" name="password" autocomplete="current-password" required>
+    <button type="submit" class="danger">{{T "methods.rekey.submit"}}</button>
+  </form>
+  {{end}}
+</section>
+{{end}}
+{{template "foot" .}}

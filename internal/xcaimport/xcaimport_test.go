@@ -78,7 +78,7 @@ func TestImportFixtures(t *testing.T) {
 		if n := len(snap.Keys) + len(snap.Certs) + len(snap.Requests) + len(snap.CRLs) + len(snap.Templates); n != rep.Items {
 			t.Errorf("%s: %d items loaded, %d written", name, n, rep.Items)
 		}
-		if _, ok := snap.Settings["pwhash"]; ok || snap.Settings["kdf"] == "" {
+		if _, ok := snap.Settings["pwhash"]; ok || snap.Settings["argon2id"] == "" {
 			t.Errorf("%s: settings %v", name, snap.Settings)
 		}
 		var fk int

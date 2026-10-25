@@ -3,38 +3,11 @@ package vault
 import (
 	"bytes"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 )
 
 var cheap = Params{MemoryKiB: 64, Time: 1, Threads: 1}
-
-func TestWrapUnwrap(t *testing.T) {
-	k := NewKeyring(cheap)
-	kdf, dek, err := k.Wrap([]byte("pw"), cheap)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(kdf, "argon2id$v=19$m=64,t=1,p=1$") {
-		t.Fatalf("kdf %q", kdf)
-	}
-	k2, err := Unwrap(kdf, dek, []byte("pw"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(k.dek, k2.dek) || k2.Params() != cheap {
-		t.Fatal("unwrapped keyring differs")
-	}
-	if _, err := Unwrap(kdf, dek, []byte("wrong")); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("wrong password: %v", err)
-	}
-	// The parameters are bound to the wrapped DEK.
-	tampered := strings.Replace(kdf, "t=1", "t=2", 1)
-	if _, err := Unwrap(tampered, dek, []byte("pw")); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("tampered kdf: %v", err)
-	}
-}
 
 func TestParseKDFLimits(t *testing.T) {
 	for _, s := range []string{

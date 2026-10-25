@@ -44,7 +44,7 @@ func TestCreate(t *testing.T) {
 		t.Fatalf("lookup: %+v %v", info, err)
 	}
 	h, snap := load(t, s, "new-ca")
-	if _, ok := snap.Settings["pwhash"]; ok || snap.Settings["kdf"] == "" || snap.Settings["dek"] == "" {
+	if _, ok := snap.Settings["pwhash"]; ok || snap.Settings["argon2id"] == "" || snap.Settings["kdf"] != "" {
 		t.Fatalf("key settings %v", snap.Settings)
 	}
 	if _, err := h.Unlock(ctx, testPassword); err != nil {

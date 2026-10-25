@@ -64,14 +64,27 @@ type Info struct {
 	XCA     bool   // an .xdb file to import
 	Schema  int    // OpenKCA's schema, or XCA's for an .xdb file
 	Detail  string // why a file is invalid
+	// Methods counts an OpenKCA database's unlock methods by type (read
+	// before login: only types are shown, nothing secret).
+	Methods map[string]int
 
 	Label      string // the name shown in the UI: the configured name, else Name
 	Configured bool   // listed in the configuration file
 	Background bool   // OpenKCA keeps it open on its own (configured with a password)
 }
 
-// Version is the schema setting of a database file.
-type Version struct{ Schema int }
+// HasWebAuthn reports whether the database has a security key or passkey.
+func (i Info) HasWebAuthn() bool { return i.Methods["security_key"]+i.Methods["passkey"] > 0 }
+
+// HasBackupCode reports whether the database has a backup code.
+func (i Info) HasBackupCode() bool { return i.Methods["backup_code"] > 0 }
+
+// Version is the schema setting of a database file and, for an OpenKCA
+// database, the number of unlock methods by type.
+type Version struct {
+	Schema  int
+	Methods map[string]int
+}
 
 // dsn builds a modernc.org/sqlite connection string, with SQLite's default
 // rollback journal. secure_delete overwrites deleted content, so replaced
@@ -107,7 +120,7 @@ func Classify(ctx context.Context, path string, deep bool) (st Status, xca bool,
 	if err != nil {
 		return Invalid, true, v, err.Error()
 	}
-	v = Version{info.Schema}
+	v = Version{Schema: info.Schema}
 	switch info.Kind {
 	case xcaimport.KindXCA:
 		return Upgradable, true, v, ""
@@ -156,11 +169,12 @@ func classifyOKCA(ctx context.Context, path string, deep bool) (st Status, v Ver
 	}
 	// An older schema from MinMigratable on is upgraded in place when the
 	// database is opened (Acquire).
-	for _, k := range []string{"kdf", "dek"} {
-		var val string
-		if err := sqldb.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", k).Scan(&val); err != nil || val == "" {
-			return Invalid, v, "no key encryption settings", true
-		}
+	// A database written before the schema reset of 0.12.0 has no unlock
+	// methods.
+	types, err := db.MethodTypes(ctx, sqldb)
+	v.Methods = types
+	if err != nil || types["password"] == 0 {
+		return Invalid, v, "no unlock methods (a database from a development version before 0.12.0)", true
 	}
 	return Supported, v, "", true
 }
@@ -367,7 +381,7 @@ func (s *Store) Lookup(ctx context.Context, name string) (Info, error) {
 		st, detail = Invalid, "file extension does not match the content"
 	}
 	info := Info{Name: name, Path: path, Size: fi.Size(), ModTime: fi.ModTime(), Status: st, XCA: xca,
-		Schema: v.Schema, Detail: detail, Label: name}
+		Schema: v.Schema, Detail: detail, Label: name, Methods: v.Methods}
 	if c, ok := s.conf[name]; ok {
 		info.Label, info.Configured, info.Background = c.Label, true, c.Background
 	}
@@ -391,6 +405,9 @@ type Handle struct {
 	watchers []chan struct{}
 
 	crlMu sync.Mutex // CRLs signed with the CA's defaults, one at a time
+
+	configured string     // the password slot the configuration file opens (mu)
+	methodMu   sync.Mutex // creating the WebAuthn user handle
 }
 
 // Acquire opens the named database or returns the already open handle. Each

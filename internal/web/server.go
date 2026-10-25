@@ -6,6 +6,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/mailsvb/openkca/internal/auth"
 	"github.com/mailsvb/openkca/internal/db"
@@ -48,6 +51,8 @@ type Config struct {
 	Logger       *slog.Logger
 	// CRLAlerts returns the published CRLs that expire soon or expired.
 	CRLAlerts func() []pubserve.Alert
+	// WebAuthn enables security keys and passkeys as unlock methods.
+	WebAuthn WebAuthnConfig
 }
 
 // Server is the HTTP handler.
@@ -61,6 +66,8 @@ type Server struct {
 	keyLimit   *auth.Limiter // own key passwords, per database session
 	loginSlots chan struct{} // concurrent server password checks
 	dh         dhJobs
+	webauthn   *webauthn.WebAuthn // nil: security keys and passkeys are off
+	ceremonies ceremonies
 	templates  map[string]*template.Template // by language tag
 	log        *slog.Logger
 	mux        *http.ServeMux
@@ -89,6 +96,17 @@ func New(cfg Config) (*Server, error) {
 		log:        cfg.Logger,
 	}
 	s.dh.m = map[string]*dhJob{}
+	if w := cfg.WebAuthn; w.RPID != "" {
+		name := w.RPName
+		if name == "" {
+			name = "OpenKCA"
+		}
+		wa, err := webauthn.New(&webauthn.Config{RPID: w.RPID, RPDisplayName: name, RPOrigins: w.Origins})
+		if err != nil {
+			return nil, fmt.Errorf("webauthn: %w", err)
+		}
+		s.webauthn = wa
+	}
 	s.auth.OnEnd = s.dbs.EndServer
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
@@ -113,6 +131,7 @@ func (s *Server) Run(ctx context.Context) {
 			s.srvLimit.Sweep()
 			s.dbLimit.Sweep()
 			s.keyLimit.Sweep()
+			s.ceremonies.sweep()
 		}
 	}
 }
@@ -155,8 +174,23 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /db/{name}/dump", s.requireServer(s.requireDB(s.dump)))
 	m.HandleFunc("POST /db/{name}/options", s.requireServer(s.requireDB(s.saveOptions)))
 	m.HandleFunc("POST /db/{name}/expert", s.requireServer(s.requireDB(s.setExpert)))
-	m.HandleFunc("GET /db/{name}/password", s.requireServer(s.requireDB(s.dbPasswordPage)))
-	m.HandleFunc("POST /db/{name}/password", s.requireServer(s.requireDB(s.dbPassword)))
+	m.HandleFunc("GET /db/{name}/password", s.requireServer(s.requireDB(s.passwordRedirect)))
+	m.HandleFunc("GET /db/{name}/methods", s.requireServer(s.requireDB(s.methodsPage)))
+	m.HandleFunc("POST /db/{name}/methods/confirm", s.requireServer(s.requireDB(s.confirmPassword)))
+	m.HandleFunc("POST /db/{name}/methods/password", s.requireServer(s.requireDB(s.addPassword)))
+	m.HandleFunc("POST /db/{name}/methods/backup-code", s.requireServer(s.requireDB(s.backupCode)))
+	m.HandleFunc("POST /db/{name}/methods/kdf", s.requireServer(s.requireDB(s.setKDF)))
+	m.HandleFunc("POST /db/{name}/methods/rekey", s.requireServer(s.requireDB(s.rekey)))
+	m.HandleFunc("POST /db/{name}/methods/{id}/rename", s.requireServer(s.requireDB(s.renameMethod)))
+	m.HandleFunc("POST /db/{name}/methods/{id}/password", s.requireServer(s.requireDB(s.changeMethodPassword)))
+	m.HandleFunc("POST /db/{name}/methods/{id}/remove", s.requireServer(s.requireDB(s.removeMethod)))
+	m.HandleFunc("POST /db/{name}/webauthn/login/begin", s.requireServer(s.webauthnBegin("login")))
+	m.HandleFunc("POST /db/{name}/webauthn/login/finish", s.requireServer(s.webauthnLoginFinish))
+	m.HandleFunc("POST /db/{name}/webauthn/confirm/begin", s.requireServer(s.requireDB(s.webauthnBegin("confirm"))))
+	m.HandleFunc("POST /db/{name}/webauthn/confirm/finish", s.requireServer(s.requireDB(s.webauthnConfirmFinish)))
+	m.HandleFunc("POST /db/{name}/webauthn/register/begin", s.requireServer(s.requireDB(s.registerBegin)))
+	m.HandleFunc("POST /db/{name}/webauthn/register/finish", s.requireServer(s.requireDB(s.registerFinish)))
+	m.HandleFunc("POST /db/{name}/webauthn/register/prf", s.requireServer(s.requireDB(s.registerPRF)))
 	m.HandleFunc("GET /db/{name}/new/key", s.requireServer(s.requireDB(s.newKeyPage)))
 	m.HandleFunc("POST /db/{name}/new/key", s.requireServer(s.requireDB(s.newKey)))
 	m.HandleFunc("GET /db/{name}/new/sshkey", s.requireServer(s.requireDB(s.newSSHKeyPage)))
@@ -393,7 +427,7 @@ func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 	open := s.dbs.OpenDatabases(serverSession(r).ID)
 	p := &page{Title: "databases.title", Data: map[string]any{
 		"Databases": infos, "Open": open, "Selected": r.URL.Query().Get("db"),
-		"MaxUploadMB": s.cfg.MaxUpload >> 20, "MinLen": store.MinPasswordLen,
+		"MaxUploadMB": s.cfg.MaxUpload >> 20, "MinLen": store.MinPasswordLen, "WebAuthn": s.webauthn != nil,
 		"CRLAlerts": s.crlAlerts(),
 	}}
 	q := r.URL.Query()
@@ -454,6 +488,30 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 	s.dbLimit.Fail(name)
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
+	if r.PostFormValue("method") == "backup_code" && !store.IsXCAName(name) {
+		h, err := s.store.Acquire(r.Context(), name)
+		if err != nil {
+			openErr(err)
+			return
+		}
+		kr, err := h.UnlockBackupCode(r.Context(), r.PostFormValue("code"))
+		if err != nil {
+			if errors.Is(err, pki.ErrWrongPassword) {
+				h.Audit(r.Context(), "database.unlock_failed", 0, "backup code")
+				s.log.Warn("database login with the backup code failed", "db", name, "ip", clientIP(r))
+				h.Release()
+				back("dblogin.error.code")
+				return
+			}
+			h.Release()
+			openErr(err)
+			return
+		}
+		s.dbLimit.Reset(name)
+		s.openSession(w, r, name, h, kr, &db.UnlockMethod{Type: "backup_code", Label: "backup code"})
+		http.Redirect(w, r, dbPath(name)+"methods?notice=codeused", http.StatusSeeOther)
+		return
+	}
 	if store.IsXCAName(name) {
 		// An XCA file is imported into a new OpenKCA
 		// database in the background; the session waits for it on the
@@ -475,23 +533,17 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 		openErr(err)
 		return
 	}
-	kr, err := h.Unlock(r.Context(), pw)
+	kr, m, err := h.UnlockPassword(r.Context(), pw)
 	if err != nil {
 		if errors.Is(err, pki.ErrWrongPassword) {
-			h.Audit(r.Context(), "database.unlock_failed", 0, "")
+			h.Audit(r.Context(), "database.unlock_failed", 0, "password")
 		}
 		h.Release()
 		openErr(err)
 		return
 	}
 	s.dbLimit.Reset(name)
-	h.Audit(r.Context(), "database.unlock", 0, "")
-	if c, err := r.Cookie(dbCookie); err == nil {
-		s.dbs.End(c.Value)
-	}
-	ds := s.dbs.Create(serverSession(r).ID, name, h, kr, nil)
-	s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
-	s.log.Info("database opened", "db", name, "ip", clientIP(r))
+	s.openSession(w, r, name, h, kr, m)
 	http.Redirect(w, r, dbPath(name), http.StatusSeeOther)
 }
 

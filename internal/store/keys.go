@@ -12,30 +12,6 @@ import (
 	"github.com/mailsvb/openkca/internal/vault"
 )
 
-// Unlock opens the DEK of a current database with the database password.
-// A wrong password returns pki.ErrWrongPassword.
-func (h *Handle) Unlock(ctx context.Context, password []byte) (*vault.Keyring, error) {
-	kdf, err := h.DB.Setting(ctx, "kdf")
-	if err != nil {
-		return nil, err
-	}
-	dek, err := h.DB.Setting(ctx, "dek")
-	if err != nil {
-		return nil, err
-	}
-	return vault.Unwrap(kdf, dek, password)
-}
-
-// KDFParams returns the Argon2id cost of a current database.
-func (h *Handle) KDFParams(ctx context.Context) (vault.Params, error) {
-	kdf, err := h.DB.Setting(ctx, "kdf")
-	if err != nil {
-		return vault.Params{}, err
-	}
-	p, _, err := vault.ParseKDF(kdf)
-	return p, err
-}
-
 // keyAlgorithm names the algorithm of a public key as stored, and its size.
 func keyAlgorithm(spki []byte) (string, int) {
 	code, bits := pki.StoredKeyType(spki)
@@ -102,11 +78,7 @@ func (h *Handle) keyDER(ctx context.Context, keyID int64, keyType string, kr *va
 // upgradeOwnPassword re-seals a key with its own password from an XCA form
 // into OpenKCA's form. Failure only costs the upgrade, so it is logged.
 func (h *Handle) upgradeOwnPassword(ctx context.Context, keyID int64, spki, der, pw []byte, kr *vault.Keyring) {
-	p := vault.Default
-	if kr != nil {
-		p = kr.Params()
-	}
-	blob, err := vault.SealWithPassword(der, spki, pw, p)
+	blob, err := vault.SealWithPassword(der, spki, pw, cost(ctx, h.DB))
 	if err == nil {
 		err = h.DB.Write(ctx, func(tx *db.Tx) error { return tx.UpdatePrivateKey(ctx, keyID, blob, db.ProtPassword) })
 	}
