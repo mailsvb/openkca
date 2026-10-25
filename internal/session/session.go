@@ -26,6 +26,49 @@ type Session struct {
 	conversion *store.Conversion
 	lastSeen   time.Time
 	pending    Wipeable
+	method     string    // the unlock method the session was opened with
+	confirmed  time.Time // until when changes to unlock methods are allowed
+}
+
+// ConfirmFor is how long a login or a re-confirmation allows changes to
+// the unlock methods (a variable for tests).
+var ConfirmFor = 5 * time.Minute
+
+// Confirm records that the user just proved an unlock method again (or
+// logged in): changes to the unlock methods are allowed for ConfirmFor.
+func (s *Session) Confirm() {
+	s.mu.Lock()
+	s.confirmed = time.Now().Add(ConfirmFor)
+	s.mu.Unlock()
+}
+
+// Confirmed reports whether changes to the unlock methods are allowed.
+func (s *Session) Confirmed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Now().Before(s.confirmed)
+}
+
+// ConfirmedUntil returns the end of the confirmation window.
+func (s *Session) ConfirmedUntil() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.confirmed
+}
+
+// SetMethod records the unlock method the session was opened with.
+func (s *Session) SetMethod(id string) {
+	s.mu.Lock()
+	s.method = id
+	s.mu.Unlock()
+}
+
+// Method returns the UUID of the unlock method the session was opened
+// with, "" if unknown.
+func (s *Session) Method() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.method
 }
 
 // Wipeable is per-session state that holds secrets (an import in review
@@ -90,6 +133,7 @@ func (s *Session) wipe() {
 		s.pending.Wipe()
 		s.pending = nil
 	}
+	s.confirmed = time.Time{}
 	s.mu.Unlock()
 }
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"github.com/mailsvb/openkca/internal/db"
 	"html/template"
@@ -34,6 +35,7 @@ type dbHeader struct {
 	Label      string // the name shown: the configured name, else Name
 	Background bool   // OpenKCA keeps the database open on its own
 	Schema     int
+	NoBackup   bool // the database has no backup code yet
 }
 
 var tabs = []string{"keys", "requests", "certs", "templates", "crls"}
@@ -168,6 +170,9 @@ func (s *Server) header(ds *session.Session) *dbHeader {
 	h := &dbHeader{Name: ds.DBName, Label: ds.DBName, Schema: db.Schema}
 	if c, ok := s.store.ConfiguredDB(ds.DBName); ok {
 		h.Label, h.Background = c.Label, c.Background
+	}
+	if ds.Handle != nil && ds.Ready() {
+		h.NoBackup = !ds.Handle.HasBackupCode(context.Background())
 	}
 	return h
 }

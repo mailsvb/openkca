@@ -18,7 +18,7 @@ func newDB(t *testing.T) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
-	if err := Create(context.Background(), db, map[string]string{}, nil); err != nil {
+	if err := Create(context.Background(), db, map[string]string{}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	return db

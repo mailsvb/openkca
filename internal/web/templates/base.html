@@ -37,6 +37,7 @@
   {{end}}
 </header>
 <main>
+{{if .DB}}{{if .DB.NoBackup}}<p class="warn small nobackup" role="note">{{T "methods.nobackup"}} <a href="/db/{{.DB.Name}}/methods">{{T "methods.nobackup.link"}}</a></p>{{end}}{{end}}
 {{if .Error}}<p class="error" role="alert">{{if .ErrorArg}}{{T .Error .ErrorArg}}{{else}}{{T .Error}}{{end}}</p>{{end}}
 {{if .Notice}}<p class="notice" role="status">{{if .NoticeArg}}{{T .Notice .NoticeArg}}{{else}}{{T .Notice}}{{end}}</p>{{end}}
 {{end}}

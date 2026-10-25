@@ -25,7 +25,7 @@ import (
 
 const serverPassword = "serverpass1"
 
-func newTestServer(t *testing.T) (*httptest.Server, *Server) {
+func newTestServer(t *testing.T, opts ...func(*Config)) (*httptest.Server, *Server) {
 	t.Helper()
 	dir := t.TempDir()
 	for _, name := range []string{"sample.xdb", "variants.xdb", "legacy.xdb"} {
@@ -45,8 +45,12 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := New(Config{Store: st, PasswordHash: auth.HashPassword([]byte(serverPassword)), Catalog: cat,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	cfg := Config{Store: st, PasswordHash: auth.HashPassword([]byte(serverPassword)), Catalog: cat,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	srv, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +74,9 @@ func body(t *testing.T, r *http.Response) string {
 }
 
 var csrfRE = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+
+// methodIDRE finds the unlock methods on the methods page by their rename form.
+var methodIDRE = regexp.MustCompile(`/methods/([0-9a-f-]{36})/rename`)
 
 func login(t *testing.T, ts *httptest.Server, c *http.Client) string {
 	t.Helper()
@@ -403,33 +410,48 @@ func TestEditorFlow(t *testing.T) {
 	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body(t, r), "mandatory subject entry O") {
 		t.Fatal("mandatory_dn not enforced")
 	}
-	// Database password change keeps this session working.
-	r = post("/db/ed/password", url.Values{"old": {"password1"}, "new": {"short"}, "new2": {"short"}})
-	if r.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("short password: %d", r.StatusCode)
+	// Unlock methods: a second password, a change, a removal, the cost.
+	if loc := post("/db/ed/methods/password", url.Values{"label": {"Second"}, "password": {"short"}, "password2": {"short"}}).Header.Get("Location"); !strings.Contains(loc, "error=short") {
+		t.Fatalf("short password: %s", loc)
 	}
-	r = post("/db/ed/password", url.Values{"old": {"wrong pass"}, "new": {"password2"}, "new2": {"password2"}})
-	if r.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body(t, r), "current password is wrong") {
-		t.Fatal("wrong old password accepted")
+	if loc := post("/db/ed/methods/password", url.Values{"label": {"Second"}, "password": {"password2"}, "password2": {"password3"}}).Header.Get("Location"); !strings.Contains(loc, "error=mismatch") {
+		t.Fatalf("mismatch: %s", loc)
 	}
-	r = post("/db/ed/password", url.Values{"old": {"password1"}, "new": {"password2"}, "new2": {"password2"}})
-	if !strings.Contains(body(t, r), "was changed") {
-		t.Fatal("password change")
+	if loc := post("/db/ed/methods/password", url.Values{"label": {"Second"}, "password": {"password2"}, "password2": {"password2"}}).Header.Get("Location"); !strings.Contains(loc, "notice=added") {
+		t.Fatalf("add password: %s", loc)
 	}
-	// Only the key derivation cost, with an offered value.
-	r = post("/db/ed/password", url.Values{"old": {"password2"}, "kdf_memory": {"100"}, "kdf_time": {"1"}})
-	if r.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unoffered memory cost: %d", r.StatusCode)
+	r, _ = c.Get(ts.URL + "/db/ed/methods")
+	ids := methodIDRE.FindAllStringSubmatch(body(t, r), -1)
+	if len(ids) != 2 {
+		t.Fatalf("methods on the page: %v", ids)
 	}
-	r = post("/db/ed/password", url.Values{"old": {"password2"}, "kdf_memory": {"64"}, "kdf_time": {"1"}})
-	if b := body(t, r); !strings.Contains(b, "was changed") || !strings.Contains(b, `<option value="64" selected>`) {
-		t.Fatal("key derivation change")
+	if loc := post("/db/ed/methods/"+ids[0][1]+"/password", url.Values{"password": {"password4"}, "password2": {"password4"}}).Header.Get("Location"); !strings.Contains(loc, "notice=password") {
+		t.Fatalf("change password: %s", loc)
+	}
+	if loc := post("/db/ed/methods/"+ids[1][1]+"/remove", url.Values{}).Header.Get("Location"); !strings.Contains(loc, "notice=removed") {
+		t.Fatalf("remove: %s", loc)
+	}
+	if loc := post("/db/ed/methods/"+ids[0][1]+"/remove", url.Values{}).Header.Get("Location"); !strings.Contains(loc, "error=last") {
+		t.Fatalf("remove the last password: %s", loc)
+	}
+	if loc := post("/db/ed/methods/kdf", url.Values{"kdf_memory": {"100"}, "kdf_time": {"1"}}).Header.Get("Location"); !strings.Contains(loc, "error=kdf") {
+		t.Fatalf("unoffered memory cost: %s", loc)
+	}
+	if loc := post("/db/ed/methods/kdf", url.Values{"kdf_memory": {"64"}, "kdf_time": {"1"}}).Header.Get("Location"); !strings.Contains(loc, "notice=kdf") {
+		t.Fatalf("cost: %s", loc)
+	}
+	r, _ = c.Get(ts.URL + "/db/ed/methods")
+	if b := body(t, r); !strings.Contains(b, `<option value="64" selected>`) || !strings.Contains(b, "no backup code yet") {
+		t.Fatal("methods page after the changes")
+	}
+	if r, _ := c.Get(ts.URL + "/db/ed/password"); r.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("old password page: %d", r.StatusCode)
 	}
 	r = post("/db/ed/item/"+rootID+"/to-request", url.Values{})
 	if loc := r.Header.Get("Location"); !strings.Contains(loc, "notice=created") {
 		t.Fatalf("to-request after password change: %s", loc)
 	}
-	// after a password change only the backup of the new state remains
+	// after a password change and a removal only the backup of the new state remains
 	if b, _ := srv.store.Backups("ed"); len(b) != 1 {
 		t.Fatalf("backups after the changes: %v", b)
 	}

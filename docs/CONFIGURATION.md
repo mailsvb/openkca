@@ -45,6 +45,19 @@ databases:
 | `idle_timeout`   | `30m`    | idle timeout of server and database sessions                     |
 | `max_upload_mb`  | `256`    | largest upload (database file or items to import), in MB         |
 | `password_hash`  | required | argon2id hash of the server password, from `openkca set-password`  |
+| `webauthn`       |          | security keys and passkeys as unlock methods (below)             |
+
+| `webauthn` key | Default | Meaning |
+| -------------- | ------- | ------- |
+| `rp_id`   |  | the host name users open OpenKCA with (a domain name, not an IP address); without it security keys and passkeys are off |
+| `rp_name` | `OpenKCA` | the name authenticators show |
+| `origins` | `https://<rp_id>` and `https://<rp_id>:<port of listen>` | `https://` origins on `rp_id` or a subdomain that may use them |
+
+Security keys and passkeys are bound to `rp_id`: one added under
+`ca.example.org` does not work when OpenKCA is opened by another name or
+an IP address, so every database keeps at least one password. Browsers
+refuse WebAuthn on a certificate warning, so the browser must trust
+OpenKCA's TLS certificate (for example one issued by one of your CAs).
 
 Relative paths (`data_dir`, `tls_cert`, `tls_key`) are relative to the
 configuration file's folder; unknown keys are an error.
@@ -70,18 +83,20 @@ Each entry of `databases` names one OpenKCA database:
 | `name`     | the name shown in the web UI (unique)                                       |
 | `type`     | `file`, the only type: a `.okca` file                                        |
 | `path`     | the file, relative to `data_dir`; may be in a subfolder, never outside it   |
-| `password` | optional: the database password, to keep the database open in the background |
+| `password` | optional: one of the database's passwords, to keep it open in the background |
 
 A database with a `password` is opened when OpenKCA starts and stays open
 with its data key unlocked, so that OpenKCA can do CA work on it on its own.
 OpenKCA refuses to start when such a database is missing, locked by another
 process or the password is wrong. Logging into it in the web UI still needs
-the database password; the web session unlocks its own copy of the key.
-Its password cannot be changed in the web UI, since that would replace the
-data key under the running background session: remove the password from
-the configuration, restart, change it, put the new one in and restart
-again. Keep a configuration file with passwords readable by its owner only;
-OpenKCA warns at startup otherwise.
+one of its unlock methods; the web session unlocks its own copy of the key.
+The password the configuration file uses cannot be changed or removed in
+the web UI, and the data key cannot be replaced there, since that would
+leave the running background session behind: remove the password from the
+configuration, restart, change it, put the new one in and restart again.
+Other unlock methods can be added and removed as usual. Keep a
+configuration file with passwords readable by its owner only; OpenKCA
+warns at startup otherwise.
 
 A database without `password` is only listed under its name. Configured
 databases come first on the login page; all other `.okca` and `.xdb` files
@@ -173,13 +188,13 @@ clients reject every certificate below that CA.
 
 A backup is written right after an import, before a database of an
 older schema is upgraded on opening, and before every
-change that rewrites a whole database (database password or Argon2id
-cost change),
+change that rewrites a whole database (replacing the data key),
 using SQLite's `VACUUM INTO`, which copies within one read transaction.
 How many are kept is a database option: at most 10 and none older than
-90 days by default (the newest always stays). After a password change
-every older backup is deleted, since they still open with the old
-password, and a new one is written.
+90 days by default (the newest always stays). After a password change,
+the removal of an unlock method, a new backup code or a new data key
+every older backup is deleted, since they still open with what was
+replaced, and a new one is written.
 
 Two OpenKCA processes cannot open the same database (`flock` on the `.lock`
 file); a database kept open in the background holds its lock as long as

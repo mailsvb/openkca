@@ -119,14 +119,22 @@ func TestIssueHierarchy(t *testing.T) {
 		t.Fatal("delete CA")
 	}
 
-	// Passwords: a change rotates the DEK.
-	if _, err := h.ChangeDatabasePassword(ctx, []byte("wrong"), []byte("new password"), testKDF); !errors.Is(err, pki.ErrWrongPassword) {
-		t.Fatalf("wrong old password: %v", err)
+	// Replacing the data key re-seals every key; a password change then
+	// re-wraps the kept password.
+	if _, err := h.ReplaceDataKey(ctx, []byte("wrong")); !errors.Is(err, pki.ErrWrongPassword) {
+		t.Fatalf("wrong password: %v", err)
 	}
 	oldKR := krOf(t, h)
 	rows, _ := h.DB.PrivateKeyRows(ctx)
-	nk, err := h.ChangeDatabasePassword(ctx, testPassword, []byte("new password"), testKDF)
+	nk, err := h.ReplaceDataKey(ctx, testPassword)
 	if err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := h.Methods(ctx)
+	if len(ms) != 1 {
+		t.Fatalf("methods after replacing the data key: %+v", ms)
+	}
+	if err := h.ChangePassword(ctx, nk, ms[0].UUID, []byte("new password")); err != nil {
 		t.Fatal(err)
 	}
 	// secure_delete and VACUUM leave no old ciphertext in the file.

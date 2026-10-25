@@ -282,15 +282,7 @@ func verifyImport(ctx context.Context, path string, password []byte, kr *vault.K
 	if err := sqldb.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fk); err != nil || fk != 0 {
 		return fmt.Errorf("%d broken links (%v)", fk, err)
 	}
-	kdf, err := d.Setting(ctx, "kdf")
-	if err != nil {
-		return err
-	}
-	dek, err := d.Setting(ctx, "dek")
-	if err != nil {
-		return err
-	}
-	check, err := vault.Unwrap(kdf, dek, password)
+	check, _, err := unlockPassword(ctx, d, password)
 	if err != nil {
 		return fmt.Errorf("the password does not open the new database: %w", err)
 	}

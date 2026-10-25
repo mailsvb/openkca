@@ -153,3 +153,43 @@ func TestLoadAndPermissions(t *testing.T) {
 		t.Fatalf("warning = %q", w)
 	}
 }
+
+func TestWebAuthn(t *testing.T) {
+	parse := func(listen, w string) (*Config, error) {
+		return Parse([]byte("general:\n  data_dir: data\n  listen: \""+listen+"\"\n"+w), "/base")
+	}
+	c, err := parse(":8443", "")
+	if err != nil || c.General.WebAuthn.Enabled() {
+		t.Fatalf("off by default: %+v %v", c.General.WebAuthn, err)
+	}
+	c, err = parse(":8443", "  webauthn:\n    rp_id: CA.Example.org\n")
+	w := c.General.WebAuthn
+	if err != nil || !w.Enabled() || w.RPID != "ca.example.org" || w.RPName != DefaultRPName ||
+		len(w.Origins) != 2 || w.Origins[0] != "https://ca.example.org" || w.Origins[1] != "https://ca.example.org:8443" {
+		t.Fatalf("defaults: %+v %v", w, err)
+	}
+	c, err = parse(":443", "  webauthn:\n    rp_id: ca.example.org\n")
+	if err != nil || len(c.General.WebAuthn.Origins) != 1 {
+		t.Fatalf("port 443: %+v %v", c.General.WebAuthn, err)
+	}
+	c, err = parse(":8443", "  webauthn:\n    rp_id: example.org\n    rp_name: Lab\n    origins: [\"https://pki.Example.org:9443/\"]\n")
+	w = c.General.WebAuthn
+	if err != nil || w.RPName != "Lab" || len(w.Origins) != 1 || w.Origins[0] != "https://pki.example.org:9443" {
+		t.Fatalf("explicit: %+v %v", w, err)
+	}
+	for _, bad := range []string{
+		"  webauthn:\n    rp_id: 192.168.1.10\n",
+		"  webauthn:\n    rp_id: \"[::1]\"\n",
+		"  webauthn:\n    rp_id: https://ca.example.org\n",
+		"  webauthn:\n    rp_id: ca.example.org:8443\n",
+		"  webauthn:\n    rp_name: x\n",
+		"  webauthn:\n    rp_id: ca.example.org\n    origins: [\"http://ca.example.org\"]\n",
+		"  webauthn:\n    rp_id: ca.example.org\n    origins: [\"https://other.org\"]\n",
+		"  webauthn:\n    rp_id: ca.example.org\n    origins: [\"https://evilca.example.org\"]\n",
+		"  webauthn:\n    rp_id: ca.example.org\n    origins: [\"https://ca.example.org/path\"]\n",
+	} {
+		if _, err := parse(":8443", bad); err == nil {
+			t.Errorf("accepted:\n%s", bad)
+		}
+	}
+}

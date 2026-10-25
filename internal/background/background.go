@@ -78,7 +78,7 @@ func open(ctx context.Context, st *store.Store, name, label string, pw []byte) (
 	if err != nil {
 		return nil, err
 	}
-	kr, err := hd.Unlock(ctx, pw)
+	kr, m, err := hd.UnlockPassword(ctx, pw)
 	if err != nil {
 		if errors.Is(err, pki.ErrWrongPassword) {
 			hd.Audit(ctx, "database.unlock_failed", 0, "background")
@@ -87,7 +87,9 @@ func open(ctx context.Context, st *store.Store, name, label string, pw []byte) (
 		hd.Release()
 		return nil, err
 	}
-	hd.Audit(ctx, "database.unlock", 0, "background")
+	// That password slot must keep working while OpenKCA runs.
+	hd.SetConfiguredMethod(m.UUID)
+	hd.Audit(ctx, "database.unlock", 0, fmt.Sprintf("background, password %q", m.Label))
 	return &Database{Name: name, Label: label, Handle: hd, kr: kr}, nil
 }
 

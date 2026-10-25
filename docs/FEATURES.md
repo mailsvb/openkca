@@ -7,8 +7,20 @@
 - Lists every OpenKCA database (`.okca`) and every XCA database waiting to be
   imported (`.xdb`) in the data folder; create new databases and upload
   existing ones (either kind) from the start page. Several databases can
-  be open at the same time, each with its own password (at least 8
-  characters for new ones).
+  be open at the same time, each with its own unlock methods.
+- Unlock methods: a database opens with any of its passwords (up to 5, at
+  least 8 characters each), security keys such as a YubiKey and passkeys
+  (up to 16 together, through WebAuthn with the PRF extension, when
+  `general.webauthn.rp_id` is set) or its one-time backup code. Each
+  method wraps the same data key, so methods are added, renamed, changed
+  and removed without touching a private key. Changes need a confirmation
+  with an existing method in the last 5 minutes (logging in counts). The
+  last password cannot be removed; the one the configuration file uses
+  cannot be changed or removed. Until a backup code exists, every database
+  page shows a notice. Removing or changing a method deletes the backups,
+  which would still open with it. "Replace the data key" makes a new data
+  key, re-seals every key and keeps only the password typed with it: the
+  way to lock out a lost key or a leaked password for good.
 - Shows keys, certificate signing requests, certificates (as a tree under
   their issuers), templates and revocation lists, with search, a column
   chooser and expiry colours, plus XCA's shared options.
@@ -24,16 +36,18 @@
   deleted for good, private keys included, only from the trash.
 - An append-only audit log records every change (keys generated, imported
   and exported, certificates issued, renewed and revoked, CRLs, options,
-  password changes, trash, failed and successful logins) with time and
+  unlock method changes, trash, failed and successful logins) with time and
   client address, never secrets. It is shown per database and per item.
-- Private keys are stored with envelope encryption. The database password
-  is stretched with Argon2id (256 MiB, 3 passes by default, adjustable per
-  database) into a key that wraps a random 256-bit data key; the data key
-  seals every private key with AES-256-GCM, bound to the key's public key.
-  Unwrapping the data key is the password check: no password hash is
-  stored. A key with its own password is sealed with a key derived from
-  that password instead. Changing the password (or the Argon2id cost)
-  replaces the data key and re-seals all keys.
+- Private keys are stored with envelope encryption. A random 256-bit data
+  key seals every private key with AES-256-GCM, bound to the key's public
+  key. Each unlock method wraps that data key with AES-256-GCM under its
+  own key: a password's is stretched with Argon2id (256 MiB, 3 passes by
+  default, adjustable per database for passwords set later), a security
+  key's or passkey's comes from its PRF output and the backup code's from
+  its 128 random bits, both through HKDF-SHA256. The wrap is bound to the
+  method's ID, type and parameters. Unwrapping the data key is the check:
+  no password hash is stored. A key with its own password is sealed with a
+  key derived from that password instead.
 - XCA's key encryption (PBKDF2 with 2048 iterations, the legacy 3DES form,
   the "Bogus" password) and its password hash are left behind: keys under
   the database password during the import, keys with their own password
@@ -230,8 +244,11 @@ An OpenKCA database is an SQLite file with its own schema (`internal/db`)
 and SQLite's application ID `okc1`: every item with a UUID (version 7)
 next to its row ID, DER objects as BLOBs with SHA-256
 fingerprints, links as foreign keys, templates as JSON, a trash and an
-append-only audit table. The `kdf` and `dek` settings hold the Argon2id
-parameters and the wrapped data key; private keys are sealed by
-`internal/vault`. Reading XCA's schema is `internal/xcaimport`'s job only,
+append-only audit table. The `unlock_methods` table holds one wrapped data
+key per unlock method (and, for security keys and passkeys, the WebAuthn
+credential and PRF salt); the `argon2id` setting is the cost for new
+passwords. Private keys and wraps are sealed by `internal/vault`. The
+schema was reset to 1 for 0.12.0: databases from earlier development
+versions are listed as invalid. Reading XCA's schema is `internal/xcaimport`'s job only,
 and it opens `.xdb` files read-only. Templates and the database dump can
 still be exported in XCA's formats.

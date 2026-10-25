@@ -3,13 +3,11 @@ package web
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/store"
-	"github.com/mailsvb/openkca/internal/vault"
 )
 
 func itemID(r *http.Request) (int64, bool) {
@@ -165,97 +163,6 @@ func (s *Server) keyPassword(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("key password changed", "db", ds.DBName, "id", id, "action", r.PostFormValue("action"))
 		s.toItem(w, r, id, "notice=keypw")
 	}
-}
-
-func (s *Server) dbPasswordData(r *http.Request) map[string]any {
-	cur, err := dbSession(r).Handle.KDFParams(r.Context())
-	if err != nil {
-		cur = vault.Default
-	}
-	return map[string]any{"Memory": cur.MemoryMiB(), "Time": int(cur.Time), "Default": vault.Default,
-		"MemoryChoices": vault.MemoryChoicesMiB, "TimeChoices": vault.TimeChoices, "MinLen": store.MinPasswordLen}
-}
-
-func (s *Server) dbPasswordPage(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "dbpassword", &page{Title: "dbpw.title", Tab: "options", Data: s.dbPasswordData(r)})
-}
-
-// kdfFromForm reads the Argon2id cost chosen on the password page; only
-// the offered values are accepted. Without the fields the current cost
-// stays.
-func kdfFromForm(r *http.Request) (vault.Params, bool) {
-	if r.PostFormValue("kdf_memory") == "" && r.PostFormValue("kdf_time") == "" {
-		p, err := dbSession(r).Handle.KDFParams(r.Context())
-		return p, err == nil
-	}
-	m, err1 := strconv.Atoi(r.PostFormValue("kdf_memory"))
-	t, err2 := strconv.Atoi(r.PostFormValue("kdf_time"))
-	if err1 != nil || err2 != nil || !slices.Contains(vault.MemoryChoicesMiB, m) || !slices.Contains(vault.TimeChoices, t) {
-		return vault.Params{}, false
-	}
-	return vault.Params{MemoryKiB: uint32(m) * 1024, Time: uint32(t), Threads: vault.Default.Threads}, true
-}
-
-// dbPassword changes the database password, the Argon2id cost, or both;
-// either way the DEK is rotated. An empty new password keeps the current
-// one.
-func (s *Server) dbPassword(w http.ResponseWriter, r *http.Request) {
-	ds := dbSession(r)
-	if c, ok := s.store.ConfiguredDB(ds.DBName); ok && c.Background {
-		// The change would rotate the DEK under the background keyring and
-		// leave the configured password wrong: refused (see dbpw.background).
-		s.log.Warn("database password change refused: kept open in the background", "db", ds.DBName, "ip", clientIP(r))
-		s.render(w, r, http.StatusConflict, "dbpassword", &page{Title: "dbpw.title", Tab: "options", Data: s.dbPasswordData(r)})
-		return
-	}
-	old, n1, n2 := []byte(r.PostFormValue("old")), []byte(r.PostFormValue("new")), []byte(r.PostFormValue("new2"))
-	defer clear(old)
-	defer clear(n1)
-	defer clear(n2)
-	p := &page{Title: "dbpw.title", Tab: "options", Data: s.dbPasswordData(r)}
-	fail := func(key string) {
-		p.Error = key
-		s.render(w, r, http.StatusUnprocessableEntity, "dbpassword", p)
-	}
-	params, ok := kdfFromForm(r)
-	switch {
-	case !ok:
-		fail("dbpw.error.kdf")
-		return
-	case string(n1) != string(n2):
-		fail("dbpw.error.mismatch")
-		return
-	case len(n1) > 0 && len(n1) < store.MinPasswordLen:
-		p.ErrorArg = strconv.Itoa(store.MinPasswordLen)
-		fail("dbpw.error.short")
-		return
-	}
-	newPass := n1
-	if len(newPass) == 0 {
-		newPass = old
-	}
-	if s.keyLimit.Blocked(ds.ID) {
-		fail("keycheck.ratelimit")
-		return
-	}
-	kr, err := ds.Handle.ChangeDatabasePassword(r.Context(), old, newPass, params)
-	if errors.Is(err, pki.ErrWrongPassword) {
-		s.keyLimit.Fail(ds.ID)
-		fail("dbpw.error.old")
-		return
-	}
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	// Other sessions on this database hold the old DEK.
-	s.dbs.EndDatabase(ds.DBName, ds.ID)
-	ds.SetKeyring(kr)
-	s.log.Info("database password or key derivation changed", "db", ds.DBName, "ip", clientIP(r),
-		"argon2_mib", params.MemoryMiB(), "argon2_t", params.Time)
-	p.Data = s.dbPasswordData(r)
-	p.Notice = "dbpw.done"
-	s.render(w, r, http.StatusOK, "dbpassword", p)
 }
 
 // saveOptions writes the shared XCA options.

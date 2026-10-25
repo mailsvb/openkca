@@ -84,3 +84,20 @@ func TestIdle(t *testing.T) {
 		t.Fatal("idle session survived")
 	}
 }
+
+func TestConfirm(t *testing.T) {
+	m := NewManager(time.Hour)
+	s := m.Create("srv", "db", nil, nil, nil)
+	if s.Confirmed() {
+		t.Fatal("a new session is confirmed")
+	}
+	s.Confirm()
+	s.SetMethod("m1")
+	if !s.Confirmed() || s.Method() != "m1" || time.Until(s.ConfirmedUntil()) > ConfirmFor {
+		t.Fatal("confirmation not recorded")
+	}
+	m.End(s.ID)
+	if s.Confirmed() {
+		t.Fatal("confirmation survives the end of the session")
+	}
+}
