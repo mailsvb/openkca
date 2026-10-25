@@ -19,8 +19,9 @@ the box. Coming from [XCA](https://github.com/chris2511/xca)? Drop in your
   automatically, with an OpenSSL index for OCSP.
 - **Speaks every format.** PEM, DER, PKCS#7/8/12, OpenSSH, PuTTY, OpenPGP,
   JWK and more, both in and out.
-- **Locked down.** Argon2id and AES-256-GCM encrypted databases, a trash
-  can and an append-only audit log.
+- **Locked down.** Argon2id and AES-256-GCM encrypted databases that open
+  with passwords, YubiKeys, passkeys or a one-time backup code, a trash can
+  and an append-only audit log.
 
 ## Get it
 

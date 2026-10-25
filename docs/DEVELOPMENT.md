@@ -62,4 +62,6 @@ Third-party code: [htmx](https://htmx.org) 2.0.11 (BSD Zero Clause License,
 `internal/web/static/htmx.LICENSE`);
 [ProtonMail/go-crypto](https://github.com/ProtonMail/go-crypto) for
 OpenPGP and [cloudflare/circl](https://github.com/cloudflare/circl), which
-it uses (both BSD 3-Clause License).
+it uses (both BSD 3-Clause License);
+[go-webauthn/webauthn](https://github.com/go-webauthn/webauthn) for security
+keys and passkeys (BSD 3-Clause License).
