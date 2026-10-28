@@ -15,13 +15,10 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
 
 `VERSION` holds the current version (semantic versioning, `X.Y.Z`).
 
-- Every push runs `.github/workflows/build.yml`, which builds all platforms
-  as `<VERSION>-dev-<yyyyMMdd>-<HHmmss>` (UTC) and keeps the archives and
-  unsigned rpm packages (version `<VERSION>~dev.<yyyyMMdd>.<HHmmss>`) as
-  artifacts of the workflow run.
-- Running the same workflow manually (Actions → Build → Run workflow, on
-  `main`) makes an official release: enter a version `X.Y.Z`, or leave it
-  empty to increase the fix number of `VERSION` by one. The release is
+- Builds run only manually: `.github/workflows/build.yml` (Actions → Build →
+  Run workflow, on `main`) makes an official release. Enter a version
+  `X.Y.Z` to build exactly that version, or leave it empty to increase the
+  fix number of `VERSION` by one. The release is
   tested, built, tagged `v<version>` and published as a GitHub release with
   the archives, the signed rpm packages and their SHA-256 checksums;
   `VERSION` on `main` is then set to the released version.

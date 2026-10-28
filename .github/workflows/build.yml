@@ -1,13 +1,10 @@
 name: Build
 
-# A push builds <VERSION>-dev-<date>-<time>, kept as artifacts of the run.
-# Running the workflow manually makes an official release: the given version,
-# or VERSION with the fix number increased by 1, tagged v<version> with a
-# GitHub release holding the binaries and signed rpms; VERSION on main is
-# then updated and the rpm repository on GitHub Pages rebuilt.
+# Runs only manually and makes an official release: the given version, or
+# VERSION with the fix number increased by 1, tagged v<version> with a GitHub
+# release holding the binaries and signed rpms; VERSION on main is then
+# updated and the rpm repository on GitHub Pages rebuilt.
 on:
-  push:
-    branches: ["**"]
   workflow_dispatch:
     inputs:
       version:
@@ -23,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
-      release: ${{ steps.v.outputs.release }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,24 +30,16 @@ jobs:
         env:
           WANT: ${{ inputs.version }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-              echo "::error::Releases are made from main, not $GITHUB_REF_NAME"
-              exit 1
-            fi
-            version=$(.github/scripts/version.sh release "$WANT")
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
-            version=$(.github/scripts/version.sh dev)
-            echo "release=false" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases are made from main, not $GITHUB_REF_NAME"
+            exit 1
           fi
+          version=$(.github/scripts/version.sh "$WANT")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "::notice title=Version::$version"
 
-  # Pushes to main are tested by test.yml; a release is tested here.
   test:
     needs: version
-    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -110,9 +98,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # The rpm packages for Linux amd64 and arm64, built with nfpm. A release's
-  # are signed with the PGP package key, which the repo job signs the
-  # repository with as well; a push builds them unsigned.
+  # The rpm packages for Linux amd64 and arm64, built with nfpm and signed
+  # with the PGP package key, which the repo job signs the repository with
+  # as well.
   rpm:
     needs: version
     runs-on: ubuntu-latest
@@ -127,7 +115,6 @@ jobs:
 
       # nfpm reads the key armored from a file
       - name: Package signing key
-        if: needs.version.outputs.release == 'true'
         env:
           PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
           PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
@@ -142,16 +129,14 @@ jobs:
           NFPM_RPM_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
           CGO_ENABLED: "0"
         run: |
-          # rpm allows no "-" in a version; "~" sorts a dev build before its release
-          rpmversion=$(echo "$VERSION" | sed -e 's/-/~/' -e 's/-/./g')
           mkdir -p build/pkg/linux pkg
           for arch in amd64 arm64; do
             GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
               -o build/pkg/linux/openkca ./cmd/openkca
-            VERSION=$rpmversion ARCH=$arch go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 \
+            ARCH=$arch go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 \
               package --config packaging/linux/nfpm.yaml --packager rpm --target pkg/
           done
-          rm -f "${SIGNING_KEY_FILE:-}"
+          rm -f "$SIGNING_KEY_FILE"
           ls -l pkg
 
       - uses: actions/upload-artifact@v7
@@ -163,7 +148,6 @@ jobs:
 
   release:
     needs: [version, test, build, rpm]
-    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -208,7 +192,6 @@ jobs:
   # deploy from GitHub Actions.
   repo:
     needs: [version, release]
-    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
