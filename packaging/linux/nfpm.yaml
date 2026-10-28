@@ -1,0 +1,85 @@
+# The rpm package of OpenKCA, built by the build workflow with nfpm, which
+# expands from its environment VERSION, a version rpm accepts (no "-"), and
+# ARCH, the Go architecture. The files are relative to the repository root,
+# where nfpm runs; the binary is built into build/pkg/linux before.
+name: openkca
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+release: 1
+section: net
+maintainer: Sven Beisiegel
+vendor: Sven Beisiegel
+homepage: https://github.com/mailsvb/openkca
+# the first line is the summary as well
+description: |
+  Your own certificate authority, in one binary
+  OpenKCA runs a complete PKI from the browser: X.509 certificates, SSH keys
+  and OpenPGP keys. Runs as the openkca systemd service on https://<host>:8443/.
+
+contents:
+  - src: build/pkg/linux/openkca
+    dst: /usr/bin/openkca
+    file_info:
+      mode: 0755
+
+  - src: packaging/linux/openkca.service
+    dst: /usr/lib/systemd/system/openkca.service
+    file_info:
+      mode: 0644
+
+  # The configuration may hold database passwords: the service's alone.
+  # noreplace keeps the file as it is on an upgrade, and puts the new one
+  # beside it as config.yaml.rpmnew.
+  - dst: /etc/openkca
+    type: dir
+    file_info:
+      mode: 0750
+      owner: openkca
+      group: openkca
+  - src: packaging/linux/config.yaml
+    dst: /etc/openkca/config.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0600
+      owner: openkca
+      group: openkca
+
+  # data_dir: the databases, the self-issued TLS certificate and backups
+  - dst: /var/lib/openkca
+    type: dir
+    file_info:
+      mode: 0700
+      owner: openkca
+      group: openkca
+
+  - src: config.example.yaml
+    dst: /usr/share/doc/openkca/config.example.yaml
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/openkca/README.md
+    file_info:
+      mode: 0644
+  - src: docs/*.md
+    dst: /usr/share/doc/openkca/docs/
+    file_info:
+      mode: 0644
+  - src: internal/web/static/htmx.LICENSE
+    dst: /usr/share/licenses/openkca/htmx.LICENSE
+    file_info:
+      mode: 0644
+
+scripts:
+  preinstall: packaging/linux/preinstall.sh
+  postinstall: packaging/linux/postinstall.sh
+  preremove: packaging/linux/preremove.sh
+  postremove: packaging/linux/postremove.sh
+
+# The rpm is signed when SIGNING_KEY_FILE names an armored private key, as in
+# a release; NFPM_RPM_PASSPHRASE unlocks it. Unset, it is unsigned.
+rpm:
+  group: Productivity/Security
+  signature:
+    key_file: ${SIGNING_KEY_FILE}

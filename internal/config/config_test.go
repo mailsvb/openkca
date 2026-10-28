@@ -193,3 +193,23 @@ func TestWebAuthn(t *testing.T) {
 		}
 	}
 }
+
+// TestPackagedConfig checks the configuration the rpm installs: it must
+// parse, and keep the empty password_hash line the postinstall script
+// replaces with the hash of a random initial password.
+func TestPackagedConfig(t *testing.T) {
+	b, err := os.ReadFile("../../packaging/linux/config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse(b, "/etc/openkca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.General.DataDir != "/var/lib/openkca" || c.General.PasswordHash != "" || len(c.Databases) != 0 {
+		t.Fatalf("config = %+v", c)
+	}
+	if !strings.Contains("\n"+string(b), "\n  password_hash: \"\"\n") {
+		t.Fatal(`no line '  password_hash: ""' for the postinstall script to replace`)
+	}
+}

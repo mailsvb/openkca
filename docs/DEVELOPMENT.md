@@ -16,14 +16,33 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
 `VERSION` holds the current version (semantic versioning, `X.Y.Z`).
 
 - Every push runs `.github/workflows/build.yml`, which builds all platforms
-  as `<VERSION>-dev-<yyyyMMdd>-<HHmmss>` (UTC) and keeps the archives as
+  as `<VERSION>-dev-<yyyyMMdd>-<HHmmss>` (UTC) and keeps the archives and
+  unsigned rpm packages (version `<VERSION>~dev.<yyyyMMdd>.<HHmmss>`) as
   artifacts of the workflow run.
 - Running the same workflow manually (Actions → Build → Run workflow, on
   `main`) makes an official release: enter a version `X.Y.Z`, or leave it
   empty to increase the fix number of `VERSION` by one. The release is
   tested, built, tagged `v<version>` and published as a GitHub release with
-  the archives and their SHA-256 checksums; `VERSION` on `main` is then set
-  to the released version.
+  the archives, the signed rpm packages and their SHA-256 checksums;
+  `VERSION` on `main` is then set to the released version.
+- After a release the rpm repository on GitHub Pages
+  (`https://mailsvb.github.io/openkca/`) is rebuilt from the rpms of the
+  five newest releases by `packaging/repo/build.sh`, with `repomd.xml`
+  signed.
+
+The rpm package is described by `packaging/linux/nfpm.yaml` (built with
+[nfpm](https://nfpm.goreleaser.com)): the binary, the `openkca` systemd
+service running as the `openkca` user, the configuration
+`packaging/linux/config.yaml` as `/etc/openkca/config.yaml` and the data
+folder `/var/lib/openkca`. On the first install the postinstall script sets
+a random server password, kept in `/etc/openkca/initial-password`, and
+starts the service.
+
+Releases need two repository secrets, the same as go-fs's:
+`PACKAGE_SIGNING_KEY`, the armored PGP private key
+(`gpg --armor --export-secret-keys <key id>`), and
+`PACKAGE_SIGNING_PASSPHRASE` if the key has one. GitHub Pages must be set to
+deploy from GitHub Actions (Settings → Pages → Source).
 - `.github/workflows/test.yml` checks formatting and runs `go vet` and
   `go test -race` on every push to `main`.
 

@@ -26,7 +26,18 @@ the box. Coming from [XCA](https://github.com/chris2511/xca)? Drop in your
 ## Get it
 
 Grab a binary for Linux, Windows or macOS from the
-[releases page](https://github.com/mailsvb/openkca/releases).
+[releases page](https://github.com/mailsvb/openkca/releases), or install the
+rpm on openSUSE and SLES (Fedora and RHEL: see the
+[package page](https://mailsvb.github.io/openkca/)):
+
+```sh
+sudo zypper addrepo https://mailsvb.github.io/openkca/rpm/openkca.repo
+sudo zypper refresh && sudo zypper install openkca
+sudo cat /etc/openkca/initial-password   # → https://<host>:8443/
+```
+
+The service is configured in `/etc/openkca/config.yaml`
+([details](docs/CONFIGURATION.md#rpm-package)).
 
 ## Run it
 
