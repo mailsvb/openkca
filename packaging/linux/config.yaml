@@ -1,0 +1,30 @@
+# OpenKCA configuration of the rpm package, read by the openkca service.
+# Every setting is explained in /usr/share/doc/openkca/config.example.yaml.
+# Restart the service after a change: systemctl restart openkca
+#
+# The file is the openkca user's alone (chmod 600): it may hold database
+# passwords.
+
+general:
+  # Folder with the .okca and .xdb databases.
+  data_dir: /var/lib/openkca
+  # Address to listen on (HTTPS); all interfaces by default.
+  listen: ":8443"
+  # Hash of the server password that protects the whole web UI. The package
+  # sets it at the first install to a random password, kept in
+  # /etc/openkca/initial-password. Change it with: openkca set-password
+  password_hash: ""
+  # Host name for security keys and passkeys as unlock methods, e.g.
+  # ca.example.org; without it they are not offered.
+  webauthn:
+    rp_id: ""
+
+# Publication of CRLs and CA certificates over plain HTTP.
+crl:
+  listen: ":8080"
+  # Where that server is reachable, e.g. http://pki.example.org; without
+  # base URLs no CRL distribution point or CA issuer is offered.
+  base_urls: []
+
+# Databases OpenKCA knows by name; the files in data_dir are listed anyway.
+databases: []

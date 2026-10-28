@@ -1,3 +1,5 @@
 /openkca
 *.lock
 .openkca/
+/build/
+/pkg/

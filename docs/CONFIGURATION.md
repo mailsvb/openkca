@@ -171,6 +171,25 @@ warning 7 days before its next update and an error once it has passed,
 and shows the same on the databases page. An expired CRL makes many
 clients reject every certificate below that CA.
 
+## rpm package
+
+The rpm package (see the [README](../README.md#get-it)) runs OpenKCA as the
+`openkca` systemd service, under the `openkca` user:
+
+| Path                              | What                                              |
+| --------------------------------- | ------------------------------------------------- |
+| `/etc/openkca/config.yaml`        | configuration, kept as it is on updates           |
+| `/etc/openkca/initial-password`   | server password set at the first install (root only) |
+| `/var/lib/openkca`                | data folder                                       |
+| `/usr/share/doc/openkca/`         | `config.example.yaml` and these documents         |
+
+Restart the service after changing the configuration:
+`sudo systemctl restart openkca`. To change the server password, run
+`openkca set-password`, put its line into `config.yaml`, restart and delete
+`initial-password`. The service may only write to `/var/lib/openkca`; a
+data folder or TLS files elsewhere need a drop-in (`systemctl edit openkca`)
+with `ReadWritePaths=`.
+
 ## Data folder
 
 ```

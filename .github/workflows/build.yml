@@ -3,7 +3,8 @@ name: Build
 # A push builds <VERSION>-dev-<date>-<time>, kept as artifacts of the run.
 # Running the workflow manually makes an official release: the given version,
 # or VERSION with the fix number increased by 1, tagged v<version> with a
-# GitHub release holding the binaries; VERSION on main is then updated.
+# GitHub release holding the binaries and signed rpms; VERSION on main is
+# then updated and the rpm repository on GitHub Pages rebuilt.
 on:
   push:
     branches: ["**"]
@@ -109,8 +110,59 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # The rpm packages for Linux amd64 and arm64, built with nfpm. A release's
+  # are signed with the PGP package key, which the repo job signs the
+  # repository with as well; a push builds them unsigned.
+  rpm:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # nfpm reads the key armored from a file
+      - name: Package signing key
+        if: needs.version.outputs.release == 'true'
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          bash packaging/repo/import-key.sh "$RUNNER_TEMP/signing.asc"
+          echo "SIGNING_KEY_FILE=$RUNNER_TEMP/signing.asc" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          NFPM_RPM_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+          CGO_ENABLED: "0"
+        run: |
+          # rpm allows no "-" in a version; "~" sorts a dev build before its release
+          rpmversion=$(echo "$VERSION" | sed -e 's/-/~/' -e 's/-/./g')
+          mkdir -p build/pkg/linux pkg
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              -o build/pkg/linux/openkca ./cmd/openkca
+            VERSION=$rpmversion ARCH=$arch go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 \
+              package --config packaging/linux/nfpm.yaml --packager rpm --target pkg/
+          done
+          rm -f "${SIGNING_KEY_FILE:-}"
+          ls -l pkg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openkca_${{ env.VERSION }}_linux_rpm
+          path: pkg/*.rpm
+          if-no-files-found: error
+          retention-days: 30
+
   release:
-    needs: [version, test, build]
+    needs: [version, test, build, rpm]
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -150,3 +202,48 @@ jobs:
           if git diff --quiet; then exit 0; fi
           git commit -m "Set version to $VERSION after release v$VERSION" VERSION
           git push origin main
+
+  # The zypper/dnf repository on GitHub Pages, rebuilt from the rpms of the
+  # five newest releases, so older versions drop out. Pages must be set to
+  # deploy from GitHub Actions.
+  repo:
+    needs: [version, release]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install createrepo_c and rpm
+        run: sudo apt-get update -q && sudo apt-get install -y -q createrepo-c rpm
+
+      - name: Import the signing key
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: bash packaging/repo/import-key.sh
+
+      - name: Build the repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+          KEEP: 5
+        run: bash packaging/repo/build.sh site
+
+      # artifacts outlive an attempt, so a re-run of this job would find the
+      # first attempt's as well, which deploy-pages refuses: one per attempt
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          name: github-pages-${{ github.run_attempt }}
+
+      - id: deploy
+        uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
