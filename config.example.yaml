@@ -7,7 +7,7 @@ general:
   # Folder with the .okca and .xdb databases (required).
   data_dir: data
   # Address to listen on (HTTPS); all interfaces by default.
-  listen: ":8443"
+  listen: ":9443"
   # PEM certificate and key for HTTPS. Empty: a self-issued certificate in
   # <data_dir>/.openkca/ is created and renewed automatically.
   tls_cert: ""
@@ -27,13 +27,13 @@ general:
     rp_id: ""                  # e.g. ca.example.org
     # rp_name: OpenKCA         # shown by the authenticator
     # origins:                 # default: https://<rp_id> and https://<rp_id>:<port of listen>
-    #   - https://ca.example.org:8443
+    #   - https://ca.example.org:9443
 
 # Publication of CRLs and CA certificates.
 crl:
   # Plain HTTP address serving /<authority ID>.crl, .crt and .pem for every
   # CA; "" turns the server off.
-  listen: ":8080"
+  listen: ":9080"
   # Where that server is reachable, as clients should try it: offered (and
   # checked by default) as CRL distribution point and CA issuer (AIA) when
   # certificates are created, signed or renewed. Every URL is written into
@@ -41,7 +41,7 @@ crl:
   # nothing is offered.
   base_urls:
     - http://pki.example.org
-    - http://pki.lan:8080
+    - http://pki.lan:9080
 
 # Databases OpenKCA knows by name. Other .okca and .xdb files directly in
 # data_dir are still listed and can be opened in the web UI.

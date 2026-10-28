@@ -7,28 +7,37 @@ next to its executable, or the file given with `--config`, the only command
 line option. `config.example.yaml` describes every setting.
 
 ```sh
-# once: create a server password hash and put the printed line into the
-# general section of config.yaml
-./openkca set-password
-
-# serve on https://<host>:8443/ (the listen address is in the config)
+# serve on https://<host>:9443/ (the listen address is in the config)
 ./openkca                          # config.yaml next to the executable
 ./openkca --config /etc/openkca/config.yaml
+
+# ask for the web UI port, the CRL port and the server password and
+# write them into the config (a new one if there is none)
+./openkca setup [--config FILE]
+
+# print a server password hash for password_hash
+./openkca set-password
 
 # print the version
 ./openkca version
 ```
 
+Started in a terminal without a configuration file, or with one without
+`password_hash`, OpenKCA runs `setup` first and then serves. Without a
+terminal (as a service) it stops with an error instead. `setup` changes
+only the lines it asks about and keeps everything else in the file,
+comments included; restart OpenKCA afterwards.
+
 ```yaml
 general:
   data_dir: /srv/xca
-  listen: ":8443"
+  listen: ":9443"
   password_hash: "$argon2id$v=19$m=65536,t=3,p=2$…"
 crl:
-  listen: ":8080"
+  listen: ":9080"
   base_urls:
     - http://pki.example.org
-    - http://pki.lan:8080
+    - http://pki.lan:9080
 databases:
   - name: Home Lab CA
     type: file
@@ -39,12 +48,12 @@ databases:
 | `general` key    | Default  | Meaning                                                          |
 | ---------------- | -------- | ---------------------------------------------------------------- |
 | `data_dir`       | required | folder with the `.okca` and `.xdb` files, rescanned on every page load |
-| `listen`         | `:8443`  | listen address (all interfaces by default)                       |
+| `listen`         | `:9443`  | listen address (all interfaces by default)                       |
 | `tls_cert`       |          | PEM certificate; without it a self-issued certificate is used    |
 | `tls_key`        |          | PEM key for `tls_cert`                                           |
 | `idle_timeout`   | `30m`    | idle timeout of server and database sessions                     |
 | `max_upload_mb`  | `256`    | largest upload (database file or items to import), in MB         |
-| `password_hash`  | required | argon2id hash of the server password, from `openkca set-password`  |
+| `password_hash`  | required | argon2id hash of the server password, from `openkca setup` or `openkca set-password` |
 | `webauthn`       |          | security keys and passkeys as unlock methods (below)             |
 
 | `webauthn` key | Default | Meaning |
@@ -64,8 +73,13 @@ configuration file's folder; unknown keys are an error.
 
 | `crl` key   | Default | Meaning                                                                  |
 | ----------- | ------- | ------------------------------------------------------------------------ |
-| `listen`    | `:8080` | plain HTTP address for CRLs and CA certificates; `""` turns it off       |
+| `listen`    | `:9080` | plain HTTP address for CRLs and CA certificates; `""` turns it off       |
 | `base_urls` |         | `http://` URLs under which that server is reachable, in the order clients should try them |
+
+Before 0.13.0 the defaults were `:8443` and `:8080`. A configuration that
+leaves out `general.listen` or `crl.listen` moves to the new ports; set
+`crl.listen: ":8080"` to keep serving the CRL URLs already written into
+certificates with that port. The rpm configuration sets both explicitly.
 
 ## TLS certificate
 
@@ -123,7 +137,7 @@ a base URL may have a path (`http://host/pki`) whether or not a proxy
 strips it. The files are kept in the CA's folder (`ca.crt`, `crl.der`)
 and only replaced, never removed: a CA in the trash keeps serving them.
 Behind a reverse proxy or an ingress on port 80, the base URLs need no
-port; otherwise include `:8080`. CRLs are served over HTTP, not HTTPS,
+port; otherwise include `:9080`. CRLs are served over HTTP, not HTTPS,
 as RFC 5280 recommends, which avoids a validation loop.
 
 The CA page lists its URLs below every base URL. With base URLs
@@ -184,9 +198,9 @@ The rpm package (see the [README](../README.md#get-it)) runs OpenKCA as the
 | `/usr/share/doc/openkca/`         | `config.example.yaml` and these documents         |
 
 Restart the service after changing the configuration:
-`sudo systemctl restart openkca`. To change the server password, run
-`openkca set-password`, put its line into `config.yaml`, restart and delete
-`initial-password`. The service may only write to `/var/lib/openkca`; a
+`sudo systemctl restart openkca`. To change the ports or the server
+password, run `sudo openkca setup` and restart; a new password also
+deletes `initial-password`. The service may only write to `/var/lib/openkca`; a
 data folder or TLS files elsewhere need a drop-in (`systemctl edit openkca`)
 with `ReadWritePaths=`.
 

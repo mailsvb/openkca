@@ -4,7 +4,7 @@
 //
 //	general:
 //	  data_dir: data                # relative to the config file's folder
-//	  listen: ":8443"
+//	  listen: ":9443"
 //	  tls_cert: ""                  # PEM; empty = self-issued certificate
 //	  tls_key: ""
 //	  idle_timeout: 30m
@@ -14,9 +14,9 @@
 //	    rp_id: ca.example.org       # the host name users open OpenKCA with
 //	    rp_name: OpenKCA            # optional, shown by the authenticator
 //	    origins:                    # optional; default https://<rp_id>[:port]
-//	      - https://ca.example.org:8443
+//	      - https://ca.example.org:9443
 //	crl:
-//	  listen: ":8080"               # plain HTTP for CRLs and CA certificates; "" = off
+//	  listen: ":9080"               # plain HTTP for CRLs and CA certificates; "" = off
 //	  base_urls:                    # offered as CDP/AIA in new certificates
 //	    - http://pki.example.org
 //	databases:
@@ -52,7 +52,7 @@ const FileName = "config.yaml"
 
 // Defaults of the general section.
 const (
-	DefaultListen      = ":8443"
+	DefaultListen      = ":9443"
 	DefaultIdleTimeout = 30 * time.Minute
 	DefaultMaxUploadMB = 256
 )
@@ -61,7 +61,7 @@ const (
 const TypeFile = "file"
 
 // DefaultCRLListen is the address of the plain HTTP publication server.
-const DefaultCRLListen = ":8080"
+const DefaultCRLListen = ":9080"
 
 // CRL configures the publication of CRLs and CA certificates.
 type CRL struct {
@@ -147,7 +147,7 @@ func Load(path string) (*Config, error) {
 	b, err := os.ReadFile(abs)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("configuration file %s not found (see config.example.yaml)", abs)
+			return nil, fmt.Errorf("configuration file %s not found; run \"openkca setup\" in a terminal or see config.example.yaml", abs)
 		}
 		return nil, err
 	}

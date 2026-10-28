@@ -16,7 +16,7 @@ homepage: https://github.com/mailsvb/openkca
 description: |
   Your own certificate authority, in one binary
   OpenKCA runs a complete PKI from the browser: X.509 certificates, SSH keys
-  and OpenPGP keys. Runs as the openkca systemd service on https://<host>:8443/.
+  and OpenPGP keys. Runs as the openkca systemd service on https://<host>:9443/.
 
 contents:
   - src: build/pkg/linux/openkca

@@ -33,7 +33,8 @@ rpm on openSUSE and SLES (Fedora and RHEL: see the
 ```sh
 sudo zypper addrepo https://mailsvb.github.io/openkca/rpm/openkca.repo
 sudo zypper refresh && sudo zypper install openkca
-sudo cat /etc/openkca/initial-password   # → https://<host>:8443/
+sudo cat /etc/openkca/initial-password   # → https://<host>:9443/
+sudo openkca setup                       # optional: other ports and password
 ```
 
 The service is configured in `/etc/openkca/config.yaml`
@@ -42,17 +43,13 @@ The service is configured in `/etc/openkca/config.yaml`
 ## Run it
 
 ```sh
-./openkca set-password   # paste the printed hash into config.yaml
-./openkca                # → https://<host>:8443/
+./openkca                # → https://<host>:9443/
 ```
 
-```yaml
-general:
-  data_dir: /srv/openkca
-  password_hash: "$argon2id$…"
-```
-
-Every setting is explained in `config.example.yaml`.
+The first start asks for the web UI port (9443), the CRL port (9080) and
+the server password, and writes `config.yaml` next to the binary. Run
+`./openkca setup` to change them later. Every setting is explained in
+`config.example.yaml`.
 
 > **Security note:** a database password in `config.yaml` is stored in plain
 > text and keeps that CA's keys unlocked while OpenKCA runs. Set one only for

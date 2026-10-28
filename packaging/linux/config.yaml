@@ -9,7 +9,7 @@ general:
   # Folder with the .okca and .xdb databases.
   data_dir: /var/lib/openkca
   # Address to listen on (HTTPS); all interfaces by default.
-  listen: ":8443"
+  listen: ":9443"
   # Hash of the server password that protects the whole web UI. The package
   # sets it at the first install to a random password, kept in
   # /etc/openkca/initial-password. Change it with: openkca set-password
@@ -21,7 +21,7 @@ general:
 
 # Publication of CRLs and CA certificates over plain HTTP.
 crl:
-  listen: ":8080"
+  listen: ":9080"
   # Where that server is reachable, e.g. http://pki.example.org; without
   # base URLs no CRL distribution point or CA issuer is offered.
   base_urls: []

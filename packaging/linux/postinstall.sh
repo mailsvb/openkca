@@ -9,6 +9,7 @@
 # Then the service is enabled and started on an install, and restarted into
 # the new binary on an upgrade, unless it had been stopped. Without systemd
 # running, in a container build for instance, there is nothing to start.
+# Packages cannot ask questions, so the install points to openkca setup.
 config=/etc/openkca/config.yaml
 initial=/etc/openkca/initial-password
 
@@ -33,5 +34,10 @@ if [ -d /run/systemd/system ]; then
         systemctl try-restart openkca.service >/dev/null 2>&1 || :
     fi
 fi
-echo "openkca: the web UI is available at https://<this host>:8443/"
+# the port of general.listen, the first listen line
+port=$(sed -n 's/^  listen: *"\{0,1\}[^"]*:\([0-9]*\)"\{0,1\}.*/\1/p' "$config" 2>/dev/null | head -n 1)
+echo "openkca: the web UI is available at https://<this host>:${port:-9443}/"
+if [ "${1:-1}" -eq 1 ]; then
+    echo "openkca: to choose the ports and the server password, run: sudo openkca setup"
+fi
 exit 0

@@ -94,7 +94,7 @@ sudo zypper update openkca</pre>
 <pre>sudo dnf config-manager addrepo --from-repofile=$url/rpm/openkca.repo
 sudo dnf install openkca</pre>
 <h2>After the install</h2>
-<p>The openkca service runs on <code>https://&lt;host&gt;:8443/</code>. The
+<p>The openkca service runs on <code>https://&lt;host&gt;:9443/</code>. The
 initial server password is in <code>/etc/openkca/initial-password</code>, the
 configuration in <code>/etc/openkca/config.yaml</code> and the databases in
 <code>/var/lib/openkca</code>. Restart the service after changing the

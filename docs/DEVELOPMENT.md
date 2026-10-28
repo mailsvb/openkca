@@ -32,8 +32,9 @@ The rpm package is described by `packaging/linux/nfpm.yaml` (built with
 service running as the `openkca` user, the configuration
 `packaging/linux/config.yaml` as `/etc/openkca/config.yaml` and the data
 folder `/var/lib/openkca`. On the first install the postinstall script sets
-a random server password, kept in `/etc/openkca/initial-password`, and
-starts the service.
+a random server password, kept in `/etc/openkca/initial-password`,
+starts the service and points to `openkca setup` for other ports and
+another password (an rpm scriptlet cannot ask questions).
 
 Releases need two repository secrets, the same as go-fs's:
 `PACKAGE_SIGNING_KEY`, the armored PGP private key

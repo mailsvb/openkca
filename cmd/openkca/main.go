@@ -3,10 +3,13 @@
 // config).
 //
 //	openkca [serve] [--config FILE]   run the server
+//	openkca setup [--config FILE]     ask for the ports and the server password
 //	openkca set-password              print a server password hash for general.password_hash
 //	openkca version                   print the version
 //
 // The configuration file defaults to config.yaml next to the executable.
+// Started in a terminal without a configuration file or a server password,
+// the server runs setup first.
 package main
 
 import (
@@ -48,12 +51,14 @@ func main() {
 	switch cmd {
 	case "serve":
 		err = serve(args)
+	case "setup":
+		err = setup(args)
 	case "set-password":
 		err = setPassword(args)
 	case "version", "--version", "-version":
 		fmt.Println("openkca", version)
 	default:
-		err = fmt.Errorf("unknown command %q (use serve, set-password or version)", cmd)
+		err = fmt.Errorf("unknown command %q (use serve, setup, set-password or version)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "openkca:", err)
@@ -83,27 +88,45 @@ func setPassword(args []string) error {
 	if fs.NArg() > 0 {
 		return errors.New("set-password takes no arguments")
 	}
-	pw, err := readPassword("New server password: ")
+	pw, err := newPassword("New server password: ", false)
 	if err != nil {
 		return err
 	}
 	defer clear(pw)
-	if len(pw) < 8 {
-		return errors.New("the server password must have at least 8 characters")
-	}
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		again, err := readPassword("Repeat: ")
-		if err != nil {
-			return err
-		}
-		defer clear(again)
-		if string(again) != string(pw) {
-			return errors.New("the passwords do not match")
-		}
+	if stdinIsTerminal() {
 		fmt.Fprintln(os.Stderr, "Put this line into the general section of the configuration file:")
 	}
 	fmt.Printf("  password_hash: %q\n", auth.HashPassword(pw))
 	return nil
+}
+
+// newPassword reads a new server password, twice on a terminal. With
+// optional, an empty answer returns nil.
+func newPassword(prompt string, optional bool) ([]byte, error) {
+	pw, err := readPassword(prompt)
+	if err != nil {
+		return nil, err
+	}
+	if optional && len(pw) == 0 {
+		return nil, nil
+	}
+	if len(pw) < 8 {
+		clear(pw)
+		return nil, errors.New("the server password must have at least 8 characters")
+	}
+	if stdinIsTerminal() {
+		again, err := readPassword("Repeat: ")
+		if err != nil {
+			clear(pw)
+			return nil, err
+		}
+		defer clear(again)
+		if string(again) != string(pw) {
+			clear(pw)
+			return nil, errors.New("the passwords do not match")
+		}
+	}
+	return pw, nil
 }
 
 // configPath parses the --config flag, the only command line option.
@@ -127,16 +150,32 @@ func serve(args []string) error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(log)
 
+	// The first start in a terminal sets OpenKCA up.
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) && stdinIsTerminal() {
+		fmt.Fprintf(os.Stderr, "There is no configuration file %s yet; setting OpenKCA up.\n", path)
+		if _, err := runSetup(path); err != nil {
+			return err
+		}
+	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err
+	}
+	if cfg.General.PasswordHash == "" && stdinIsTerminal() {
+		fmt.Fprintf(os.Stderr, "%s has no server password yet; setting OpenKCA up.\n", cfg.File)
+		if _, err := runSetup(cfg.File); err != nil {
+			return err
+		}
+		if cfg, err = config.Load(cfg.File); err != nil {
+			return err
+		}
 	}
 	g := cfg.General
 	if w := cfg.CheckPermissions(); w != "" {
 		log.Warn(w)
 	}
 	if g.PasswordHash == "" {
-		msg := "general.password_hash is missing; run \"openkca set-password\" and put its output into " + cfg.File
+		msg := "general.password_hash is missing; run \"openkca setup --config " + cfg.File + "\" in a terminal"
 		return errors.New(msg)
 	}
 	if !auth.ValidHash(g.PasswordHash) {
