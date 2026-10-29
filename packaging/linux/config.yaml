@@ -8,11 +8,21 @@
 general:
   # Folder with the .okca and .xdb databases.
   data_dir: /var/lib/openkca
-  # Address to listen on (HTTPS); all interfaces by default.
+  # Address to listen on; all interfaces by default.
   listen: ":9443"
+  # false serves plain HTTP, for a TLS proxy (nginx, Cloudflare, ...) in
+  # front of OpenKCA; list that proxy in trusted_proxies.
+  https: true
+  # PEM certificate and key for HTTPS, readable by the openkca user.
+  # Empty: a self-issued certificate in /var/lib/openkca/.openkca/.
+  tls_cert: ""
+  tls_key: ""
+  # Reverse proxies (IP or CIDR) whose X-Forwarded-For and
+  # X-Forwarded-Proto headers are believed, e.g. ["127.0.0.1"].
+  trusted_proxies: []
   # Hash of the server password that protects the whole web UI. The package
   # sets it at the first install to a random password, kept in
-  # /etc/openkca/initial-password. Change it with: openkca set-password
+  # /etc/openkca/initial-password. Change it with: sudo openkca setup
   password_hash: ""
   # Host name for security keys and passkeys as unlock methods, e.g.
   # ca.example.org; without it they are not offered.

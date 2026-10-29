@@ -4,16 +4,22 @@
 
 All settings are in a YAML configuration file. OpenKCA reads `config.yaml`
 next to its executable, or the file given with `--config`, the only command
-line option. `config.example.yaml` describes every setting.
+line option of `serve`. The rpm and MSI builds read their package's file
+instead (`/etc/openkca/config.yaml`, `C:\ProgramData\OpenKCA\config.yaml`).
+`config.example.yaml` describes every setting.
 
 ```sh
 # serve on https://<host>:9443/ (the listen address is in the config)
 ./openkca                          # config.yaml next to the executable
 ./openkca --config /etc/openkca/config.yaml
 
-# ask for the web UI port, the CRL port and the server password and
-# write them into the config (a new one if there is none)
+# ask for HTTPS or plain HTTP, the TLS certificate, the web UI port, the
+# CRL port and the server password and write them into the config (a new
+# one if there is none)
 ./openkca setup [--config FILE]
+
+# the same without questions, for scripts and installers
+echo "$PASSWORD" | ./openkca setup --https=false --port 8080 --password-stdin
 
 # print a server password hash for password_hash
 ./openkca set-password
@@ -26,7 +32,21 @@ Started in a terminal without a configuration file, or with one without
 `password_hash`, OpenKCA runs `setup` first and then serves. Without a
 terminal (as a service) it stops with an error instead. `setup` changes
 only the lines it asks about and keeps everything else in the file,
-comments included; restart OpenKCA afterwards.
+comments included. When it changed the configuration of the rpm's or the
+MSI's service it offers to restart it; otherwise restart OpenKCA yourself.
+
+| `setup` flag            | Meaning                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `--https=true\|false`   | serve HTTPS, or plain HTTP behind a TLS proxy              |
+| `--port N`              | web UI port                                                |
+| `--crl-port N`          | CRL server port, `0` turns it off                          |
+| `--tls-cert F --tls-key F` | PEM certificate and key, checked to be a pair; both empty: self-issued |
+| `--copy-tls`            | copy them next to the configuration (`tls.crt`, `tls.key`) |
+| `--password-stdin`      | read the server password from stdin                        |
+| `--password P`          | the server password (visible to other processes); empty keeps the current one |
+
+With any of these flags `setup` asks nothing; what is not given keeps its
+current value.
 
 ```yaml
 general:
@@ -49,8 +69,10 @@ databases:
 | ---------------- | -------- | ---------------------------------------------------------------- |
 | `data_dir`       | required | folder with the `.okca` and `.xdb` files, rescanned on every page load |
 | `listen`         | `:9443`  | listen address (all interfaces by default)                       |
+| `https`          | `true`   | `false` serves plain HTTP, for a TLS proxy in front (below)      |
 | `tls_cert`       |          | PEM certificate; without it a self-issued certificate is used    |
 | `tls_key`        |          | PEM key for `tls_cert`                                           |
+| `trusted_proxies`|          | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` count |
 | `idle_timeout`   | `30m`    | idle timeout of server and database sessions                     |
 | `max_upload_mb`  | `256`    | largest upload (database file or items to import), in MB         |
 | `password_hash`  | required | argon2id hash of the server password, from `openkca setup` or `openkca set-password` |
@@ -60,7 +82,7 @@ databases:
 | -------------- | ------- | ------- |
 | `rp_id`   |  | the host name users open OpenKCA with (a domain name, not an IP address); without it security keys and passkeys are off |
 | `rp_name` | `OpenKCA` | the name authenticators show |
-| `origins` | `https://<rp_id>` and `https://<rp_id>:<port of listen>` | `https://` origins on `rp_id` or a subdomain that may use them |
+| `origins` | `https://<rp_id>` and `https://<rp_id>:<port of listen>` (with `https: false` only `https://<rp_id>`) | `https://` origins on `rp_id` or a subdomain that may use them |
 
 Security keys and passkeys are bound to `rp_id`: one added under
 `ca.example.org` does not work when OpenKCA is opened by another name or
@@ -80,6 +102,32 @@ Before 0.13.0 the defaults were `:8443` and `:8080`. A configuration that
 leaves out `general.listen` or `crl.listen` moves to the new ports; set
 `crl.listen: ":8080"` to keep serving the CRL URLs already written into
 certificates with that port. The rpm configuration sets both explicitly.
+
+## Behind a TLS proxy
+
+With `https: false` OpenKCA serves the web UI over plain HTTP and leaves TLS
+to a reverse proxy (nginx, Caddy, Traefik, a Cloudflare Tunnel, ...). List
+the proxy in `trusted_proxies`:
+
+```yaml
+general:
+  listen: "127.0.0.1:9443"   # only the proxy on this host reaches it
+  https: false
+  trusted_proxies: ["127.0.0.1"]
+```
+
+For requests from a trusted proxy the client is the rightmost address in
+`X-Forwarded-For` that is not a trusted proxy itself, which the login rate
+limit and the audit log use, and the request counts as encrypted when the
+first `X-Forwarded-Proto` is `https`: then the cookies are `Secure` and
+HSTS is sent. Forwarding headers from anyone else are ignored. Without
+`trusted_proxies` every client looks like the proxy: one client's failed
+logins lock out everyone for a minute, and OpenKCA warns at startup.
+
+OpenKCA can be opened over plain HTTP directly as well (the cookies are
+then not `Secure`, and the login page warns), but the server password and
+the session then travel in clear text: do that only on a trusted network
+or `localhost`.
 
 ## TLS certificate
 
@@ -199,10 +247,48 @@ The rpm package (see the [README](../README.md#get-it)) runs OpenKCA as the
 
 Restart the service after changing the configuration:
 `sudo systemctl restart openkca`. To change the ports or the server
-password, run `sudo openkca setup` and restart; a new password also
-deletes `initial-password`. The service may only write to `/var/lib/openkca`; a
+password, or to switch to plain HTTP behind a TLS proxy, run
+`sudo openkca setup`, which finds `/etc/openkca/config.yaml` by itself and
+offers to restart the service; a new password also deletes
+`initial-password`. TLS files given to the service must be readable by the
+`openkca` user and must not be under `/home` or `/root`
+(`ProtectHome=yes`). The service may only write to `/var/lib/openkca`; a
 data folder or TLS files elsewhere need a drop-in (`systemctl edit openkca`)
 with `ReadWritePaths=`.
+
+## Windows MSI
+
+The MSI (`openkca_<version>_windows_amd64.msi` on the releases page)
+installs OpenKCA as the `OpenKCA` Windows service. The first install asks
+for HTTPS (clear the box for plain HTTP behind a TLS proxy), the TLS
+certificate and key (PEM files, copied into the data folder; empty for a
+self-issued certificate), the web UI and CRL ports and the server password.
+
+| Path                                   | What                                       |
+| -------------------------------------- | ------------------------------------------ |
+| `C:\Program Files\OpenKCA\`            | `openkca.exe`, `config.example.yaml`, docs |
+| `C:\ProgramData\OpenKCA\config.yaml`   | configuration, kept on updates             |
+| `C:\ProgramData\OpenKCA\tls.crt`, `tls.key` | the certificate and key given at install |
+| `C:\ProgramData\OpenKCA\data\`         | data folder                                |
+
+`C:\ProgramData\OpenKCA` can be opened by SYSTEM and Administrators only,
+and stays when OpenKCA is removed. The service logs to the Application
+event log (source `OpenKCA`), restarts after a failure, and Windows
+Firewall lets `openkca.exe` accept connections. To change the settings
+later, run `openkca setup` in a terminal opened as Administrator
+(`C:\Program Files\OpenKCA\openkca.exe setup`); it offers to restart the
+service. Updates keep the configuration and skip the questions.
+
+Silent install, for instance with plain HTTP on port 8080:
+
+```bat
+msiexec /i openkca_X.Y.Z_windows_amd64.msi /qn OKCA_PASSWORD=... OKCA_HTTPS=0 OKCA_PORT=8080
+```
+
+Properties: `OKCA_HTTPS` (`1`, `0` for plain HTTP), `OKCA_PORT` (`9443`),
+`OKCA_CRL_PORT` (`9080`, `0` = off), `OKCA_TLS_CERT` and `OKCA_TLS_KEY`
+(full paths), `OKCA_PASSWORD` (at least 8 characters, no `"`, not ending
+in `\`). The MSI is not code-signed, so SmartScreen asks before running it.
 
 ## Data folder
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/tls"
 	"html"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -579,5 +581,70 @@ func TestTemplatePages(t *testing.T) {
 	r, _ = c.Get(ts.URL + "/oid?q=2.5.29.17")
 	if b := body(t, r); !strings.Contains(b, "subjectAltName") {
 		t.Fatal("OID resolver")
+	}
+}
+
+func TestPeer(t *testing.T) {
+	_, srv := newTestServer(t, func(c *Config) {
+		c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("10.0.0.0/8")}
+	})
+	for _, tc := range []struct {
+		name, remote, xff, proto string
+		tls                      bool
+		ip                       string
+		secure                   bool
+	}{
+		{"direct", "192.0.2.1:5000", "", "", false, "192.0.2.1", false},
+		{"direct TLS", "192.0.2.1:5000", "", "", true, "192.0.2.1", true},
+		{"untrusted peer ignores headers", "192.0.2.1:5000", "198.51.100.7", "https", false, "192.0.2.1", false},
+		{"trusted proxy", "127.0.0.1:5000", "198.51.100.7", "https", false, "198.51.100.7", true},
+		{"proxy chain", "127.0.0.1:5000", "198.51.100.7, 10.1.1.1", "https,http", false, "198.51.100.7", true},
+		{"forged hop left of the client", "127.0.0.1:5000", "203.0.113.9, 198.51.100.7", "http", false, "198.51.100.7", false},
+		{"garbage stops the walk", "127.0.0.1:5000", "198.51.100.7, junk, 10.1.1.1", "", false, "10.1.1.1", false},
+		{"no header", "127.0.0.1:5000", "", "", false, "127.0.0.1", false},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/login", nil)
+		r.RemoteAddr = tc.remote
+		if tc.xff != "" {
+			r.Header.Set("X-Forwarded-For", tc.xff)
+		}
+		if tc.proto != "" {
+			r.Header.Set("X-Forwarded-Proto", tc.proto)
+		}
+		if tc.tls {
+			r.TLS = &tls.ConnectionState{}
+		}
+		ip, secure := srv.peer(r)
+		if ip != tc.ip || secure != tc.secure {
+			t.Errorf("%s: %s %v, want %s %v", tc.name, ip, secure, tc.ip, tc.secure)
+		}
+	}
+}
+
+// Over plain HTTP the session cookie is not Secure and there is no HSTS, so
+// that the browser keeps it; behind a TLS proxy both are back.
+func TestPlainHTTP(t *testing.T) {
+	_, srv := newTestServer(t, func(c *Config) { c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")} })
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	c := client(t, ts)
+	r, _ := c.Get(ts.URL + "/login")
+	if r.Header.Get("Strict-Transport-Security") != "" {
+		t.Error("HSTS over plain HTTP")
+	}
+	if b := body(t, r); !strings.Contains(b, "not encrypted") {
+		t.Error("no warning about the plain connection")
+	}
+	r, _ = c.PostForm(ts.URL+"/login", url.Values{"password": {serverPassword}})
+	if r.StatusCode != http.StatusSeeOther || len(r.Cookies()) != 1 || r.Cookies()[0].Secure {
+		t.Fatalf("plain login: %d %+v", r.StatusCode, r.Cookies())
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/login", strings.NewReader(url.Values{"password": {serverPassword}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	r, _ = c.Do(req)
+	if r.StatusCode != http.StatusSeeOther || len(r.Cookies()) != 1 || !r.Cookies()[0].Secure || r.Header.Get("Strict-Transport-Security") == "" {
+		t.Fatalf("login behind a TLS proxy: %d %+v", r.StatusCode, r.Cookies())
 	}
 }

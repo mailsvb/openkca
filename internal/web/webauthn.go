@@ -324,7 +324,7 @@ func (s *Server) openSession(w http.ResponseWriter, r *http.Request, name string
 		ds.SetMethod(m.UUID)
 	}
 	ds.Confirm()
-	s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
+	s.setCookie(w, r, dbCookie, ds.ID, dbPath(name), 0)
 	s.log.Info("database opened", "db", name, "ip", clientIP(r), "method", detail)
 }
 

@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The installer's dialogs: WixUI's welcome, progress and maintenance
+  dialogs around SettingsDlg, which asks for HTTPS, the TLS certificate and
+  key, the ports and the server password on the first install. An upgrade
+  keeps the configuration and skips it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <!-- for the password checks: MSI conditions cannot write these -->
+    <Property Id="OKCA_QUOTE" Value="&quot;" />
+    <Property Id="OKCA_BACKSLASH" Value="\" />
+
+    <UI Id="OpenKCA_UI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="SettingsDlg"
+               Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg"
+               Condition="(NOT Installed AND WIX_UPGRADE_DETECTED) OR (Installed AND PATCH)" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="SettingsDlg" Order="1"
+               Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="1"
+               Condition="(NOT Installed AND WIX_UPGRADE_DETECTED) OR (Installed AND PATCH)" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2"
+               Condition="Installed AND NOT PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Dialog Id="SettingsDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}Web UI and server password" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="How OpenKCA serves its web UI. Change it later with: openkca setup" />
+
+        <Control Id="Https" Type="CheckBox" X="20" Y="52" Width="330" Height="14" Property="OKCA_HTTPS" CheckBoxValue="1"
+                 Text="Serve &amp;HTTPS (clear for plain HTTP behind a TLS proxy such as Cloudflare)" />
+        <Control Id="CertLabel" Type="Text" X="32" Y="71" Width="88" Height="12" Text="TLS &amp;certificate (PEM):" />
+        <Control Id="Cert" Type="Edit" X="120" Y="69" Width="230" Height="15" Property="OKCA_TLS_CERT"
+                 EnableCondition="OKCA_HTTPS" DisableCondition="NOT OKCA_HTTPS" />
+        <Control Id="KeyLabel" Type="Text" X="32" Y="89" Width="88" Height="12" Text="TLS &amp;key (PEM):" />
+        <Control Id="Key" Type="Edit" X="120" Y="87" Width="230" Height="15" Property="OKCA_TLS_KEY"
+                 EnableCondition="OKCA_HTTPS" DisableCondition="NOT OKCA_HTTPS" />
+        <Control Id="TlsHint" Type="Text" X="120" Y="104" Width="230" Height="18" NoPrefix="yes"
+                 Text="Full paths. Copied to [DATAFOLDER]. Empty: a self-issued certificate." />
+
+        <Control Id="PortLabel" Type="Text" X="20" Y="128" Width="100" Height="12" Text="Web UI &amp;port:" />
+        <Control Id="Port" Type="Edit" X="120" Y="126" Width="50" Height="15" Property="OKCA_PORT" Integer="yes" />
+        <Control Id="CrlPortLabel" Type="Text" X="185" Y="128" Width="110" Height="12" Text="C&amp;RL port (HTTP, 0 = off):" />
+        <Control Id="CrlPort" Type="Edit" X="300" Y="126" Width="50" Height="15" Property="OKCA_CRL_PORT" Integer="yes" />
+
+        <Control Id="PasswordLabel" Type="Text" X="20" Y="152" Width="100" Height="12" Text="Server pass&amp;word:" />
+        <Control Id="Password" Type="Edit" X="120" Y="150" Width="230" Height="15" Property="OKCA_PASSWORD" Password="yes" />
+        <Control Id="Password2Label" Type="Text" X="20" Y="170" Width="100" Height="12" Text="Re&amp;peat:" />
+        <Control Id="Password2" Type="Edit" X="120" Y="168" Width="230" Height="15" Property="OKCA_PASSWORD2" Password="yes" />
+        <Control Id="PasswordHint" Type="Text" X="120" Y="185" Width="230" Height="24" NoPrefix="yes"
+                 Text="At least 8 characters. It protects the whole web UI; the databases have passwords of their own." />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="WelcomeDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <!-- the last problem found is shown; setup checks the rest -->
+          <Publish Property="OKCA_ERROR" Value="{}" Order="1" />
+          <Publish Property="OKCA_ERROR" Value="The server password and its repetition differ." Order="2"
+                   Condition="OKCA_PASSWORD &lt;&gt; OKCA_PASSWORD2" />
+          <Publish Property="OKCA_ERROR" Value="The server password must not contain a double quote or end with a backslash." Order="3"
+                   Condition="OKCA_PASSWORD &gt;&lt; OKCA_QUOTE OR OKCA_PASSWORD &gt;&gt; OKCA_BACKSLASH" />
+          <Publish Property="OKCA_ERROR" Value="Enter a server password of at least 8 characters." Order="4"
+                   Condition="NOT OKCA_PASSWORD" />
+          <Publish Property="OKCA_ERROR" Value="Give both the TLS certificate and its key, or neither for a self-issued certificate." Order="5"
+                   Condition="OKCA_HTTPS AND ((OKCA_TLS_CERT AND NOT OKCA_TLS_KEY) OR (OKCA_TLS_KEY AND NOT OKCA_TLS_CERT))" />
+          <Publish Property="OKCA_ERROR" Value="The web UI port must be from 1 to 65535." Order="6"
+                   Condition="NOT OKCA_PORT OR OKCA_PORT &lt; 1 OR OKCA_PORT &gt; 65535" />
+          <Publish Property="OKCA_ERROR" Value="The CRL port must be from 0 (off) to 65535 and differ from the web UI port." Order="7"
+                   Condition="NOT OKCA_CRL_PORT OR OKCA_CRL_PORT &gt; 65535 OR OKCA_CRL_PORT = OKCA_PORT" />
+          <Publish Event="SpawnDialog" Value="SettingsErrorDlg" Order="8" Condition="OKCA_ERROR" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="9" Condition="NOT OKCA_ERROR" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SettingsErrorDlg" Width="260" Height="85" Title="[ProductName] Setup">
+        <Control Id="Text" Type="Text" X="15" Y="15" Width="230" Height="40" NoPrefix="yes" Text="[OKCA_ERROR]" />
+        <Control Id="OK" Type="PushButton" X="102" Y="60" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>

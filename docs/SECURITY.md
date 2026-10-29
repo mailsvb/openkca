@@ -26,8 +26,17 @@
   configuration file: anyone who can read that file or the process memory
   can sign with its CA keys. Configure passwords only for databases that
   need unattended CA work. Keys with their own password stay locked.
-- HTTPS only, HSTS, strict Content Security Policy without inline scripts,
-  `SameSite=Strict` cookies plus CSRF tokens.
+- HTTPS by default, HSTS, strict Content Security Policy without inline
+  scripts, `SameSite=Strict` cookies plus CSRF tokens.
+- With `https: false` OpenKCA serves plain HTTP for a TLS proxy in front of
+  it. A request counts as encrypted only when it came over TLS, or from a
+  proxy in `trusted_proxies` with `X-Forwarded-Proto: https`; only then are
+  the cookies `Secure` and HSTS sent. Opened directly over plain HTTP, the
+  login page warns that the password and the session travel in clear
+  text. The client address for the login rate limit and the audit log is
+  taken from `X-Forwarded-For` only for requests from `trusted_proxies`
+  (the rightmost address that is not one of them), so clients cannot forge
+  it.
 - An unlock method is used once per login to unwrap the data key; a
   session keeps only the data key in memory and wipes it on logout and
   after the idle timeout (as far as Go allows: the runtime may keep

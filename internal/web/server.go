@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -53,6 +54,9 @@ type Config struct {
 	CRLAlerts func() []pubserve.Alert
 	// WebAuthn enables security keys and passkeys as unlock methods.
 	WebAuthn WebAuthnConfig
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For and
+	// X-Forwarded-Proto headers name the client and its scheme.
+	TrustedProxies []netip.Prefix
 }
 
 // Server is the HTTP handler.
@@ -240,13 +244,17 @@ func staticHandler(h http.Handler) http.Handler {
 
 // ServeHTTP applies the security headers to every response.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ip, secure := s.peer(r)
+	r = r.WithContext(context.WithValue(r.Context(), ctxPeer, peerInfo{ip, secure}))
 	h := w.Header()
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "+
 		"form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Strict-Transport-Security", "max-age=31536000")
+	if secure {
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+	}
 	if !strings.HasPrefix(r.URL.Path, "/static/") {
 		h.Set("Cache-Control", "no-store")
 	}
@@ -258,7 +266,14 @@ type ctxKey int
 const (
 	ctxServer ctxKey = iota
 	ctxDB
+	ctxPeer
 )
+
+// peerInfo is the client of a request, as ServeHTTP worked it out.
+type peerInfo struct {
+	ip     string
+	secure bool // it reached OpenKCA, or the proxy in front, over TLS
+}
 
 func serverSession(r *http.Request) *auth.ServerSession {
 	ss, _ := r.Context().Value(ctxServer).(*auth.ServerSession)
@@ -270,12 +285,73 @@ func dbSession(r *http.Request) *session.Session {
 	return ds
 }
 
+// clientIP returns the address of the request's client.
 func clientIP(r *http.Request) string {
+	if p, ok := r.Context().Value(ctxPeer).(peerInfo); ok {
+		return p.ip
+	}
+	return remoteIP(r)
+}
+
+// isSecure reports whether the client sent the request over TLS.
+func isSecure(r *http.Request) bool {
+	if p, ok := r.Context().Value(ctxPeer).(peerInfo); ok {
+		return p.secure
+	}
+	return r.TLS != nil
+}
+
+func remoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// peer returns the client's address and whether it used TLS. A request
+// from a trusted proxy comes from the rightmost address in X-Forwarded-For
+// that is not a trusted proxy itself, and used TLS when the first
+// X-Forwarded-Proto, set by the proxy the client connected to, is https.
+// Anyone else's forwarding headers are ignored: they could be forged.
+func (s *Server) peer(r *http.Request) (string, bool) {
+	ip, secure := remoteIP(r), r.TLS != nil
+	if !s.trusted(ip) {
+		return ip, secure
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		first, _, _ := strings.Cut(proto, ",")
+		secure = strings.EqualFold(strings.TrimSpace(first), "https")
+	}
+	var hops []string
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(v, ",")...)
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop := strings.TrimSpace(hops[i])
+		if _, err := netip.ParseAddr(hop); err != nil {
+			break
+		}
+		ip = hop
+		if !s.trusted(hop) {
+			break
+		}
+	}
+	return ip, secure
+}
+
+func (s *Server) trusted(ip string) bool {
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	a = a.Unmap()
+	for _, p := range s.cfg.TrustedProxies {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 func isHTMX(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
@@ -358,9 +434,16 @@ func (s *Server) requireDB(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-func (s *Server) setCookie(w http.ResponseWriter, name, value, path string, maxAge int) {
+// setCookie sets a session cookie, Secure unless the client uses plain
+// HTTP (general.https: false without a TLS proxy in front).
+func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, name, value, path string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: path, MaxAge: maxAge,
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+		HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode})
+}
+
+// loginForm is the server login page.
+func loginForm(r *http.Request) *page {
+	return &page{Title: "login.title", Data: map[string]any{"Insecure": !isSecure(r)}}
 }
 
 func dbPath(name string) string { return "/db/" + name + "/" }
@@ -370,12 +453,12 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, http.StatusOK, "login", &page{Title: "login.title"})
+	s.render(w, r, http.StatusOK, "login", loginForm(r))
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	p := &page{Title: "login.title"}
+	p := loginForm(r)
 	if s.srvLimit.Blocked(ip) {
 		p.Error = "login.error.ratelimit"
 		s.render(w, r, http.StatusTooManyRequests, "login", p)
@@ -407,14 +490,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.auth.End(c.Value)
 	}
 	ss := s.auth.Create()
-	s.setCookie(w, authCookie, ss.ID, "/", 0)
+	s.setCookie(w, r, authCookie, ss.ID, "/", 0)
 	s.log.Info("server login", "ip", ip)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	s.auth.End(serverSession(r).ID)
-	s.setCookie(w, authCookie, "", "/", -1)
+	s.setCookie(w, r, authCookie, "", "/", -1)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -524,7 +607,7 @@ func (s *Server) dbLogin(w http.ResponseWriter, r *http.Request) {
 		s.dbLimit.Reset(name)
 		s.log.Info("database import started", "file", name, "ip", clientIP(r))
 		ds := s.dbs.Create(serverSession(r).ID, name, nil, nil, conv)
-		s.setCookie(w, dbCookie, ds.ID, dbPath(name), 0)
+		s.setCookie(w, r, dbCookie, ds.ID, dbPath(name), 0)
 		http.Redirect(w, r, dbPath(name)+"converting", http.StatusSeeOther)
 		return
 	}
@@ -559,7 +642,7 @@ func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 	conv := ds.Conversion()
 	failed := func() {
 		s.dbs.End(ds.ID)
-		s.setCookie(w, dbCookie, "", dbPath(ds.DBName), -1)
+		s.setCookie(w, r, dbCookie, "", dbPath(ds.DBName), -1)
 		s.redirect(w, r, "/?db="+url.QueryEscape(ds.DBName)+"&error=dblogin.error.upgrade")
 	}
 	if conv == nil {
@@ -589,9 +672,9 @@ func (s *Server) convertingPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.dbs.End(ds.ID)
-		s.setCookie(w, dbCookie, "", dbPath(ds.DBName), -1)
+		s.setCookie(w, r, dbCookie, "", dbPath(ds.DBName), -1)
 		nds := s.dbs.Create(serverSession(r).ID, rep.Target, h, kr, nil)
-		s.setCookie(w, dbCookie, nds.ID, dbPath(rep.Target), 0)
+		s.setCookie(w, r, dbCookie, nds.ID, dbPath(rep.Target), 0)
 		q := "?notice=converted&name=" + url.QueryEscape(ds.DBName)
 		if n := rep.OwnPassLegacy + rep.Unopened; n > 0 {
 			q = "?notice=converted.ownpass&n=" + strconv.Itoa(n)
@@ -618,7 +701,7 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, target string)
 func (s *Server) dbLogout(w http.ResponseWriter, r *http.Request) {
 	ds := dbSession(r)
 	s.dbs.End(ds.ID)
-	s.setCookie(w, dbCookie, "", dbPath(ds.DBName), -1)
+	s.setCookie(w, r, dbCookie, "", dbPath(ds.DBName), -1)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

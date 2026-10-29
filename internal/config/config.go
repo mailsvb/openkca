@@ -5,8 +5,10 @@
 //	general:
 //	  data_dir: data                # relative to the config file's folder
 //	  listen: ":9443"
+//	  https: true                   # false: plain HTTP behind a TLS proxy
 //	  tls_cert: ""                  # PEM; empty = self-issued certificate
 //	  tls_key: ""
+//	  trusted_proxies: []           # proxies whose X-Forwarded-For counts
 //	  idle_timeout: 30m
 //	  max_upload_mb: 256
 //	  password_hash: "$argon2id$…"  # from "openkca set-password"
@@ -37,10 +39,12 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -49,6 +53,12 @@ import (
 
 // FileName is the configuration file looked for next to the executable.
 const FileName = "config.yaml"
+
+// packagedPath is the configuration file of a package (rpm, MSI), set at
+// build time; $VAR and ${VAR} in it are expanded:
+//
+//	-ldflags "-X github.com/mailsvb/openkca/internal/config.packagedPath=/etc/openkca/config.yaml"
+var packagedPath string
 
 // Defaults of the general section.
 const (
@@ -83,15 +93,26 @@ func (c CRL) ListenAddr() string {
 
 // General holds the server settings.
 type General struct {
-	DataDir      string        `yaml:"data_dir"`
-	Listen       string        `yaml:"listen"`
+	DataDir string `yaml:"data_dir"`
+	Listen  string `yaml:"listen"`
+	// HTTPS is false to serve plain HTTP behind a TLS proxy; left out, it
+	// is true.
+	HTTPS        *bool         `yaml:"https"`
 	TLSCert      string        `yaml:"tls_cert"`
 	TLSKey       string        `yaml:"tls_key"`
 	IdleTimeout  time.Duration `yaml:"idle_timeout"`
 	MaxUploadMB  int64         `yaml:"max_upload_mb"`
 	PasswordHash string        `yaml:"password_hash"`
 	WebAuthn     WebAuthn      `yaml:"webauthn"`
+	// TrustedProxies are the addresses (IP or CIDR) of reverse proxies
+	// whose X-Forwarded-For and X-Forwarded-Proto headers are believed.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	// Proxies is TrustedProxies parsed.
+	Proxies []netip.Prefix `yaml:"-"`
 }
+
+// TLS reports whether the web UI is served over HTTPS.
+func (g General) TLS() bool { return g.HTTPS == nil || *g.HTTPS }
 
 // WebAuthn configures security keys and passkeys as unlock methods. They
 // are bound to RPID, so they are offered only when it is set.
@@ -126,8 +147,21 @@ type Config struct {
 	Databases []Database
 }
 
-// DefaultPath is config.yaml in the folder of the running executable.
+// PackagedPath is the configuration file of the package this binary was
+// built for, read by its service; "" for a plain binary.
+func PackagedPath() string {
+	if packagedPath == "" {
+		return ""
+	}
+	return filepath.Clean(os.ExpandEnv(packagedPath))
+}
+
+// DefaultPath is the package's configuration file in a package build,
+// otherwise config.yaml in the folder of the running executable.
 func DefaultPath() (string, error) {
+	if p := PackagedPath(); p != "" {
+		return p, nil
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -206,7 +240,19 @@ func (c *Config) check(base string) error {
 		return errors.New("general.max_upload_mb must be between 1 and 1048576")
 	}
 	g.PasswordHash = strings.TrimSpace(g.PasswordHash)
-	if err := g.WebAuthn.check(g.Listen); err != nil {
+	g.Proxies = nil
+	for i, raw := range g.TrustedProxies {
+		p, err := parsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("general.trusted_proxies[%d]: %q is not an IP address or CIDR range", i, raw)
+		}
+		g.Proxies = append(g.Proxies, p)
+	}
+	listen := g.Listen
+	if !g.TLS() {
+		listen = "" // the proxy's port is not known
+	}
+	if err := g.WebAuthn.check(listen); err != nil {
 		return err
 	}
 	if err := c.CRL.check(); err != nil {
@@ -278,10 +324,24 @@ func (c *CRL) check() error {
 
 var hostLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
+// parsePrefix parses a CIDR range or a single IP address.
+func parsePrefix(s string) (netip.Prefix, error) {
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		return p.Masked(), err
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()), nil
+}
+
 // check validates the WebAuthn section: rp_id a domain name (WebAuthn does
 // not work with IP addresses), each origin an https:// URL on rp_id or a
 // subdomain of it. Without origins, https://<rp_id> and, for another port
-// than 443, https://<rp_id>:<port of listen> are allowed.
+// than 443, https://<rp_id>:<port of listen> are allowed; listen is "" when
+// a TLS proxy serves the web UI.
 func (w *WebAuthn) check(listen string) error {
 	w.RPID = strings.ToLower(strings.TrimSpace(w.RPID))
 	w.RPName = strings.TrimSpace(w.RPName)
@@ -380,9 +440,10 @@ func (c *Config) HasPasswords() bool {
 }
 
 // CheckPermissions returns a warning when the file holds database
-// passwords and others than its owner may read it.
+// passwords and others than its owner may read it. Windows has ACLs, not
+// mode bits: the MSI restricts the folder instead.
 func (c *Config) CheckPermissions() string {
-	if !c.HasPasswords() {
+	if !c.HasPasswords() || runtime.GOOS == "windows" {
 		return ""
 	}
 	fi, err := os.Stat(c.File)

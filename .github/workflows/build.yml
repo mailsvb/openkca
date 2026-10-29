@@ -2,8 +2,8 @@ name: Build
 
 # Runs only manually and makes an official release: the given version, or
 # VERSION with the fix number increased by 1, tagged v<version> with a GitHub
-# release holding the binaries and signed rpms; VERSION on main is then
-# updated and the rpm repository on GitHub Pages rebuilt.
+# release holding the binaries, the signed rpms and the Windows MSI; VERSION
+# on main is then updated and the rpm repository on GitHub Pages rebuilt.
 on:
   workflow_dispatch:
     inputs:
@@ -59,7 +59,6 @@ jobs:
           - { goos: linux, goarch: amd64 }
           - { goos: linux, goarch: arm64 }
           - { goos: windows, goarch: amd64 }
-          - { goos: darwin, goarch: amd64 }
           - { goos: darwin, goarch: arm64 }
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -130,8 +129,10 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p build/pkg/linux pkg
+          # openkca setup without --config finds the service's configuration
+          pkg="-X github.com/mailsvb/openkca/internal/config.packagedPath=/etc/openkca/config.yaml"
           for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+            GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION $pkg" \
               -o build/pkg/linux/openkca ./cmd/openkca
             ARCH=$arch go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0 \
               package --config packaging/linux/nfpm.yaml --packager rpm --target pkg/
@@ -146,8 +147,61 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # The Windows installer, built with WiX: openkca.exe as the OpenKCA
+  # service, its configuration and data in C:\ProgramData\OpenKCA. Unsigned.
+  msi:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      WIX_VERSION: 5.0.2
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build openkca.exe
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          # ${ProgramData} is expanded by openkca at run time
+          go build -trimpath -o build/pkg/windows/openkca.exe \
+            -ldflags '-s -w -X main.version='"$VERSION"' -X github.com/mailsvb/openkca/internal/config.packagedPath=${ProgramData}\OpenKCA\config.yaml' \
+            ./cmd/openkca
+
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version "$WIX_VERSION"
+          echo "$USERPROFILE/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Build the MSI
+        run: |
+          for ext in UI Util Firewall; do
+            wix extension add --global "WixToolset.$ext.wixext/$WIX_VERSION"
+          done
+          mkdir -p pkg
+          wix build packaging/windows/openkca.wxs packaging/windows/ui.wxs -arch x64 \
+            -d Version="$VERSION" -d BinDir=build/pkg/windows -d RepoDir=. \
+            -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext \
+            -o "pkg/openkca_${VERSION}_windows_amd64.msi"
+          ls -l pkg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openkca_${{ env.VERSION }}_windows_msi
+          path: pkg/*.msi
+          if-no-files-found: error
+          retention-days: 30
+
   release:
-    needs: [version, test, build, rpm]
+    needs: [version, test, build, rpm, msi]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -84,7 +84,8 @@ func TestParseDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := c.General
-	if g.DataDir != "/srv/ca" || g.Listen != DefaultListen || g.IdleTimeout != DefaultIdleTimeout || g.MaxUploadMB != DefaultMaxUploadMB {
+	if g.DataDir != "/srv/ca" || g.Listen != DefaultListen || !g.TLS() || len(g.Proxies) != 0 ||
+		g.IdleTimeout != DefaultIdleTimeout || g.MaxUploadMB != DefaultMaxUploadMB {
 		t.Fatalf("general = %+v", g)
 	}
 	if len(c.Databases) != 0 || c.HasPasswords() {
@@ -120,11 +121,54 @@ func TestParseErrors(t *testing.T) {
 		{gen + "crl:\n  base_urls: [\"http://x/?a=1\"]\n", "query"},
 		{gen + "crl:\n  base_urls: [http://x/, http://x]\n", "twice"},
 		{gen + "crl:\n  lisen: x\n", "field lisen not found"},
+		{gen + "  https: no-thanks\n", "into bool"},
+		{gen + "  trusted_proxies: [proxy.lan]\n", "trusted_proxies[0]"},
+		{gen + "  trusted_proxies: [10.0.0.0/33]\n", "trusted_proxies[0]"},
 	} {
 		_, err := Parse([]byte(tc.yaml), "/base")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q: err = %v, want %q", tc.yaml, err, tc.want)
 		}
+	}
+}
+
+func TestHTTPSAndProxies(t *testing.T) {
+	c, err := Parse([]byte(`
+general:
+  data_dir: d
+  https: false
+  trusted_proxies: ["127.0.0.1", " 10.1.2.3/8 ", "::1", "fd00::/8"]
+`), "/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := c.General
+	if g.TLS() {
+		t.Fatal("https: false is TLS")
+	}
+	var got []string
+	for _, p := range g.Proxies {
+		got = append(got, p.String())
+	}
+	if strings.Join(got, " ") != "127.0.0.1/32 10.0.0.0/8 ::1/128 fd00::/8" {
+		t.Fatalf("proxies = %v", got)
+	}
+	// TLS files may stay configured while they are not used
+	if _, err := Parse([]byte("general:\n  data_dir: d\n  https: false\n  tls_cert: c\n  tls_key: k\n"), "/b"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPackagedPath(t *testing.T) {
+	defer func(p string) { packagedPath = p }(packagedPath)
+	packagedPath = ""
+	if p, err := DefaultPath(); err != nil || filepath.Base(p) != FileName || PackagedPath() != "" {
+		t.Fatalf("plain binary: %q %v", p, err)
+	}
+	t.Setenv("OKCA_TEST_DIR", "/srv/okca")
+	packagedPath = "${OKCA_TEST_DIR}/conf/../config.yaml"
+	if p, err := DefaultPath(); err != nil || p != filepath.Clean("/srv/okca/config.yaml") || PackagedPath() != p {
+		t.Fatalf("package: %q %v", p, err)
 	}
 }
 
@@ -171,6 +215,11 @@ func TestWebAuthn(t *testing.T) {
 	c, err = parse(":443", "  webauthn:\n    rp_id: ca.example.org\n")
 	if err != nil || len(c.General.WebAuthn.Origins) != 1 {
 		t.Fatalf("port 443: %+v %v", c.General.WebAuthn, err)
+	}
+	// behind a TLS proxy the listen port is not the one browsers use
+	c, err = parse(":8080", "  https: false\n  webauthn:\n    rp_id: ca.example.org\n")
+	if err != nil || len(c.General.WebAuthn.Origins) != 1 || c.General.WebAuthn.Origins[0] != "https://ca.example.org" {
+		t.Fatalf("plain HTTP: %+v %v", c.General.WebAuthn, err)
 	}
 	c, err = parse(":8443", "  webauthn:\n    rp_id: example.org\n    rp_name: Lab\n    origins: [\"https://pki.Example.org:9443/\"]\n")
 	w = c.General.WebAuthn

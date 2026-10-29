@@ -11,6 +11,15 @@ Requires Go 1.27 or later (the toolchain is downloaded automatically by older
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o openkca ./cmd/openkca
 ```
 
+A package build also sets the configuration file its service reads, so that
+`openkca setup` finds it without `--config` (`$VAR` and `${VAR}` are
+expanded at run time):
+
+```sh
+-X github.com/mailsvb/openkca/internal/config.packagedPath=/etc/openkca/config.yaml      # rpm
+-X 'github.com/mailsvb/openkca/internal/config.packagedPath=${ProgramData}\OpenKCA\config.yaml'  # MSI
+```
+
 ## Versions and releases
 
 `VERSION` holds the current version (semantic versioning, `X.Y.Z`).
@@ -20,7 +29,8 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)"
   `X.Y.Z` to build exactly that version, or leave it empty to increase the
   fix number of `VERSION` by one. The release is
   tested, built, tagged `v<version>` and published as a GitHub release with
-  the archives, the signed rpm packages and their SHA-256 checksums;
+  the archives (Linux amd64 and arm64, Windows amd64, macOS arm64), the
+  signed rpm packages, the Windows MSI and their SHA-256 checksums;
   `VERSION` on `main` is then set to the released version.
 - After a release the rpm repository on GitHub Pages
   (`https://mailsvb.github.io/openkca/`) is rebuilt from the rpms of the
@@ -35,6 +45,26 @@ folder `/var/lib/openkca`. On the first install the postinstall script sets
 a random server password, kept in `/etc/openkca/initial-password`,
 starts the service and points to `openkca setup` for other ports and
 another password (an rpm scriptlet cannot ask questions).
+
+The Windows MSI is described by `packaging/windows/openkca.wxs` and
+`ui.wxs` and built with [WiX](https://wixtoolset.org) v5 on a Windows
+runner: `openkca.exe` in `C:\Program Files\OpenKCA`, run as the `OpenKCA`
+service (LocalSystem) with its configuration and data in
+`C:\ProgramData\OpenKCA`, which only SYSTEM and Administrators can open.
+The first install asks for HTTPS, the TLS files, the ports and the server
+password and runs `openkca setup` with them (a deferred custom action that
+keeps its command line out of the log); upgrades skip the dialog and keep
+the configuration. The MSI is not code-signed, so SmartScreen warns about
+it. Build it on Windows with:
+
+```sh
+dotnet tool install --global wix --version 5.0.2
+for ext in UI Util Firewall; do wix extension add --global WixToolset.$ext.wixext/5.0.2; done
+wix build packaging/windows/openkca.wxs packaging/windows/ui.wxs -arch x64 \
+  -d Version=$(cat VERSION) -d BinDir=<folder with openkca.exe> -d RepoDir=. \
+  -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext \
+  -o openkca.msi
+```
 
 Releases need two repository secrets, the same as go-fs's:
 `PACKAGE_SIGNING_KEY`, the armored PGP private key

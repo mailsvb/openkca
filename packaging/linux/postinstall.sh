@@ -36,8 +36,10 @@ if [ -d /run/systemd/system ]; then
 fi
 # the port of general.listen, the first listen line
 port=$(sed -n 's/^  listen: *"\{0,1\}[^"]*:\([0-9]*\)"\{0,1\}.*/\1/p' "$config" 2>/dev/null | head -n 1)
-echo "openkca: the web UI is available at https://<this host>:${port:-9443}/"
+scheme=https
+grep -qx '  https: false' "$config" 2>/dev/null && scheme=http
+echo "openkca: the web UI is available at $scheme://<this host>:${port:-9443}/"
 if [ "${1:-1}" -eq 1 ]; then
-    echo "openkca: to choose the ports and the server password, run: sudo openkca setup"
+    echo "openkca: to choose HTTPS or HTTP, the ports and the server password, run: sudo openkca setup"
 fi
 exit 0

@@ -29,6 +29,12 @@ func TestSetValues(t *testing.T) {
 			[]Edit{{"crl", "listen", ":2"}}},
 		{"missing section", "general:\n  data_dir: d", "general:\n  data_dir: d\ncrl:\n  base_urls: \"x\"\n  listen: \":2\"\n",
 			[]Edit{{"crl", "listen", ":2"}, {"crl", "base_urls", "x"}}},
+		{"bool", "general:\n  https: true # off: proxy\n", "general:\n  https: false # off: proxy\n",
+			[]Edit{{"general", "https", false}}},
+		{"missing bool", "general:\n  data_dir: d\n", "general:\n  https: false\n  data_dir: d\n",
+			[]Edit{{"general", "https", false}}},
+		{"other type", "general:\n  listen: \":1\"\n", "",
+			[]Edit{{"general", "listen", 1}}},
 		{"flow section", "# “quoted” …\ngeneral: {}\n", "",
 			[]Edit{{"general", "listen", ":1"}}},
 	} {
@@ -58,6 +64,7 @@ func TestSetValuesShipped(t *testing.T) {
 			{"general", "listen", "127.0.0.1:443"},
 			{"general", "password_hash", "$argon2id$v=19$x"},
 			{"crl", "listen", ""},
+			{"general", "https", false},
 		})
 		if err != nil {
 			t.Fatalf("%s: %v", file, err)
@@ -72,25 +79,34 @@ func TestSetValuesShipped(t *testing.T) {
 				changed++
 			}
 		}
-		if changed != 3 {
-			t.Errorf("%s: %d lines changed, want 3:\n%s", file, changed, out)
+		if changed != 4 {
+			t.Errorf("%s: %d lines changed, want 4:\n%s", file, changed, out)
 		}
 		c, err := Parse(out, t.TempDir())
 		if err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
-		if c.General.Listen != "127.0.0.1:443" || c.General.PasswordHash != "$argon2id$v=19$x" || c.CRL.ListenAddr() != "" {
+		if c.General.Listen != "127.0.0.1:443" || c.General.TLS() || c.General.PasswordHash != "$argon2id$v=19$x" || c.CRL.ListenAddr() != "" {
 			t.Errorf("%s: general = %+v, crl = %q", file, c.General, c.CRL.ListenAddr())
 		}
 	}
 }
 
 func TestNewFile(t *testing.T) {
-	c, err := Parse(NewFile(":9443", "", "$argon2id$x"), "/srv")
+	c, err := Parse(NewFile(Settings{Listen: ":9443", HTTPS: true, PasswordHash: "$argon2id$x"}), "/srv")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.General.DataDir != "/srv/data" || c.General.Listen != ":9443" || c.General.PasswordHash != "$argon2id$x" || c.CRL.ListenAddr() != "" {
-		t.Fatalf("config = %+v %q", c.General, c.CRL.ListenAddr())
+	g := c.General
+	if g.DataDir != "/srv/data" || g.Listen != ":9443" || !g.TLS() || g.TLSCert != "" || g.PasswordHash != "$argon2id$x" || c.CRL.ListenAddr() != "" {
+		t.Fatalf("config = %+v %q", g, c.CRL.ListenAddr())
+	}
+	c, err = Parse(NewFile(Settings{Listen: ":80", CRLListen: ":9080", TLSCert: "tls.crt", TLSKey: "tls.key", PasswordHash: "$argon2id$x"}), "/srv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g = c.General
+	if g.TLS() || g.TLSCert != "/srv/tls.crt" || g.TLSKey != "/srv/tls.key" || c.CRL.ListenAddr() != ":9080" {
+		t.Fatalf("config = %+v %q", g, c.CRL.ListenAddr())
 	}
 }

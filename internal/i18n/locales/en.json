@@ -6,6 +6,7 @@
   "login.intro": "Enter the server password to continue.",
   "login.password": "Server password",
   "login.submit": "Sign in",
+  "login.insecure": "This connection is not encrypted: the password and the session travel in clear text. Use OpenKCA over HTTPS or behind a TLS proxy.",
   "login.error.password": "Wrong password.",
   "login.error.ratelimit": "Too many failed attempts. Wait a minute and try again.",
   "nav.logout": "Sign out",

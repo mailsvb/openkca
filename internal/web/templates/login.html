@@ -3,6 +3,7 @@
   <h1>{{T "login.heading"}}</h1>
   <p class="muted small">{{T "app.tagline"}}</p>
   <p class="muted">{{T "login.intro"}}</p>
+  {{if .Data.Insecure}}<p class="warn small" role="note">{{T "login.insecure"}}</p>{{end}}
   <form method="post" action="/login">
     <label for="password">{{T "login.password"}}</label>
     <input type="password" id="password" name="password" autocomplete="current-password" autofocus required>

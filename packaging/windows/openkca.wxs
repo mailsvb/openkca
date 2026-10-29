@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The MSI of OpenKCA, built by the build workflow with WiX v5:
+
+    wix build packaging/windows/openkca.wxs packaging/windows/ui.wxs -arch x64
+      -d Version=X.Y.Z -d BinDir=<folder with openkca.exe> -d RepoDir=.
+      -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext
+
+  It installs openkca.exe to Program Files and runs it as the OpenKCA service
+  (LocalSystem). The configuration, the TLS files and the databases are in
+  C:\ProgramData\OpenKCA, for SYSTEM and Administrators only, and stay there
+  when OpenKCA is removed, as with the rpm. The first install asks for HTTPS,
+  the TLS certificate and key, the ports and the server password (ui.wxs) and
+  writes them with "openkca setup"; an upgrade keeps the configuration.
+
+  Silent install: msiexec /i openkca.msi /qn OKCA_PASSWORD=... [OKCA_HTTPS=0]
+  [OKCA_PORT=9443] [OKCA_CRL_PORT=9080] [OKCA_TLS_CERT=C:\x.crt OKCA_TLS_KEY=C:\x.key]
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package Name="OpenKCA" Manufacturer="Sven Beisiegel" Version="$(Version)"
+           UpgradeCode="018C2F19-B0AE-4BD2-8A12-F5E7F31EE23A" Scope="perMachine" InstallerVersion="500">
+    <SummaryInformation Description="OpenKCA certificate authority" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenKCA is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/mailsvb/openkca" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- The answers of the settings dialog, public for silent installs. -->
+    <Property Id="OKCA_HTTPS" Value="1" Secure="yes" />
+    <Property Id="OKCA_PORT" Value="9443" Secure="yes" />
+    <Property Id="OKCA_CRL_PORT" Value="9080" Secure="yes" />
+    <Property Id="OKCA_TLS_CERT" Secure="yes" />
+    <Property Id="OKCA_TLS_KEY" Secure="yes" />
+    <Property Id="OKCA_PASSWORD" Secure="yes" Hidden="yes" />
+    <Property Id="OKCA_PASSWORD2" Hidden="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OpenKCA">
+        <Directory Id="DOCSFOLDER" Name="docs" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="OpenKCA" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="OpenKCA">
+      <ComponentGroupRef Id="Program" />
+      <ComponentRef Id="DataFolder" />
+    </Feature>
+
+    <ComponentGroup Id="Program" Directory="INSTALLFOLDER">
+      <Component Id="Service">
+        <File Id="openkca.exe" Source="$(BinDir)\openkca.exe" KeyPath="yes">
+          <fw:FirewallException Id="OpenKCAFirewall" Name="OpenKCA" Scope="any" Profile="all" />
+        </File>
+        <ServiceInstall Id="OpenKCAService" Name="OpenKCA" DisplayName="OpenKCA"
+                        Description="OpenKCA certificate authority: web UI and CRL publication"
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"
+                        Arguments="serve --config &quot;[DATAFOLDER]config.yaml&quot;">
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="OpenKCAServiceControl" Name="OpenKCA" Start="install" Stop="both"
+                        Remove="uninstall" Wait="yes" />
+        <!-- the service logs to the Application event log -->
+        <util:EventSource Name="OpenKCA" Log="Application"
+                          EventMessageFile="[%SystemRoot]\System32\EventCreate.exe"
+                          SupportsErrors="yes" SupportsWarnings="yes" SupportsInformationals="yes" />
+      </Component>
+      <Component>
+        <File Source="$(RepoDir)\README.md" />
+      </Component>
+      <Component>
+        <File Source="$(RepoDir)\config.example.yaml" />
+      </Component>
+      <Component>
+        <File Source="$(RepoDir)\internal\web\static\htmx.LICENSE" />
+      </Component>
+      <Component Directory="DOCSFOLDER">
+        <File Source="$(RepoDir)\docs\CONFIGURATION.md" />
+      </Component>
+      <Component Directory="DOCSFOLDER">
+        <File Source="$(RepoDir)\docs\DEVELOPMENT.md" />
+      </Component>
+      <Component Directory="DOCSFOLDER">
+        <File Source="$(RepoDir)\docs\FEATURES.md" />
+      </Component>
+      <Component Directory="DOCSFOLDER">
+        <File Source="$(RepoDir)\docs\SECURITY.md" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- The configuration may hold database passwords and the TLS key: the
+         folder is SYSTEM's and the Administrators' alone, without the read
+         access for Users that ProgramData passes on. It is never removed. -->
+    <Component Id="DataFolder" Directory="DATAFOLDER" Guid="E23444AD-531E-4601-8EDF-C7713B2DDBFA" Permanent="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+      </CreateFolder>
+    </Component>
+
+    <!-- "openkca setup" writes the answers into the configuration on the
+         first install, before the service starts; it fails the install,
+         which is rolled back, when an answer is not valid. The command line
+         holds the password, so it is kept out of the log. A password with
+         a double quote or a trailing backslash is refused by the dialog:
+         it would not survive the command line. -->
+    <CustomAction Id="HttpsOn" Property="OKCA_HTTPS_FLAG" Value="true" />
+    <CustomAction Id="HttpsOff" Property="OKCA_HTTPS_FLAG" Value="false" />
+    <SetProperty Id="RunSetup" Sequence="execute" Before="RunSetup"
+                 Value="&quot;[#openkca.exe]&quot; setup --config &quot;[DATAFOLDER]config.yaml&quot; --https=[OKCA_HTTPS_FLAG] --port=&quot;[OKCA_PORT]&quot; --crl-port=&quot;[OKCA_CRL_PORT]&quot; --tls-cert=&quot;[OKCA_TLS_CERT]&quot; --tls-key=&quot;[OKCA_TLS_KEY]&quot; --copy-tls --password=&quot;[OKCA_PASSWORD]&quot;" />
+    <CustomAction Id="RunSetup" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64"
+                  Execute="deferred" Impersonate="no" Return="check" HideTarget="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="HttpsOn" After="CostFinalize" Condition="OKCA_HTTPS AND OKCA_HTTPS &lt;&gt; &quot;0&quot;" />
+      <Custom Action="HttpsOff" After="HttpsOn" Condition="NOT OKCA_HTTPS OR OKCA_HTTPS = &quot;0&quot;" />
+      <Custom Action="RunSetup" After="InstallServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+    </InstallExecuteSequence>
+
+    <UIRef Id="OpenKCA_UI" />
+  </Package>
+</Wix>

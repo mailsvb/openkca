@@ -25,16 +25,18 @@ the box. Coming from [XCA](https://github.com/chris2511/xca)? Drop in your
 
 ## Get it
 
-Grab a binary for Linux, Windows or macOS from the
-[releases page](https://github.com/mailsvb/openkca/releases), or install the
-rpm on openSUSE and SLES (Fedora and RHEL: see the
+Grab a binary for Linux, Windows or macOS (Apple silicon) from the
+[releases page](https://github.com/mailsvb/openkca/releases), the Windows
+installer (`.msi`, runs OpenKCA as a service;
+[details](docs/CONFIGURATION.md#windows-msi)), or install the rpm on
+openSUSE and SLES (Fedora and RHEL: see the
 [package page](https://mailsvb.github.io/openkca/)):
 
 ```sh
 sudo zypper addrepo https://mailsvb.github.io/openkca/rpm/openkca.repo
 sudo zypper refresh && sudo zypper install openkca
 sudo cat /etc/openkca/initial-password   # → https://<host>:9443/
-sudo openkca setup                       # optional: other ports and password
+sudo openkca setup                       # optional: HTTP/HTTPS, ports, password
 ```
 
 The service is configured in `/etc/openkca/config.yaml`
@@ -46,8 +48,9 @@ The service is configured in `/etc/openkca/config.yaml`
 ./openkca                # → https://<host>:9443/
 ```
 
-The first start asks for the web UI port (9443), the CRL port (9080) and
-the server password, and writes `config.yaml` next to the binary. Run
+The first start asks whether to serve HTTPS or plain HTTP behind a TLS
+proxy, for the web UI port (9443), the CRL port (9080) and the server
+password, and writes `config.yaml` next to the binary. Run
 `./openkca setup` to change them later. Every setting is explained in
 `config.example.yaml`.
 

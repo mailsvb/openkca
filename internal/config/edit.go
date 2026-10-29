@@ -10,14 +10,27 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Edit sets Key in the top-level Section of a configuration to Value.
+// Edit sets Key in the top-level Section of a configuration to Value, a
+// string or a bool.
 type Edit struct {
-	Section, Key, Value string
+	Section, Key string
+	Value        any
+}
+
+// literal returns the YAML text of an edit's value.
+func (e Edit) literal() (string, error) {
+	switch v := e.Value.(type) {
+	case string:
+		return strconv.Quote(v), nil
+	case bool:
+		return strconv.FormatBool(v), nil
+	}
+	return "", fmt.Errorf("cannot write a %T", e.Value)
 }
 
 // SetValues applies edits to a configuration file's text and leaves the
-// rest of it, comments and blank lines included, as it is. A value is
-// written double-quoted in place of the old one on its line; a missing key
+// rest of it, comments and blank lines included, as it is. A string is
+// written double-quoted, a bool plain, in place of the old one on its line; a missing key
 // is added as the first one of its section, a missing section at the end.
 // Only keys on one line in a block section can be set.
 func SetValues(b []byte, edits []Edit) ([]byte, error) {
@@ -35,7 +48,10 @@ func setValue(b []byte, e Edit) ([]byte, error) {
 	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return nil, err
 	}
-	quoted := strconv.Quote(e.Value)
+	quoted, err := e.literal()
+	if err != nil {
+		return nil, err
+	}
 	var root *yaml.Node
 	if len(doc.Content) > 0 {
 		root = doc.Content[0]
@@ -172,9 +188,19 @@ func closingQuote(line string, i int) int {
 	return -1
 }
 
+// Settings are the values "openkca setup" asks for.
+type Settings struct {
+	Listen       string // the web UI's address
+	CRLListen    string // the CRL server's address, "" = off
+	HTTPS        bool
+	TLSCert      string // "" = self-issued certificate
+	TLSKey       string
+	PasswordHash string
+}
+
 // NewFile returns a configuration for a new installation with the data
 // folder "data" next to it.
-func NewFile(listen, crlListen, passwordHash string) []byte {
+func NewFile(s Settings) []byte {
 	return []byte(fmt.Sprintf(`# OpenKCA configuration, made by "openkca setup". Every setting is explained
 # in config.example.yaml. Restart OpenKCA after a change.
 #
@@ -184,8 +210,16 @@ func NewFile(listen, crlListen, passwordHash string) []byte {
 general:
   # Folder with the .okca and .xdb databases, relative to this file.
   data_dir: data
-  # Address to listen on (HTTPS); all interfaces by default.
+  # Address to listen on; all interfaces by default.
   listen: %q
+  # false serves plain HTTP, for a TLS proxy in front of OpenKCA.
+  https: %t
+  # PEM certificate and key for HTTPS. Empty: a self-issued certificate.
+  tls_cert: %q
+  tls_key: %q
+  # Reverse proxies (IP or CIDR) whose X-Forwarded-For header names the
+  # client, e.g. ["127.0.0.1"]; without them the proxy is the client.
+  trusted_proxies: []
   # Hash of the server password that protects the whole web UI.
   # Change it with: openkca setup
   password_hash: %q
@@ -203,5 +237,5 @@ crl:
 
 # Databases OpenKCA knows by name; the files in data_dir are listed anyway.
 databases: []
-`, listen, passwordHash, crlListen))
+`, s.Listen, s.HTTPS, s.TLSCert, s.TLSKey, s.PasswordHash, s.CRLListen))
 }

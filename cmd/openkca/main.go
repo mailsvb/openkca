@@ -3,11 +3,13 @@
 // config).
 //
 //	openkca [serve] [--config FILE]   run the server
-//	openkca setup [--config FILE]     ask for the ports and the server password
+//	openkca setup [--config FILE]     ask for HTTPS, the ports and the server password
 //	openkca set-password              print a server password hash for general.password_hash
 //	openkca version                   print the version
 //
-// The configuration file defaults to config.yaml next to the executable.
+// The configuration file defaults to config.yaml next to the executable, or
+// to the package's (/etc/openkca/config.yaml for the rpm). On Windows the
+// MSI's service runs "openkca serve" under the service control manager.
 // Started in a terminal without a configuration file or a server password,
 // the server runs setup first.
 package main
@@ -43,6 +45,13 @@ var version = "dev"
 
 func main() {
 	args := os.Args[1:]
+	if ran, err := runAsService(args); ran || err != nil {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "openkca:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	cmd := "serve"
 	if len(args) > 0 && (!strings.HasPrefix(args[0], "-") || args[0] == "--version" || args[0] == "-version") {
 		cmd, args = args[0], args[1:]
@@ -166,28 +175,42 @@ func serve(args []string) error {
 		if _, err := runSetup(cfg.File); err != nil {
 			return err
 		}
-		if cfg, err = config.Load(cfg.File); err != nil {
-			return err
-		}
 	}
-	g := cfg.General
+	if cfg, err = prepare(cfg.File, log); err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return run(ctx, cfg, log)
+}
+
+// prepare loads the configuration at path and checks that it can be served.
+func prepare(path string, log *slog.Logger) (*config.Config, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
 	if w := cfg.CheckPermissions(); w != "" {
 		log.Warn(w)
 	}
-	if g.PasswordHash == "" {
-		msg := "general.password_hash is missing; run \"openkca setup --config " + cfg.File + "\" in a terminal"
-		return errors.New(msg)
+	switch h := cfg.General.PasswordHash; {
+	case h == "":
+		return nil, errors.New("general.password_hash is missing; run \"openkca setup --config " + cfg.File + "\" in a terminal")
+	case !auth.ValidHash(h):
+		return nil, errors.New("general.password_hash is not a hash made by \"openkca set-password\"")
 	}
-	if !auth.ValidHash(g.PasswordHash) {
-		return errors.New("general.password_hash is not a hash made by \"openkca set-password\"")
-	}
+	return cfg, nil
+}
 
+// run serves cfg until ctx ends or a server fails.
+func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	g := cfg.General
 	st, err := store.New(g.DataDir)
 	if err != nil {
 		return err
 	}
 	st.BaseURLs = cfg.CRL.BaseURLs
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 
 	conf := make([]store.Configured, len(cfg.Databases))
@@ -213,9 +236,12 @@ func serve(args []string) error {
 	}
 	defer bg.Close()
 
-	certs, err := auth.NewCertManager(st.Dir, g.TLSCert, g.TLSKey)
-	if err != nil {
-		return err
+	// Without HTTPS a TLS proxy in front of OpenKCA has the certificate.
+	var certs *auth.CertManager
+	if g.TLS() {
+		if certs, err = auth.NewCertManager(st.Dir, g.TLSCert, g.TLSKey); err != nil {
+			return err
+		}
 	}
 	cat, err := i18n.Load()
 	if err != nil {
@@ -223,14 +249,16 @@ func serve(args []string) error {
 	}
 	monitor := &pubserve.Monitor{Dir: st.Dir, Log: log}
 	srv, err := web.New(web.Config{Store: st, PasswordHash: g.PasswordHash, Catalog: cat, IdleTimeout: g.IdleTimeout,
-		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts,
+		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts, TrustedProxies: g.Proxies,
 		WebAuthn: web.WebAuthnConfig{RPID: g.WebAuthn.RPID, RPName: g.WebAuthn.RPName, Origins: g.WebAuthn.Origins}})
 	if err != nil {
 		return err
 	}
 	ran := make(chan struct{})
 	go func() { srv.Run(ctx); close(ran) }()
-	go certs.Watch(ctx.Done())
+	if certs != nil {
+		go certs.Watch(ctx.Done())
+	}
 	go monitor.Run(ctx, time.Hour)
 	bgDone := make(chan struct{})
 	go func() { bg.Run(ctx); close(bgDone) }()
@@ -251,17 +279,26 @@ func serve(args []string) error {
 	hs := &http.Server{
 		Addr:              g.Listen,
 		Handler:           srv,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       5 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
 	}
-	go func() { errc <- hs.ListenAndServeTLS("", "") }()
-	leaf := certs.Leaf()
-	log.Info("OpenKCA listening", "version", version, "config", cfg.File, "addr", g.Listen, "data", st.Dir,
-		"databases", len(names), "background", len(bg.Databases()),
-		"cert", leaf.Subject.CommonName, "expires", leaf.NotAfter.Format(time.DateOnly))
+	attrs := []any{"version", version, "config", cfg.File, "addr", g.Listen, "data", st.Dir,
+		"databases", len(names), "background", len(bg.Databases())}
+	if certs != nil {
+		hs.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate}
+		go func() { errc <- hs.ListenAndServeTLS("", "") }()
+		leaf := certs.Leaf()
+		attrs = append(attrs, "scheme", "https", "cert", leaf.Subject.CommonName, "expires", leaf.NotAfter.Format(time.DateOnly))
+	} else {
+		go func() { errc <- hs.ListenAndServe() }()
+		attrs = append(attrs, "scheme", "http", "trusted_proxies", strings.Join(g.TrustedProxies, " "))
+		if len(g.Proxies) == 0 {
+			log.Warn("serving plain HTTP without general.trusted_proxies: behind a TLS proxy every client has the proxy's address and counts as unencrypted")
+		}
+	}
+	log.Info("OpenKCA listening", attrs...)
 	select {
 	case err := <-errc:
 		stop()
