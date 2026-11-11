@@ -46,6 +46,7 @@
   "list.search": "Search",
   "list.plain": "Plain view",
   "list.hideunusable": "Hide unusable",
+  "list.togglechildren": "Show or hide issued certificates",
   "list.columns": "Columns",
   "list.none": "Nothing found.",
   "col.name": "Internal name",

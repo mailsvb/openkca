@@ -31,6 +31,54 @@
   });
 })();
 
+// Certificate tree: issued certificates stay folded under their issuer until
+// its arrow is clicked. Open issuers are remembered per list for this
+// browser session only.
+(function () {
+  "use strict";
+  function storeKey() { return "openkca.expanded." + location.pathname; }
+  function load() {
+    try { return JSON.parse(sessionStorage.getItem(storeKey()) || "[]"); } catch (e) { return []; }
+  }
+  function save(ids) {
+    try { sessionStorage.setItem(storeKey(), JSON.stringify(ids)); } catch (e) { /* storage unavailable */ }
+  }
+  // Rows come parents first, so one pass settles every level.
+  function sync() {
+    var open = load();
+    var present = {};
+    var showsChildren = {};
+    document.querySelectorAll("#rows tr[data-id]").forEach(function (row) {
+      var id = row.getAttribute("data-id");
+      var parent = row.getAttribute("data-parent");
+      var btn = row.querySelector("button[data-toggle-children]");
+      var visible = !parent || !present[parent] || showsChildren[parent] === true;
+      var expanded = !!btn && open.indexOf(id) >= 0;
+      present[id] = true;
+      showsChildren[id] = visible && expanded;
+      row.hidden = !visible;
+      if (btn) { btn.setAttribute("aria-expanded", expanded ? "true" : "false"); }
+      if (!visible) {
+        var box = row.querySelector("input[name=id]");
+        if (box) { box.checked = false; }
+      }
+    });
+  }
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest ? ev.target.closest("button[data-toggle-children]") : null;
+    var row = btn ? btn.closest("tr[data-id]") : null;
+    if (!row) { return; }
+    var id = row.getAttribute("data-id");
+    var open = load();
+    var now = open.filter(function (x) { return x !== id; });
+    if (now.length === open.length) { now.push(id); }
+    save(now);
+    sync();
+  });
+  document.addEventListener("DOMContentLoaded", sync);
+  document.addEventListener("htmx:afterSwap", sync);
+})();
+
 // Copy buttons: data-copy names the element whose text is copied.
 (function () {
   "use strict";

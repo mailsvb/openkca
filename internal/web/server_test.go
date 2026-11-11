@@ -213,6 +213,17 @@ func TestServerLoginFlow(t *testing.T) {
 	if strings.Contains(b, "<html") || !strings.Contains(b, "Alice") || strings.Contains(b, "www.example.org") {
 		t.Fatalf("htmx fragment: %s", b)
 	}
+	// Issued certificates are folded under their issuer; the flat views have no tree.
+	r, _ = c.Get(ts.URL + "/db/sample/certs")
+	if b := body(t, r); !strings.Contains(b, "data-toggle-children") || !regexp.MustCompile(`<tr [^>]*data-parent="\d+" hidden>`).MatchString(b) {
+		t.Errorf("certificate tree: no folded child rows")
+	}
+	for _, query := range []string{"f=1&view=plain", "q=alice"} {
+		r, _ = c.Get(ts.URL + "/db/sample/certs?" + query)
+		if b := body(t, r); strings.Contains(b, "data-toggle-children") || strings.Contains(b, "data-parent=") {
+			t.Errorf("certs?%s: flat list has tree markup", query)
+		}
+	}
 	// Private key check with the database password.
 	req, _ = http.NewRequest("POST", ts.URL+"/db/sample/item/4/check-key", nil)
 	req.Header.Set("X-CSRF-Token", csrf)

@@ -36,13 +36,16 @@
 {{if .Data.Trashed}}<p class="muted small"><a href="/db/{{.DB.Name}}/trash">{{T "list.trashed" .Data.Trashed}}</a></p>{{end}}
 {{template "foot" .}}
 
-{{define "rows"}}{{$cols := .Data.Columns}}{{$db := .DB.Name}}
+{{define "rows"}}{{$cols := .Data.Columns}}{{$db := .DB.Name}}{{$certs := eq .Tab "certs"}}
 {{range .Data.Rows}}{{$row := .}}
-<tr class="{{if .Unusable}}unusable{{end}}">
+<tr class="{{if .Unusable}}unusable{{end}}" data-id="{{.ID}}"{{if .ParentID}} data-parent="{{.ParentID}}" hidden{{end}}>
 <td class="col-sel"><input type="checkbox" name="id" value="{{$row.ID}}" form="selform" aria-label="{{T "list.select"}}"></td>
 {{range $cols}}{{$v := index $row.Cells .Key}}
   <td class="col-{{.Key}} {{index $row.Classes .Key}}">
-  {{- if eq .Key "name"}}<a href="/db/{{$db}}/item/{{$row.ID}}" class="tree {{depth $row.Depth}}">{{$v}}</a>
+  {{- if eq .Key "name"}}<span class="tree {{depth $row.Depth}}">
+    {{- if $row.HasChildren}}<button type="button" class="twisty" data-toggle-children aria-expanded="false" aria-label="{{T "list.togglechildren"}}" title="{{T "list.togglechildren"}}"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+    {{- else if $certs}}<span class="twisty-pad"></span>{{end -}}
+    <a href="/db/{{$db}}/item/{{$row.ID}}">{{$v}}</a></span>
   {{- else if or (eq .Key "status") (eq .Key "private")}}{{if $v}}{{T $v}}{{end}}
   {{- else if or (eq .Key "ca") (eq .Key "signed")}}{{if $v}}{{T (print "val." $v)}}{{end}}
   {{- else}}{{$v}}{{end -}}

@@ -41,6 +41,10 @@ type Row struct {
 	Cells    map[string]string
 	Classes  map[string]string // per cell CSS class (expiry colours)
 	Unusable bool
+	// Certificate tree: the row this one is nested under (0 at the top
+	// level) and whether rows are nested under this one.
+	ParentID    int64
+	HasChildren bool
 }
 
 // certStatus classifies a certificate like XCA's list colours.
@@ -252,9 +256,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			}})
 		}
 	case "certs":
-		var add func(c *db.Cert, depth int)
+		var add func(c *db.Cert, depth int, parent int64)
 		seen := map[int64]bool{}
-		add = func(c *db.Cert, depth int) {
+		add = func(c *db.Cert, depth int, parent int64) {
 			if seen[c.ID] {
 				return
 			}
@@ -268,7 +272,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 				if info.NoExpiry {
 					notAfter = "—"
 				}
-				row := Row{ID: c.ID, Depth: depth, Unusable: st.Unusable, Cells: map[string]string{
+				row := Row{ID: c.ID, Depth: depth, ParentID: parent, Unusable: st.Unusable, Cells: map[string]string{
 					"name": c.Name, "cn": info.CommonName, "ca": boolKey(c.CA), "serial": c.Serial,
 					"notbefore": info.NotBefore.UTC().Format("2006-01-02"), "notafter": notAfter,
 					"status": st.Status, "key": ix.names[c.KeyID], "comment": c.Comment,
@@ -286,20 +290,28 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 				rows = append(rows, row)
 			}
 			if !plain && q == "" {
+				// Children of a row that is not shown move up to its place.
+				idx, childDepth, childParent := len(rows)-1, depth, parent
+				if show {
+					childDepth, childParent = depth+1, c.ID
+				}
 				for _, ch := range ix.children[c.ID] {
-					add(ch, depth+1)
+					add(ch, childDepth, childParent)
+				}
+				if show {
+					rows[idx].HasChildren = len(rows) > idx+1
 				}
 			}
 		}
 		for _, c := range snap.Certs {
 			isRoot := c.IssuerID == 0 || c.IssuerID == c.ID || ix.certs[c.IssuerID] == nil
 			if plain || q != "" || isRoot {
-				add(c, 0)
+				add(c, 0, 0)
 			}
 		}
 		// Issuer cycles would leave certificates unvisited; list them flat.
 		for _, c := range snap.Certs {
-			add(c, 0)
+			add(c, 0, 0)
 		}
 	case "templates":
 		for _, t := range snap.Templates {

@@ -79,7 +79,12 @@ table.kv th { width: 30%; font-weight: 600; }
 .tree.d1 { padding-left: 1.25em; } .tree.d2 { padding-left: 2.5em; } .tree.d3 { padding-left: 3.75em; }
 .tree.d4 { padding-left: 5em; } .tree.d5 { padding-left: 6.25em; } .tree.d6 { padding-left: 7.5em; }
 .tree.d7 { padding-left: 8.75em; } .tree.d8 { padding-left: 10em; }
-.tree:not(.d0)::before { content: "└ "; color: var(--muted); }
+.twisty, .twisty-pad { display: inline-block; width: 1.25em; margin-right: 2px; vertical-align: middle; }
+.twisty { padding: 0; height: 1.25em; line-height: 1; border: none; border-radius: 4px; background: none; color: var(--muted); text-align: center; }
+.twisty:hover, .twisty:focus-visible { color: var(--accent); background: var(--line); }
+.twisty svg { vertical-align: middle; transition: transform .12s; }
+.twisty[aria-expanded="true"] svg { transform: rotate(90deg); }
+table.list tr[hidden] { display: none; }
 dl.props { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 6px 16px; margin: 0; }
 dl.props dt { color: var(--muted); }
 dl.props dd { margin: 0; overflow-wrap: anywhere; }
