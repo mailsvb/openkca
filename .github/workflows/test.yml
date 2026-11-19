@@ -49,3 +49,60 @@ jobs:
             echo "::error title=go test::$line"
           done
           exit "$status"
+
+  # The container image builds and its binary runs; a release pushes it.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: openkca:test
+          build-args: VERSION=0.0.0-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          out=$(docker run --rm openkca:test version)
+          echo "$out"
+          [ "$out" = "openkca 0.0.0-test" ]
+          # without a configuration in the volume serve stops with an error
+          if docker run --rm openkca:test 2> serve.log; then
+            echo "::error::serve started without a configuration"; exit 1
+          fi
+          cat serve.log
+          grep -q 'config.yaml not found' serve.log
+          docker image ls openkca:test
+
+      - name: Image contents
+        run: |
+          docker export "$(docker create openkca:test)" | tar -tvf - | tee files.txt
+          grep -Eq '^drwx------ 65532/65532 .* var/lib/openkca/?$' files.txt
+          grep -Eq '^drwxrwxrwt .* tmp/?$' files.txt
+          grep -Eq '^-rwxr-xr-x .* usr/bin/openkca$' files.txt
+
+      # setup into a fresh volume, then serve hardened as documented
+      - name: Setup and serve
+        run: |
+          printf '%s\n' 'container-test-password' |
+            docker run --rm -i -v okca-test:/var/lib/openkca openkca:test setup --password-stdin
+          docker run -d --name okca -p 9443:9443 -p 9080:9080 -v okca-test:/var/lib/openkca \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges openkca:test
+          ok=
+          for _ in $(seq 30); do
+            if curl -skf -o /dev/null https://localhost:9443/; then ok=1; break; fi
+            sleep 1
+          done
+          docker logs okca
+          [ -n "$ok" ] || { echo "::error::the web UI did not answer"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/)
+          echo "CRL server: HTTP $code"
+          [ "$code" != 000 ]
+          docker rm -f okca

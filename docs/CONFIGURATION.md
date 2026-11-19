@@ -4,8 +4,9 @@
 
 All settings are in a YAML configuration file. OpenKCA reads `config.yaml`
 next to its executable, or the file given with `--config`, the only command
-line option of `serve`. The rpm and MSI builds read their package's file
-instead (`/etc/openkca/config.yaml`, `C:\ProgramData\OpenKCA\config.yaml`).
+line option of `serve`. The rpm, MSI and container builds read their
+package's file instead (`/etc/openkca/config.yaml`,
+`C:\ProgramData\OpenKCA\config.yaml`, `/var/lib/openkca/config.yaml`).
 `config.example.yaml` describes every setting.
 
 ```sh
@@ -289,6 +290,79 @@ Properties: `OKCA_HTTPS` (`1`, `0` for plain HTTP), `OKCA_PORT` (`9443`),
 `OKCA_CRL_PORT` (`9080`, `0` = off), `OKCA_TLS_CERT` and `OKCA_TLS_KEY`
 (full paths), `OKCA_PASSWORD` (at least 8 characters, no `"`, not ending
 in `\`). The MSI is not code-signed, so SmartScreen asks before running it.
+
+## Container
+
+Every release is also published as the container image
+`ghcr.io/mailsvb/openkca` (tags `X.Y.Z`, `X.Y` and `latest`, for
+linux/amd64 and arm64). It is built on `scratch` and contains only the
+static binary, an empty `/tmp` and the htmx license: no shell, no libc, no
+CA bundle and no time zones (times are shown in UTC). OpenKCA runs as user
+and group `65532` and keeps everything in the volume `/var/lib/openkca`:
+
+| Path                                | What                                          |
+| ----------------------------------- | --------------------------------------------- |
+| `/var/lib/openkca/config.yaml`      | configuration, written by `openkca setup`     |
+| `/var/lib/openkca/tls.crt`, `tls.key` | certificate and key copied by `setup --copy-tls` |
+| `/var/lib/openkca/data/`            | data folder (`data_dir: data`)                |
+
+OpenKCA does not start without a server password, so create the
+configuration once with `setup` before the first start. It finds
+`/var/lib/openkca/config.yaml` without `--config`. Keep the default ports
+inside the container and map other ones with `-p`:
+
+```sh
+docker run --rm -it -v openkca:/var/lib/openkca ghcr.io/mailsvb/openkca setup
+
+# the same without questions
+printf '%s\n' "$PASSWORD" | docker run --rm -i -v openkca:/var/lib/openkca \
+  ghcr.io/mailsvb/openkca setup --password-stdin
+```
+
+Then run it with a read-only root filesystem and no capabilities (the ports
+are above 1024):
+
+```sh
+docker run -d --name openkca --restart unless-stopped \
+  -p 9443:9443 -p 9080:9080 -v openkca:/var/lib/openkca \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+  ghcr.io/mailsvb/openkca:X.Y.Z
+```
+
+or with Compose (`docker compose run --rm openkca setup` first):
+
+```yaml
+services:
+  openkca:
+    image: ghcr.io/mailsvb/openkca:X.Y.Z
+    restart: unless-stopped
+    ports: ["9443:9443", "9080:9080"]
+    volumes: ["openkca:/var/lib/openkca"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+volumes:
+  openkca:
+```
+
+Restart the container after changing the configuration
+(`docker restart openkca`); `setup` runs in a container of its own on the
+same volume. To edit `config.yaml` by hand, for instance to add
+`databases` or `crl.base_urls`, use a bind mount or `docker cp`.
+
+- **TLS certificate:** the self-issued certificate is made for `localhost`
+  only. Mount your certificate and key into the setup container and copy
+  them into the volume:
+  `docker run --rm -v openkca:/var/lib/openkca -v "$PWD/tls:/tls:ro" ghcr.io/mailsvb/openkca setup --tls-cert /tls/cert.pem --tls-key /tls/key.pem --copy-tls`.
+- **Behind a TLS proxy:** run `setup --https=false` and list the proxy's
+  address (on Docker networks, the network's range, e.g. `172.16.0.0/12`)
+  in `trusted_proxies` ([Behind a TLS proxy](#behind-a-tls-proxy)).
+- **Bind mounts** instead of the named volume must be writable by `65532`
+  (`sudo chown 65532:65532 dir && chmod 700 dir`). Docker copies the
+  ownership into a new named volume by itself.
+- **Verify the image**: `gh attestation verify oci://ghcr.io/mailsvb/openkca:X.Y.Z --owner mailsvb`.
+  This checks that the image was built by this repository's release workflow.
 
 ## Data folder
 

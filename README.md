@@ -42,6 +42,15 @@ sudo openkca setup                       # optional: HTTP/HTTPS, ports, password
 The service is configured in `/etc/openkca/config.yaml`
 ([details](docs/CONFIGURATION.md#rpm-package)).
 
+Or run the container image, a minimal one built on `scratch`
+([details](docs/CONFIGURATION.md#container)):
+
+```sh
+docker run --rm -it -v openkca:/var/lib/openkca ghcr.io/mailsvb/openkca setup
+docker run -d --name openkca -p 9443:9443 -p 9080:9080 -v openkca:/var/lib/openkca \
+  --read-only --tmpfs /tmp --cap-drop ALL ghcr.io/mailsvb/openkca   # → https://<host>:9443/
+```
+
 ## Run it
 
 ```sh

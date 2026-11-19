@@ -36,6 +36,22 @@ expanded at run time):
   (`https://mailsvb.github.io/openkca/`) is rebuilt from the rpms of the
   five newest releases by `packaging/repo/build.sh`, with `repomd.xml`
   signed.
+- After a release, the container image `ghcr.io/mailsvb/openkca` is also
+  built from the `Dockerfile` for linux/amd64 and arm64 and pushed with the
+  tags `<version>`, `<major>.<minor>` and `latest`, an SBOM and a signed
+  build provenance attestation. The Go version is the `toolchain` line of
+  `go.mod` (the Dockerfile's `GO_VERSION` default is used by the test
+  workflow, so keep it in step). A new GHCR package is private: make it
+  public once under the package's settings.
+
+The image holds only the static binary, an empty `/tmp`, the data volume
+`/var/lib/openkca` (owned by 65532) and the htmx license. `.dockerignore`
+lets only `go.mod`, `go.sum`, `cmd/` and `internal/` (without tests) into
+the build. Build it locally with BuildKit (`docker buildx`):
+
+```sh
+docker build --build-arg VERSION=$(cat VERSION) -t openkca .
+```
 
 The rpm package is described by `packaging/linux/nfpm.yaml` (built with
 [nfpm](https://nfpm.goreleaser.com)): the binary, the `openkca` systemd
@@ -72,7 +88,8 @@ Releases need two repository secrets, the same as go-fs's:
 `PACKAGE_SIGNING_PASSPHRASE` if the key has one. GitHub Pages must be set to
 deploy from GitHub Actions (Settings → Pages → Source).
 - `.github/workflows/test.yml` checks formatting and runs `go vet` and
-  `go test -race` on every push to `main`.
+  `go test -race` on every push to `main`, and builds the container image
+  and runs its binary.
 
 ## Translations
 

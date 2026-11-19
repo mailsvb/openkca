@@ -3,7 +3,8 @@ name: Build
 # Runs only manually and makes an official release: the given version, or
 # VERSION with the fix number increased by 1, tagged v<version> with a GitHub
 # release holding the binaries, the signed rpms and the Windows MSI; VERSION
-# on main is then updated and the rpm repository on GitHub Pages rebuilt.
+# on main is then updated, the rpm repository on GitHub Pages rebuilt and the
+# container image pushed to ghcr.io.
 on:
   workflow_dispatch:
     inputs:
@@ -284,3 +285,73 @@ jobs:
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
+
+  # The container image ghcr.io/<owner>/openkca for linux/amd64 and arm64,
+  # built from the Dockerfile on scratch and pushed once the release exists,
+  # tagged <version>, <major>.<minor> and latest, with an SBOM and a signed
+  # build provenance attestation (gh attestation verify).
+  image:
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # the toolchain go.mod asks for, or its go version
+      - name: Go version
+        id: go
+        run: |
+          go=$(sed -n 's/^toolchain go//p' go.mod)
+          [ -n "$go" ] || go=$(sed -n 's/^go //p' go.mod)
+          echo "version=$go" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=true
+          tags: |
+            type=semver,pattern={{version}},value=v${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ env.VERSION }}
+          labels: |
+            org.opencontainers.image.title=OpenKCA
+            org.opencontainers.image.description=Your own certificate authority, in one binary
+
+      - id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            GO_VERSION=${{ steps.go.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false

@@ -1,0 +1,9 @@
+# Only the sources go into the image build: never a local config.yaml,
+# databases, TLS files, .git or build output.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+**/*_test.go
+**/testdata/
