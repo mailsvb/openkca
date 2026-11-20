@@ -58,7 +58,7 @@ The rpm package is described by `packaging/linux/nfpm.yaml` (built with
 service running as the `openkca` user and `/var/lib/openkca`. On the first
 install the postinstall script runs `openkca setup` to write the default
 `/var/lib/openkca/config.yaml` with a random server password, kept in
-`/var/lib/openkca/initial-password` (an upgrade from before 0.13.0 moves
+`/var/lib/openkca/initial-password` (an upgrade from 0.13.0 or earlier moves
 `/etc/openkca` and the databases into place instead),
 starts the service and points to `openkca setup` for other ports and
 another password (an rpm scriptlet cannot ask questions).

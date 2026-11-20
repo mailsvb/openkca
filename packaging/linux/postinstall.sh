@@ -2,7 +2,7 @@
 # rpm passes 1 on an install and 2 or more on an upgrade.
 #
 # The configuration is /var/lib/openkca/config.yaml, the data folder
-# /var/lib/openkca/data. Before 0.13.0 the configuration was
+# /var/lib/openkca/data. Up to 0.13.0 the configuration was
 # /etc/openkca/config.yaml and the databases were in /var/lib/openkca
 # itself: an upgrade from there moves them. The old package's
 # /etc/openkca/config.yaml is removed by rpm after this script, or kept as

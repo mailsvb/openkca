@@ -105,7 +105,7 @@ warning at startup.
 | `listen`    | `:9081` | plain HTTP address for CRLs and CA certificates; `""` turns it off       |
 | `base_urls` |         | `http://` URLs under which that server is reachable, in the order clients should try them |
 
-Before 0.13.0 the defaults were `:9443` with `https: true` for the web UI
+Up to 0.13.0 the defaults were `:9443` with `https: true` for the web UI
 and `:9080` for the CRL server, and the data folder was `data_dir`. A
 configuration that leaves out `general.listen`, `general.https` or
 `crl.listen` moves to plain HTTP and the new ports; set them explicitly to
@@ -268,7 +268,7 @@ offers to restart the service; a new password also deletes
 (`ProtectHome=yes`). The service may only write to `/var/lib/openkca`.
 
 The first install writes the default configuration: plain HTTP on port
-9080 and the CRL server on 9081. The upgrade from a version before 0.13.0
+9080 and the CRL server on 9081. The upgrade from 0.13.0 or earlier
 moves `/etc/openkca/config.yaml` and `initial-password` to
 `/var/lib/openkca`, drops its `data_dir` line and moves everything that was
 in `/var/lib/openkca` (databases, `.openkca`, backups) into
