@@ -131,7 +131,7 @@ jobs:
         run: |
           mkdir -p build/pkg/linux pkg
           # openkca setup without --config finds the service's configuration
-          pkg="-X github.com/mailsvb/openkca/internal/config.packagedPath=/etc/openkca/config.yaml"
+          pkg="-X github.com/mailsvb/openkca/internal/config.packagedPath=/var/lib/openkca/config.yaml"
           for arch in amd64 arm64; do
             GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION $pkg" \
               -o build/pkg/linux/openkca ./cmd/openkca

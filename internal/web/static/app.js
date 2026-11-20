@@ -332,3 +332,15 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   });
 })();
+
+// Plain HTTP note on the login page: the server renders it hidden when it
+// sees plain HTTP, but it cannot always tell that a TLS proxy (Cloudflare,
+// nginx, ...) encrypts the connection; the browser can. The note shows only
+// when the page really came over http://.
+(function () {
+  "use strict";
+  document.addEventListener("DOMContentLoaded", function () {
+    if (location.protocol === "https:") { return; }
+    document.querySelectorAll("[data-insecure-note]").forEach(function (el) { el.hidden = false; });
+  });
+})();

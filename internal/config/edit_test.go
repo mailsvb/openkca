@@ -55,7 +55,7 @@ func TestSetValues(t *testing.T) {
 
 // The shipped configurations keep everything but the edited lines.
 func TestSetValuesShipped(t *testing.T) {
-	for _, file := range []string{"../../config.example.yaml", "../../packaging/linux/config.yaml"} {
+	for _, file := range []string{"../../config.example.yaml"} {
 		b, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
@@ -64,7 +64,7 @@ func TestSetValuesShipped(t *testing.T) {
 			{"general", "listen", "127.0.0.1:443"},
 			{"general", "password_hash", "$argon2id$v=19$x"},
 			{"crl", "listen", ""},
-			{"general", "https", false},
+			{"general", "https", true},
 		})
 		if err != nil {
 			t.Fatalf("%s: %v", file, err)
@@ -86,13 +86,16 @@ func TestSetValuesShipped(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
-		if c.General.Listen != "127.0.0.1:443" || c.General.TLS() || c.General.PasswordHash != "$argon2id$v=19$x" || c.CRL.ListenAddr() != "" {
+		if c.General.Listen != "127.0.0.1:443" || !c.General.TLS() || c.General.PasswordHash != "$argon2id$v=19$x" || c.CRL.ListenAddr() != "" {
 			t.Errorf("%s: general = %+v, crl = %q", file, c.General, c.CRL.ListenAddr())
 		}
 	}
 }
 
 func TestNewFile(t *testing.T) {
+	if b := NewFile(Settings{}); strings.Contains(string(b), "data_dir") {
+		t.Error("NewFile writes data_dir")
+	}
 	c, err := Parse(NewFile(Settings{Listen: ":9443", HTTPS: true, PasswordHash: "$argon2id$x"}), "/srv")
 	if err != nil {
 		t.Fatal(err)

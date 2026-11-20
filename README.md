@@ -35,11 +35,11 @@ openSUSE and SLES (Fedora and RHEL: see the
 ```sh
 sudo zypper addrepo https://mailsvb.github.io/openkca/rpm/openkca.repo
 sudo zypper refresh && sudo zypper install openkca
-sudo cat /etc/openkca/initial-password   # → https://<host>:9443/
+sudo cat /var/lib/openkca/initial-password   # → http://<host>:9080/
 sudo openkca setup                       # optional: HTTP/HTTPS, ports, password
 ```
 
-The service is configured in `/etc/openkca/config.yaml`
+The service is configured in `/var/lib/openkca/config.yaml`
 ([details](docs/CONFIGURATION.md#rpm-package)).
 
 Or run the container image, a minimal one built on `scratch`
@@ -47,20 +47,20 @@ Or run the container image, a minimal one built on `scratch`
 
 ```sh
 docker run --rm -it -v openkca:/var/lib/openkca ghcr.io/mailsvb/openkca setup
-docker run -d --name openkca -p 9443:9443 -p 9080:9080 -v openkca:/var/lib/openkca \
-  --read-only --tmpfs /tmp --cap-drop ALL ghcr.io/mailsvb/openkca   # → https://<host>:9443/
+docker run -d --name openkca -p 9080:9080 -p 9081:9081 -v openkca:/var/lib/openkca \
+  --read-only --tmpfs /tmp --cap-drop ALL ghcr.io/mailsvb/openkca   # → http://<host>:9080/
 ```
 
 ## Run it
 
 ```sh
-./openkca                # → https://<host>:9443/
+./openkca                # → http://<host>:9080/
 ```
 
-The first start asks whether to serve HTTPS or plain HTTP behind a TLS
-proxy, for the web UI port (9443), the CRL port (9080) and the server
-password, and writes `config.yaml` next to the binary. Run
-`./openkca setup` to change them later. Every setting is explained in
+The first start asks only for the server password and writes the default
+`config.yaml` next to the binary: plain HTTP on port 9080, the CRL server
+on 9081 and the data folder `data/` beside it. Run `./openkca setup` to
+switch to HTTPS or change the ports later. Every setting is explained in
 `config.example.yaml`.
 
 > **Security note:** a database password in `config.yaml` is stored in plain

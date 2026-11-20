@@ -7,13 +7,13 @@ Wants=network-online.target
 [Service]
 User=openkca
 Group=openkca
-ExecStart=/usr/bin/openkca serve --config /etc/openkca/config.yaml
+ExecStart=/usr/bin/openkca serve --config /var/lib/openkca/config.yaml
 Restart=on-failure
 RestartSec=2
 
 # Both default ports are above 1024, so no capability is needed. Everything
-# but the data folder is read-only for OpenKCA; a data folder or TLS files
-# elsewhere are a drop-in made with systemctl edit openkca.
+# but /var/lib/openkca is read-only for OpenKCA; TLS files elsewhere are a
+# drop-in made with systemctl edit openkca.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/openkca

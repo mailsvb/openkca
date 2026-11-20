@@ -1,20 +1,19 @@
 # OpenKCA configuration. OpenKCA reads config.yaml next to its executable, or
 # the file given with --config. Relative paths are relative to this file's
 # folder. Keep the file readable by its owner only (chmod 600) when it holds
-# database passwords.
+# database passwords. The databases, the self-issued TLS certificate and the
+# backups are always in the folder data next to this file.
 
 general:
-  # Folder with the .okca and .xdb databases (required).
-  data_dir: data
   # Address to listen on; all interfaces by default.
-  listen: ":9443"
+  listen: ":9080"
   # true: OpenKCA serves HTTPS itself. false: plain HTTP, for a TLS proxy
   # (nginx, Caddy, Cloudflare Tunnel, ...) in front of OpenKCA, listed in
   # trusted_proxies. Opened directly over plain HTTP, the server password
-  # and the session travel in clear text.
-  https: true
+  # and the session travel in clear text. Left out, it is false.
+  https: false
   # PEM certificate and key for HTTPS. Empty: a self-issued certificate in
-  # <data_dir>/.openkca/ is created and renewed automatically. Not used
+  # data/.openkca/ is created and renewed automatically. Not used
   # without HTTPS.
   tls_cert: ""
   tls_key: ""
@@ -44,7 +43,7 @@ general:
 crl:
   # Plain HTTP address serving /<authority ID>.crl, .crt and .pem for every
   # CA; "" turns the server off.
-  listen: ":9080"
+  listen: ":9081"
   # Where that server is reachable, as clients should try it: offered (and
   # checked by default) as CRL distribution point and CA issuer (AIA) when
   # certificates are created, signed or renewed. Every URL is written into
@@ -52,10 +51,10 @@ crl:
   # nothing is offered.
   base_urls:
     - http://pki.example.org
-    - http://pki.lan:9080
+    - http://pki.lan:9081
 
 # Databases OpenKCA knows by name. Other .okca and .xdb files directly in
-# data_dir are still listed and can be opened in the web UI.
+# the data folder are still listed and can be opened in the web UI.
 databases:
   # A database with a password is opened when OpenKCA starts and stays open,
   # so that OpenKCA can do CA work on it in the background (CRLs are signed
@@ -63,7 +62,7 @@ databases:
   # or removed in the web UI; logging in there still needs an unlock method.
   - name: Home Lab CA          # shown in the web UI
     type: file                 # the only type: an OpenKCA database file
-    path: homelab.okca          # relative to data_dir, may be in a subfolder
+    path: homelab.okca          # relative to the data folder, may be in a subfolder
     password: "change-me"
 
   # Without a password the database is only listed under its name.

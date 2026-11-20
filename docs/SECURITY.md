@@ -26,7 +26,7 @@
   configuration file: anyone who can read that file or the process memory
   can sign with its CA keys. Configure passwords only for databases that
   need unattended CA work. Keys with their own password stay locked.
-- HTTPS by default, HSTS, strict Content Security Policy without inline
+- HTTPS (`https: true`, off by default for a TLS proxy in front), HSTS, strict Content Security Policy without inline
   scripts, `SameSite=Strict` cookies plus CSRF tokens.
 - With `https: false` OpenKCA serves plain HTTP for a TLS proxy in front of
   it. A request counts as encrypted only when it came over TLS, or from a

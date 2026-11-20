@@ -16,7 +16,7 @@ A package build also sets the configuration file its service reads, so that
 expanded at run time):
 
 ```sh
--X github.com/mailsvb/openkca/internal/config.packagedPath=/etc/openkca/config.yaml      # rpm
+-X github.com/mailsvb/openkca/internal/config.packagedPath=/var/lib/openkca/config.yaml  # rpm
 -X 'github.com/mailsvb/openkca/internal/config.packagedPath=${ProgramData}\OpenKCA\config.yaml'  # MSI
 ```
 
@@ -45,7 +45,7 @@ expanded at run time):
   public once under the package's settings.
 
 The image holds only the static binary, an empty `/tmp`, the data volume
-`/var/lib/openkca` (owned by 65532) and the htmx license. `.dockerignore`
+`/var/lib/openkca` (owned by 1000:1000) and the htmx license. `.dockerignore`
 lets only `go.mod`, `go.sum`, `cmd/` and `internal/` (without tests) into
 the build. Build it locally with BuildKit (`docker buildx`):
 
@@ -55,10 +55,11 @@ docker build --build-arg VERSION=$(cat VERSION) -t openkca .
 
 The rpm package is described by `packaging/linux/nfpm.yaml` (built with
 [nfpm](https://nfpm.goreleaser.com)): the binary, the `openkca` systemd
-service running as the `openkca` user, the configuration
-`packaging/linux/config.yaml` as `/etc/openkca/config.yaml` and the data
-folder `/var/lib/openkca`. On the first install the postinstall script sets
-a random server password, kept in `/etc/openkca/initial-password`,
+service running as the `openkca` user and `/var/lib/openkca`. On the first
+install the postinstall script runs `openkca setup` to write the default
+`/var/lib/openkca/config.yaml` with a random server password, kept in
+`/var/lib/openkca/initial-password` (an upgrade from before 0.13.0 moves
+`/etc/openkca` and the databases into place instead),
 starts the service and points to `openkca setup` for other ports and
 another password (an rpm scriptlet cannot ask questions).
 

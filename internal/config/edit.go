@@ -198,21 +198,21 @@ type Settings struct {
 	PasswordHash string
 }
 
-// NewFile returns a configuration for a new installation with the data
-// folder "data" next to it.
+// NewFile returns a configuration for a new installation; its data folder
+// is "data" next to it.
 func NewFile(s Settings) []byte {
 	return []byte(fmt.Sprintf(`# OpenKCA configuration, made by "openkca setup". Every setting is explained
 # in config.example.yaml. Restart OpenKCA after a change.
 #
 # Keep the file readable by its owner only (chmod 600) when it holds
-# database passwords.
+# database passwords. The databases, the self-issued TLS certificate and
+# the backups are in the folder data next to this file.
 
 general:
-  # Folder with the .okca and .xdb databases, relative to this file.
-  data_dir: data
   # Address to listen on; all interfaces by default.
   listen: %q
-  # false serves plain HTTP, for a TLS proxy in front of OpenKCA.
+  # true: OpenKCA serves HTTPS itself. false: plain HTTP, for a TLS proxy
+  # (nginx, Cloudflare, ...) in front of OpenKCA.
   https: %t
   # PEM certificate and key for HTTPS. Empty: a self-issued certificate.
   tls_cert: %q
@@ -235,7 +235,7 @@ crl:
   # base URLs no CRL distribution point or CA issuer is offered.
   base_urls: []
 
-# Databases OpenKCA knows by name; the files in data_dir are listed anyway.
+# Databases OpenKCA knows by name; the files in data are listed anyway.
 databases: []
 `, s.Listen, s.HTTPS, s.TLSCert, s.TLSKey, s.PasswordHash, s.CRLListen))
 }

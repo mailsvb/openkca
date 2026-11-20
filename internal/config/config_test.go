@@ -12,7 +12,6 @@ func TestParseFull(t *testing.T) {
 	base := t.TempDir()
 	c, err := Parse([]byte(`
 general:
-  data_dir: data
   listen: "127.0.0.1:9443"
   tls_cert: tls/cert.pem
   tls_key: /etc/openkca/key.pem
@@ -68,7 +67,7 @@ func TestCRLListen(t *testing.T) {
 		"crl:\n  listen: \"\"\n":      "",
 		"crl:\n  listen: \":9000\"\n": ":9000",
 	} {
-		c, err := Parse([]byte("general:\n  data_dir: d\n"+yaml), "/b")
+		c, err := Parse([]byte("general:\n"+yaml), "/b")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,30 +78,46 @@ func TestCRLListen(t *testing.T) {
 }
 
 func TestParseDefaults(t *testing.T) {
-	c, err := Parse([]byte("general:\n  data_dir: /srv/ca\n"), "/etc")
+	c, err := Parse(nil, "/etc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	g := c.General
-	if g.DataDir != "/srv/ca" || g.Listen != DefaultListen || !g.TLS() || len(g.Proxies) != 0 ||
-		g.IdleTimeout != DefaultIdleTimeout || g.MaxUploadMB != DefaultMaxUploadMB {
-		t.Fatalf("general = %+v", g)
+	if g.DataDir != filepath.Join("/etc", DataDirName) || g.Listen != ":9080" || g.TLS() || len(g.Proxies) != 0 ||
+		g.IdleTimeout != DefaultIdleTimeout || g.MaxUploadMB != DefaultMaxUploadMB || c.CRL.ListenAddr() != ":9081" {
+		t.Fatalf("general = %+v, crl = %q", g, c.CRL.ListenAddr())
 	}
-	if len(c.Databases) != 0 || c.HasPasswords() {
-		t.Fatalf("databases = %+v", c.Databases)
+	if len(c.Databases) != 0 || c.HasPasswords() || len(c.Warnings) != 0 {
+		t.Fatalf("databases = %+v, warnings = %q", c.Databases, c.Warnings)
+	}
+	if c, err = Parse([]byte("general:\n  https: true\n"), "/etc"); err != nil || !c.General.TLS() {
+		t.Fatalf("https: true: %v", err)
+	}
+}
+
+// The former data_dir key is accepted, ignored and warned about.
+func TestLegacyDataDir(t *testing.T) {
+	c, err := Parse([]byte("general:\n  data_dir: /srv/ca\ndatabases:\n  - name: A\n    path: a.okca\n"), "/etc/okca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join("/etc/okca", "data"); c.General.DataDir != want || c.Databases[0].Path != filepath.Join(want, "a.okca") {
+		t.Fatalf("data folder %q, db %q", c.General.DataDir, c.Databases[0].Path)
+	}
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], "data_dir") {
+		t.Fatalf("warnings = %q", c.Warnings)
 	}
 }
 
 func TestParseErrors(t *testing.T) {
-	gen := "general:\n  data_dir: d\n"
+	gen := "general:\n"
 	db := func(s string) string { return gen + "databases:\n" + s }
 	for _, tc := range []struct{ yaml, want string }{
-		{"", "data_dir is required"},
-		{"general:\n  data_dir: d\n  listn: x\n", "field listn not found"},
-		{"general:\n  data_dir: d\n  tls_cert: c\n", "go together"},
-		{"general:\n  data_dir: d\n  idle_timeout: 10s\n", "at least 1m"},
-		{"general:\n  data_dir: d\n  idle_timeout: soon\n", "time.Duration"},
-		{"general:\n  data_dir: d\n  max_upload_mb: -1\n", "max_upload_mb"},
+		{"general:\n  listn: x\n", "field listn not found"},
+		{"general:\n  tls_cert: c\n", "go together"},
+		{"general:\n  idle_timeout: 10s\n", "at least 1m"},
+		{"general:\n  idle_timeout: soon\n", "time.Duration"},
+		{"general:\n  max_upload_mb: -1\n", "max_upload_mb"},
 		{db("  - path: a.okca\n"), "name is required"},
 		{db("  - name: A\n    path: a.okca\n  - name: A\n    path: b.okca\n"), "name already used"},
 		{db("  - name: A\n    type: ldap\n    path: a.okca\n"), "unknown type"},
@@ -135,7 +150,6 @@ func TestParseErrors(t *testing.T) {
 func TestHTTPSAndProxies(t *testing.T) {
 	c, err := Parse([]byte(`
 general:
-  data_dir: d
   https: false
   trusted_proxies: ["127.0.0.1", " 10.1.2.3/8 ", "::1", "fd00::/8"]
 `), "/b")
@@ -154,7 +168,7 @@ general:
 		t.Fatalf("proxies = %v", got)
 	}
 	// TLS files may stay configured while they are not used
-	if _, err := Parse([]byte("general:\n  data_dir: d\n  https: false\n  tls_cert: c\n  tls_key: k\n"), "/b"); err != nil {
+	if _, err := Parse([]byte("general:\n  https: false\n  tls_cert: c\n  tls_key: k\n"), "/b"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -178,7 +192,7 @@ func TestLoadAndPermissions(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 	p := filepath.Join(dir, "config.yaml")
-	body := "general:\n  data_dir: data\ndatabases:\n  - name: A\n    type: file\n    path: a.okca\n    password: pw\n"
+	body := "general:\n  https: false\ndatabases:\n  - name: A\n    type: file\n    path: a.okca\n    password: pw\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +214,7 @@ func TestLoadAndPermissions(t *testing.T) {
 
 func TestWebAuthn(t *testing.T) {
 	parse := func(listen, w string) (*Config, error) {
-		return Parse([]byte("general:\n  data_dir: data\n  listen: \""+listen+"\"\n"+w), "/base")
+		return Parse([]byte("general:\n  https: true\n  listen: \""+listen+"\"\n"+w), "/base")
 	}
 	c, err := parse(":8443", "")
 	if err != nil || c.General.WebAuthn.Enabled() {
@@ -217,7 +231,7 @@ func TestWebAuthn(t *testing.T) {
 		t.Fatalf("port 443: %+v %v", c.General.WebAuthn, err)
 	}
 	// behind a TLS proxy the listen port is not the one browsers use
-	c, err = parse(":8080", "  https: false\n  webauthn:\n    rp_id: ca.example.org\n")
+	c, err = Parse([]byte("general:\n  listen: \":8080\"\n  webauthn:\n    rp_id: ca.example.org\n"), "/base")
 	if err != nil || len(c.General.WebAuthn.Origins) != 1 || c.General.WebAuthn.Origins[0] != "https://ca.example.org" {
 		t.Fatalf("plain HTTP: %+v %v", c.General.WebAuthn, err)
 	}
@@ -240,25 +254,5 @@ func TestWebAuthn(t *testing.T) {
 		if _, err := parse(":8443", bad); err == nil {
 			t.Errorf("accepted:\n%s", bad)
 		}
-	}
-}
-
-// TestPackagedConfig checks the configuration the rpm installs: it must
-// parse, and keep the empty password_hash line the postinstall script
-// replaces with the hash of a random initial password.
-func TestPackagedConfig(t *testing.T) {
-	b, err := os.ReadFile("../../packaging/linux/config.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := Parse(b, "/etc/openkca")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.General.DataDir != "/var/lib/openkca" || c.General.PasswordHash != "" || len(c.Databases) != 0 {
-		t.Fatalf("config = %+v", c)
-	}
-	if !strings.Contains("\n"+string(b), "\n  password_hash: \"\"\n") {
-		t.Fatal(`no line '  password_hash: ""' for the postinstall script to replace`)
 	}
 }

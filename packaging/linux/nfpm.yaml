@@ -16,7 +16,7 @@ homepage: https://github.com/mailsvb/openkca
 description: |
   Your own certificate authority, in one binary
   OpenKCA runs a complete PKI from the browser: X.509 certificates, SSH keys
-  and OpenPGP keys. Runs as the openkca systemd service on https://<host>:9443/.
+  and OpenPGP keys. Runs as the openkca systemd service on http://<host>:9080/.
 
 contents:
   - src: build/pkg/linux/openkca
@@ -29,24 +29,9 @@ contents:
     file_info:
       mode: 0644
 
-  # The configuration may hold database passwords: the service's alone.
-  # noreplace keeps the file as it is on an upgrade, and puts the new one
-  # beside it as config.yaml.rpmnew.
-  - dst: /etc/openkca
-    type: dir
-    file_info:
-      mode: 0750
-      owner: openkca
-      group: openkca
-  - src: packaging/linux/config.yaml
-    dst: /etc/openkca/config.yaml
-    type: config|noreplace
-    file_info:
-      mode: 0600
-      owner: openkca
-      group: openkca
-
-  # data_dir: the databases, the self-issued TLS certificate and backups
+  # The configuration (config.yaml, written by the postinstall script on the
+  # first install) and the data folder data/ with the databases, the
+  # self-issued TLS certificate and the backups: the service's alone.
   - dst: /var/lib/openkca
     type: dir
     file_info:

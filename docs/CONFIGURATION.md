@@ -5,14 +5,16 @@
 All settings are in a YAML configuration file. OpenKCA reads `config.yaml`
 next to its executable, or the file given with `--config`, the only command
 line option of `serve`. The rpm, MSI and container builds read their
-package's file instead (`/etc/openkca/config.yaml`,
-`C:\ProgramData\OpenKCA\config.yaml`, `/var/lib/openkca/config.yaml`).
+package's file instead (`/var/lib/openkca/config.yaml` for the rpm and the
+container, `C:\ProgramData\OpenKCA\config.yaml` for the MSI). The data
+folder is always `data` next to the configuration file: the databases, the
+self-issued TLS certificate and the backups.
 `config.example.yaml` describes every setting.
 
 ```sh
-# serve on https://<host>:9443/ (the listen address is in the config)
+# serve on http://<host>:9080/ (the listen address is in the config)
 ./openkca                          # config.yaml next to the executable
-./openkca --config /etc/openkca/config.yaml
+./openkca --config /var/lib/openkca/config.yaml
 
 # ask for HTTPS or plain HTTP, the TLS certificate, the web UI port, the
 # CRL port and the server password and write them into the config (a new
@@ -20,7 +22,7 @@ package's file instead (`/etc/openkca/config.yaml`,
 ./openkca setup [--config FILE]
 
 # the same without questions, for scripts and installers
-echo "$PASSWORD" | ./openkca setup --https=false --port 8080 --password-stdin
+echo "$PASSWORD" | ./openkca setup --https=true --port 9443 --password-stdin
 
 # print a server password hash for password_hash
 ./openkca set-password
@@ -29,8 +31,11 @@ echo "$PASSWORD" | ./openkca setup --https=false --port 8080 --password-stdin
 ./openkca version
 ```
 
-Started in a terminal without a configuration file, or with one without
-`password_hash`, OpenKCA runs `setup` first and then serves. Without a
+Started in a terminal without a configuration file, OpenKCA asks only for
+the server password, writes the default configuration (plain HTTP on
+`:9080`, the CRL server on `:9081`) and serves; with a configuration
+without `password_hash` it asks for the password only as well. The
+default configuration is written only when there is no file yet. Without a
 terminal (as a service) it stops with an error instead. `setup` changes
 only the lines it asks about and keeps everything else in the file,
 comments included. When it changed the configuration of the rpm's or the
@@ -38,7 +43,7 @@ MSI's service it offers to restart it; otherwise restart OpenKCA yourself.
 
 | `setup` flag            | Meaning                                                    |
 | ----------------------- | ---------------------------------------------------------- |
-| `--https=true\|false`   | serve HTTPS, or plain HTTP behind a TLS proxy              |
+| `--https=true\|false`   | serve HTTPS, or plain HTTP (the default for a new file)    |
 | `--port N`              | web UI port                                                |
 | `--crl-port N`          | CRL server port, `0` turns it off                          |
 | `--tls-cert F --tls-key F` | PEM certificate and key, checked to be a pair; both empty: self-issued |
@@ -51,14 +56,13 @@ current value.
 
 ```yaml
 general:
-  data_dir: /srv/xca
-  listen: ":9443"
+  listen: ":9080"
   password_hash: "$argon2id$v=19$m=65536,t=3,p=2$…"
 crl:
-  listen: ":9080"
+  listen: ":9081"
   base_urls:
     - http://pki.example.org
-    - http://pki.lan:9080
+    - http://pki.lan:9081
 databases:
   - name: Home Lab CA
     type: file
@@ -68,9 +72,8 @@ databases:
 
 | `general` key    | Default  | Meaning                                                          |
 | ---------------- | -------- | ---------------------------------------------------------------- |
-| `data_dir`       | required | folder with the `.okca` and `.xdb` files, rescanned on every page load |
-| `listen`         | `:9443`  | listen address (all interfaces by default)                       |
-| `https`          | `true`   | `false` serves plain HTTP, for a TLS proxy in front (below)      |
+| `listen`         | `:9080`  | listen address (all interfaces by default)                       |
+| `https`          | `false`  | `true` serves HTTPS; `false` plain HTTP, e.g. for a TLS proxy in front (below) |
 | `tls_cert`       |          | PEM certificate; without it a self-issued certificate is used    |
 | `tls_key`        |          | PEM key for `tls_cert`                                           |
 | `trusted_proxies`|          | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` count |
@@ -91,18 +94,26 @@ an IP address, so every database keeps at least one password. Browsers
 refuse WebAuthn on a certificate warning, so the browser must trust
 OpenKCA's TLS certificate (for example one issued by one of your CAs).
 
-Relative paths (`data_dir`, `tls_cert`, `tls_key`) are relative to the
-configuration file's folder; unknown keys are an error.
+Relative paths (`tls_cert`, `tls_key`) are relative to the configuration
+file's folder; unknown keys are an error. The data folder `data` next to
+the file, with the `.okca` and `.xdb` files, is rescanned on every page
+load. It cannot be configured: an old `data_dir` key is ignored with a
+warning at startup.
 
 | `crl` key   | Default | Meaning                                                                  |
 | ----------- | ------- | ------------------------------------------------------------------------ |
-| `listen`    | `:9080` | plain HTTP address for CRLs and CA certificates; `""` turns it off       |
+| `listen`    | `:9081` | plain HTTP address for CRLs and CA certificates; `""` turns it off       |
 | `base_urls` |         | `http://` URLs under which that server is reachable, in the order clients should try them |
 
-Before 0.13.0 the defaults were `:8443` and `:8080`. A configuration that
-leaves out `general.listen` or `crl.listen` moves to the new ports; set
-`crl.listen: ":8080"` to keep serving the CRL URLs already written into
-certificates with that port. The rpm configuration sets both explicitly.
+Before 0.13.0 the defaults were `:9443` with `https: true` for the web UI
+and `:9080` for the CRL server, and the data folder was `data_dir`. A
+configuration that leaves out `general.listen`, `general.https` or
+`crl.listen` moves to plain HTTP and the new ports; set them explicitly to
+keep the old ones, in particular `crl.listen: ":9080"` to keep serving the
+CRL URLs already written into certificates with that port. Configurations
+written by `setup`, the MSI and the rpm set all three. The rpm moves
+`/etc/openkca/config.yaml` and the databases on the upgrade
+([rpm package](#rpm-package)).
 
 ## Behind a TLS proxy
 
@@ -112,7 +123,7 @@ the proxy in `trusted_proxies`:
 
 ```yaml
 general:
-  listen: "127.0.0.1:9443"   # only the proxy on this host reaches it
+  listen: "127.0.0.1:9080"   # only the proxy on this host reaches it
   https: false
   trusted_proxies: ["127.0.0.1"]
 ```
@@ -126,7 +137,8 @@ HSTS is sent. Forwarding headers from anyone else are ignored. Without
 logins lock out everyone for a minute, and OpenKCA warns at startup.
 
 OpenKCA can be opened over plain HTTP directly as well (the cookies are
-then not `Secure`, and the login page warns), but the server password and
+then not `Secure`, and the login page warns when the browser shows an
+`http://` address; behind a TLS proxy, trusted or not, it does not), but the server password and
 the session then travel in clear text: do that only on a trusted network
 or `localhost`.
 
@@ -145,7 +157,7 @@ Each entry of `databases` names one OpenKCA database:
 | ---------- | -------------------------------------------------------------------------- |
 | `name`     | the name shown in the web UI (unique)                                       |
 | `type`     | `file`, the only type: a `.okca` file                                        |
-| `path`     | the file, relative to `data_dir`; may be in a subfolder, never outside it   |
+| `path`     | the file, relative to the data folder; may be in a subfolder, never outside it   |
 | `password` | optional: one of the database's passwords, to keep it open in the background |
 
 A database with a `password` is opened when OpenKCA starts and stays open
@@ -186,7 +198,7 @@ a base URL may have a path (`http://host/pki`) whether or not a proxy
 strips it. The files are kept in the CA's folder (`ca.crt`, `crl.der`)
 and only replaced, never removed: a CA in the trash keeps serving them.
 Behind a reverse proxy or an ingress on port 80, the base URLs need no
-port; otherwise include `:9080`. CRLs are served over HTTP, not HTTPS,
+port; otherwise include `:9081`. CRLs are served over HTTP, not HTTPS,
 as RFC 5280 recommends, which avoids a validation loop.
 
 The CA page lists its URLs below every base URL. With base URLs
@@ -241,21 +253,28 @@ The rpm package (see the [README](../README.md#get-it)) runs OpenKCA as the
 
 | Path                              | What                                              |
 | --------------------------------- | ------------------------------------------------- |
-| `/etc/openkca/config.yaml`        | configuration, kept as it is on updates           |
-| `/etc/openkca/initial-password`   | server password set at the first install (root only) |
-| `/var/lib/openkca`                | data folder                                       |
+| `/var/lib/openkca/config.yaml`    | configuration, written at the first install and kept on updates |
+| `/var/lib/openkca/initial-password` | server password set at the first install (root only) |
+| `/var/lib/openkca/data/`          | data folder                                       |
 | `/usr/share/doc/openkca/`         | `config.example.yaml` and these documents         |
 
 Restart the service after changing the configuration:
 `sudo systemctl restart openkca`. To change the ports or the server
 password, or to switch to plain HTTP behind a TLS proxy, run
-`sudo openkca setup`, which finds `/etc/openkca/config.yaml` by itself and
+`sudo openkca setup`, which finds `/var/lib/openkca/config.yaml` by itself and
 offers to restart the service; a new password also deletes
 `initial-password`. TLS files given to the service must be readable by the
 `openkca` user and must not be under `/home` or `/root`
-(`ProtectHome=yes`). The service may only write to `/var/lib/openkca`; a
-data folder or TLS files elsewhere need a drop-in (`systemctl edit openkca`)
-with `ReadWritePaths=`.
+(`ProtectHome=yes`). The service may only write to `/var/lib/openkca`.
+
+The first install writes the default configuration: plain HTTP on port
+9080 and the CRL server on 9081. The upgrade from a version before 0.13.0
+moves `/etc/openkca/config.yaml` and `initial-password` to
+`/var/lib/openkca`, drops its `data_dir` line and moves everything that was
+in `/var/lib/openkca` (databases, `.openkca`, backups) into
+`/var/lib/openkca/data/`. Its ports and HTTPS stay as they were. rpm then
+keeps a changed `/etc/openkca/config.yaml` as `config.yaml.rpmsave`, which
+can be deleted.
 
 ## Windows MSI
 
@@ -280,14 +299,14 @@ later, run `openkca setup` in a terminal opened as Administrator
 (`C:\Program Files\OpenKCA\openkca.exe setup`); it offers to restart the
 service. Updates keep the configuration and skip the questions.
 
-Silent install, for instance with plain HTTP on port 8080:
+Silent install, for instance with HTTPS on port 9443:
 
 ```bat
-msiexec /i openkca_X.Y.Z_windows_amd64.msi /qn OKCA_PASSWORD=... OKCA_HTTPS=0 OKCA_PORT=8080
+msiexec /i openkca_X.Y.Z_windows_amd64.msi /qn OKCA_PASSWORD=... OKCA_HTTPS=1 OKCA_PORT=9443
 ```
 
-Properties: `OKCA_HTTPS` (`1`, `0` for plain HTTP), `OKCA_PORT` (`9443`),
-`OKCA_CRL_PORT` (`9080`, `0` = off), `OKCA_TLS_CERT` and `OKCA_TLS_KEY`
+Properties: `OKCA_HTTPS` (`1` for HTTPS; unset or `0`, the default: plain
+HTTP), `OKCA_PORT` (`9080`), `OKCA_CRL_PORT` (`9081`, `0` = off), `OKCA_TLS_CERT` and `OKCA_TLS_KEY`
 (full paths), `OKCA_PASSWORD` (at least 8 characters, no `"`, not ending
 in `\`). The MSI is not code-signed, so SmartScreen asks before running it.
 
@@ -298,13 +317,13 @@ Every release is also published as the container image
 linux/amd64 and arm64). It is built on `scratch` and contains only the
 static binary, an empty `/tmp` and the htmx license: no shell, no libc, no
 CA bundle and no time zones (times are shown in UTC). OpenKCA runs as user
-and group `65532` and keeps everything in the volume `/var/lib/openkca`:
+and group `1000` and keeps everything in the volume `/var/lib/openkca`:
 
 | Path                                | What                                          |
 | ----------------------------------- | --------------------------------------------- |
 | `/var/lib/openkca/config.yaml`      | configuration, written by `openkca setup`     |
 | `/var/lib/openkca/tls.crt`, `tls.key` | certificate and key copied by `setup --copy-tls` |
-| `/var/lib/openkca/data/`            | data folder (`data_dir: data`)                |
+| `/var/lib/openkca/data/`            | data folder                                   |
 
 OpenKCA does not start without a server password, so create the
 configuration once with `setup` before the first start. It finds
@@ -324,7 +343,7 @@ are above 1024):
 
 ```sh
 docker run -d --name openkca --restart unless-stopped \
-  -p 9443:9443 -p 9080:9080 -v openkca:/var/lib/openkca \
+  -p 9080:9080 -p 9081:9081 -v openkca:/var/lib/openkca \
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   ghcr.io/mailsvb/openkca:X.Y.Z
 ```
@@ -336,7 +355,7 @@ services:
   openkca:
     image: ghcr.io/mailsvb/openkca:X.Y.Z
     restart: unless-stopped
-    ports: ["9443:9443", "9080:9080"]
+    ports: ["9080:9080", "9081:9081"]
     volumes: ["openkca:/var/lib/openkca"]
     read_only: true
     tmpfs: [/tmp]
@@ -355,11 +374,11 @@ same volume. To edit `config.yaml` by hand, for instance to add
   only. Mount your certificate and key into the setup container and copy
   them into the volume:
   `docker run --rm -v openkca:/var/lib/openkca -v "$PWD/tls:/tls:ro" ghcr.io/mailsvb/openkca setup --tls-cert /tls/cert.pem --tls-key /tls/key.pem --copy-tls`.
-- **Behind a TLS proxy:** run `setup --https=false` and list the proxy's
+- **Behind a TLS proxy:** keep the default plain HTTP and list the proxy's
   address (on Docker networks, the network's range, e.g. `172.16.0.0/12`)
   in `trusted_proxies` ([Behind a TLS proxy](#behind-a-tls-proxy)).
-- **Bind mounts** instead of the named volume must be writable by `65532`
-  (`sudo chown 65532:65532 dir && chmod 700 dir`). Docker copies the
+- **Bind mounts** instead of the named volume must be writable by `1000`
+  (`sudo chown 1000:1000 dir && chmod 700 dir`). Docker copies the
   ownership into a new named volume by itself.
 - **Verify the image**: `gh attestation verify oci://ghcr.io/mailsvb/openkca:X.Y.Z --owner mailsvb`.
   This checks that the image was built by this repository's release workflow.

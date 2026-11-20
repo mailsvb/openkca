@@ -36,11 +36,31 @@ func writePair(t *testing.T, dir string) (string, string) {
 }
 
 func flags(set ...string) setupFlags {
-	f := setupFlags{set: map[string]bool{}, https: true}
+	f := setupFlags{set: map[string]bool{}}
 	for _, s := range set {
 		f.set[s] = true
 	}
 	return f
+}
+
+// A new configuration with only a password has the defaults: plain HTTP
+// on :9080, CRLs on :9081, the data folder data next to it.
+func TestSetupDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	f := flags("password")
+	f.password = "serverpass1"
+	if changed, err := setupUnattended(path, f); err != nil || !changed {
+		t.Fatalf("new file: %v %v", changed, err)
+	}
+	b, _ := os.ReadFile(path)
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := c.General; g.TLS() || g.Listen != ":9080" || c.CRL.ListenAddr() != ":9081" ||
+		g.DataDir != filepath.Join(filepath.Dir(path), "data") || len(c.Warnings) != 0 || strings.Contains(string(b), "data_dir") {
+		t.Fatalf("defaults: %+v %q %q", g, c.CRL.ListenAddr(), c.Warnings)
+	}
 }
 
 func TestSetupUnattended(t *testing.T) {
@@ -74,7 +94,7 @@ func TestSetupUnattended(t *testing.T) {
 
 	cert, key := writePair(t, dir)
 	f = flags("https", "tls-cert", "tls-key", "copy-tls", "crl-port")
-	f.tlsCert, f.tlsKey, f.copyTLS, f.crlPort = cert, key, true, 8080
+	f.https, f.tlsCert, f.tlsKey, f.copyTLS, f.crlPort = true, cert, key, true, 8080
 	if _, err := setupUnattended(path, f); err == nil || !strings.Contains(err.Error(), "different ports") {
 		t.Fatalf("same ports: %v", err)
 	}

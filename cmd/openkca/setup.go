@@ -50,7 +50,7 @@ type setupFlags struct {
 func setup(args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	f := setupFlags{set: map[string]bool{}}
-	fs.BoolVar(&f.https, "https", true, "serve the web UI over HTTPS; false: plain HTTP behind a TLS proxy")
+	fs.BoolVar(&f.https, "https", false, "serve the web UI over HTTPS; false: plain HTTP, e.g. behind a TLS proxy")
 	fs.IntVar(&f.port, "port", 0, "port of the web UI")
 	fs.IntVar(&f.crlPort, "crl-port", 0, "port of the plain HTTP CRL server, 0 = off")
 	fs.StringVar(&f.tlsCert, "tls-cert", "", "PEM certificate for HTTPS; empty with -tls-key: a self-issued one")
@@ -117,7 +117,7 @@ type current struct {
 // there is one; its values default to those of a new installation.
 func loadCurrent(path string) (*current, error) {
 	cur := &current{path: path, values: config.Settings{
-		Listen: config.DefaultListen, CRLListen: config.DefaultCRLListen, HTTPS: true}}
+		Listen: config.DefaultListen, CRLListen: config.DefaultCRLListen}}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cur, nil
@@ -180,25 +180,58 @@ func runSetup(path string) (bool, error) {
 	if next.CRLListen, err = askPort(in, "CRL port (plain HTTP, 0 = off)", old.CRLListen, next.Listen); err != nil {
 		return false, err
 	}
-	var pw []byte
+	if next.PasswordHash, err = askServerPassword(old.PasswordHash); err != nil {
+		return false, err
+	}
+	return writeSettings(cur, next)
+}
+
+// firstSetup is the setup of the first start: it asks for the server
+// password only and writes the configuration file at path, the default one
+// if there is none. It reports whether anything changed.
+func firstSetup(path string) (bool, error) {
+	if !stdinIsTerminal() {
+		return false, errors.New("setup asks questions: run it in a terminal, or give the answers as flags (openkca setup -h)")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	cur, err := loadCurrent(path)
+	if err != nil {
+		return false, err
+	}
+	next := cur.values
+	if next.PasswordHash, err = askServerPassword(cur.values.PasswordHash); err != nil {
+		return false, err
+	}
+	if cur.b == nil {
+		fmt.Fprintln(os.Stderr, "Change HTTPS, the ports and the password later with: openkca setup")
+	}
+	return writeSettings(cur, next)
+}
+
+// askServerPassword asks for a new server password until one is valid and
+// returns its hash. With a current hash, Enter keeps it.
+func askServerPassword(current string) (string, error) {
 	for {
 		prompt := "Server password for the web UI: "
-		if old.PasswordHash != "" {
+		if current != "" {
 			prompt = "Server password for the web UI (Enter keeps the current one): "
 		}
-		if pw, err = newPassword(prompt, old.PasswordHash != ""); err == nil {
-			break
+		pw, err := newPassword(prompt, current != "")
+		if err == nil {
+			if pw == nil {
+				return current, nil
+			}
+			defer clear(pw)
+			return auth.HashPassword(pw), nil
 		}
 		if errors.Is(err, io.EOF) {
-			return false, err
+			return "", err
 		}
 		fmt.Fprintln(os.Stderr, err)
 	}
-	if pw != nil {
-		next.PasswordHash = auth.HashPassword(pw)
-		clear(pw)
-	}
-	return writeSettings(cur, next)
 }
 
 // setupUnattended applies the answers given as flags to the configuration

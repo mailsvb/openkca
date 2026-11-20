@@ -8,10 +8,11 @@
 //	openkca version                   print the version
 //
 // The configuration file defaults to config.yaml next to the executable, or
-// to the package's (/etc/openkca/config.yaml for the rpm). On Windows the
-// MSI's service runs "openkca serve" under the service control manager.
-// Started in a terminal without a configuration file or a server password,
-// the server runs setup first.
+// to the package's (/var/lib/openkca/config.yaml for the rpm and the
+// container). On Windows the MSI's service runs "openkca serve" under the
+// service control manager. Started in a terminal without a configuration
+// file or a server password, the server asks for the server password only
+// and writes the default configuration (plain HTTP on :9080, CRLs on :9081).
 package main
 
 import (
@@ -161,8 +162,8 @@ func serve(args []string) error {
 
 	// The first start in a terminal sets OpenKCA up.
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) && stdinIsTerminal() {
-		fmt.Fprintf(os.Stderr, "There is no configuration file %s yet; setting OpenKCA up.\n", path)
-		if _, err := runSetup(path); err != nil {
+		fmt.Fprintf(os.Stderr, "There is no configuration file %s yet; writing the default one.\n", path)
+		if _, err := firstSetup(path); err != nil {
 			return err
 		}
 	}
@@ -171,8 +172,8 @@ func serve(args []string) error {
 		return err
 	}
 	if cfg.General.PasswordHash == "" && stdinIsTerminal() {
-		fmt.Fprintf(os.Stderr, "%s has no server password yet; setting OpenKCA up.\n", cfg.File)
-		if _, err := runSetup(cfg.File); err != nil {
+		fmt.Fprintf(os.Stderr, "%s has no server password yet.\n", cfg.File)
+		if _, err := firstSetup(cfg.File); err != nil {
 			return err
 		}
 	}
@@ -189,6 +190,9 @@ func prepare(path string, log *slog.Logger) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
+	}
+	for _, w := range cfg.Warnings {
+		log.Warn(w)
 	}
 	if w := cfg.CheckPermissions(); w != "" {
 		log.Warn(w)

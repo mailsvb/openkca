@@ -3,9 +3,8 @@
 // open.
 //
 //	general:
-//	  data_dir: data                # relative to the config file's folder
-//	  listen: ":9443"
-//	  https: true                   # false: plain HTTP behind a TLS proxy
+//	  listen: ":9080"
+//	  https: false                  # true: OpenKCA serves HTTPS itself
 //	  tls_cert: ""                  # PEM; empty = self-issued certificate
 //	  tls_key: ""
 //	  trusted_proxies: []           # proxies whose X-Forwarded-For counts
@@ -18,14 +17,16 @@
 //	    origins:                    # optional; default https://<rp_id>[:port]
 //	      - https://ca.example.org:9443
 //	crl:
-//	  listen: ":9080"               # plain HTTP for CRLs and CA certificates; "" = off
+//	  listen: ":9081"               # plain HTTP for CRLs and CA certificates; "" = off
 //	  base_urls:                    # offered as CDP/AIA in new certificates
 //	    - http://pki.example.org
 //	databases:
 //	  - name: Home Lab CA           # shown in the web UI
 //	    type: file
-//	    path: homelab.okca           # relative to data_dir
+//	    path: homelab.okca           # relative to the data folder
 //	    password: "…"               # optional: open in the background
+//
+// The data folder is always data/ next to the configuration file.
 //
 // A database with a password is opened when OpenKCA starts and stays open
 // with its keys unlocked, so that OpenKCA can do CA work on its own. Users
@@ -57,21 +58,25 @@ const FileName = "config.yaml"
 // packagedPath is the configuration file of a package (rpm, MSI), set at
 // build time; $VAR and ${VAR} in it are expanded:
 //
-//	-ldflags "-X github.com/mailsvb/openkca/internal/config.packagedPath=/etc/openkca/config.yaml"
+//	-ldflags "-X github.com/mailsvb/openkca/internal/config.packagedPath=/var/lib/openkca/config.yaml"
 var packagedPath string
 
 // Defaults of the general section.
 const (
-	DefaultListen      = ":9443"
+	DefaultListen      = ":9080"
 	DefaultIdleTimeout = 30 * time.Minute
 	DefaultMaxUploadMB = 256
 )
+
+// DataDirName is the data folder next to the configuration file: the
+// databases, the self-issued TLS certificate and the backups.
+const DataDirName = "data"
 
 // TypeFile is the only database type: a .okca file in the data folder.
 const TypeFile = "file"
 
 // DefaultCRLListen is the address of the plain HTTP publication server.
-const DefaultCRLListen = ":9080"
+const DefaultCRLListen = ":9081"
 
 // CRL configures the publication of CRLs and CA certificates.
 type CRL struct {
@@ -93,10 +98,14 @@ func (c CRL) ListenAddr() string {
 
 // General holds the server settings.
 type General struct {
-	DataDir string `yaml:"data_dir"`
-	Listen  string `yaml:"listen"`
-	// HTTPS is false to serve plain HTTP behind a TLS proxy; left out, it
-	// is true.
+	// DataDir is the data folder, DataDirName next to the configuration
+	// file; it cannot be configured.
+	DataDir string `yaml:"-"`
+	// LegacyDataDir is the former data_dir key, accepted but ignored.
+	LegacyDataDir string `yaml:"data_dir"`
+	Listen        string `yaml:"listen"`
+	// HTTPS is true to serve HTTPS; left out, it is false: plain HTTP,
+	// for instance behind a TLS proxy.
 	HTTPS        *bool         `yaml:"https"`
 	TLSCert      string        `yaml:"tls_cert"`
 	TLSKey       string        `yaml:"tls_key"`
@@ -112,7 +121,7 @@ type General struct {
 }
 
 // TLS reports whether the web UI is served over HTTPS.
-func (g General) TLS() bool { return g.HTTPS == nil || *g.HTTPS }
+func (g General) TLS() bool { return g.HTTPS != nil && *g.HTTPS }
 
 // WebAuthn configures security keys and passkeys as unlock methods. They
 // are bound to RPID, so they are offered only when it is set.
@@ -141,8 +150,10 @@ func (d Database) Background() bool { return d.Password != "" }
 
 // Config is a parsed and checked configuration. Paths are absolute.
 type Config struct {
-	File      string // the configuration file
-	General   General
+	File    string // the configuration file
+	General General
+	// Warnings are problems that do not stop OpenKCA, to be logged.
+	Warnings  []string
 	CRL       CRL
 	Databases []Database
 }
@@ -214,10 +225,10 @@ func Parse(b []byte, base string) (*Config, error) {
 
 func (c *Config) check(base string) error {
 	g := &c.General
-	if strings.TrimSpace(g.DataDir) == "" {
-		return errors.New("general.data_dir is required")
+	g.DataDir = filepath.Join(base, DataDirName)
+	if strings.TrimSpace(g.LegacyDataDir) != "" {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("general.data_dir is no longer used and ignored: the data folder is always %s; remove the line", g.DataDir))
 	}
-	g.DataDir = resolve(base, g.DataDir)
 	if g.Listen == "" {
 		g.Listen = DefaultListen
 	}
@@ -398,11 +409,11 @@ func dataPath(dataDir, p string) (string, error) {
 		return "", errors.New("path is required")
 	}
 	if filepath.IsAbs(p) {
-		return "", errors.New("path must be relative to general.data_dir")
+		return "", errors.New("path must be relative to the data folder")
 	}
 	clean := filepath.Clean(filepath.FromSlash(p))
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", errors.New("path must stay inside general.data_dir")
+		return "", errors.New("path must stay inside the data folder")
 	}
 	for _, part := range strings.Split(clean, string(filepath.Separator)) {
 		if strings.HasPrefix(part, ".") {

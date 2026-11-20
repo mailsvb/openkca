@@ -643,7 +643,8 @@ func TestPlainHTTP(t *testing.T) {
 	if r.Header.Get("Strict-Transport-Security") != "" {
 		t.Error("HSTS over plain HTTP")
 	}
-	if b := body(t, r); !strings.Contains(b, "not encrypted") {
+	// rendered hidden: app.js shows it unless the browser uses https://
+	if b := body(t, r); !strings.Contains(b, "not encrypted") || !strings.Contains(b, "data-insecure-note hidden") {
 		t.Error("no warning about the plain connection")
 	}
 	r, _ = c.PostForm(ts.URL+"/login", url.Values{"password": {serverPassword}})

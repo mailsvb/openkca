@@ -84,7 +84,7 @@ jobs:
       - name: Image contents
         run: |
           docker export "$(docker create openkca:test)" | tar -tvf - | tee files.txt
-          grep -Eq '^drwx------ 65532/65532 .* var/lib/openkca/?$' files.txt
+          grep -Eq '^drwx------ 1000/1000 .* var/lib/openkca/?$' files.txt
           grep -Eq '^drwxrwxrwt .* tmp/?$' files.txt
           grep -Eq '^-rwxr-xr-x .* usr/bin/openkca$' files.txt
 
@@ -93,16 +93,16 @@ jobs:
         run: |
           printf '%s\n' 'container-test-password' |
             docker run --rm -i -v okca-test:/var/lib/openkca openkca:test setup --password-stdin
-          docker run -d --name okca -p 9443:9443 -p 9080:9080 -v okca-test:/var/lib/openkca \
+          docker run -d --name okca -p 9080:9080 -p 9081:9081 -v okca-test:/var/lib/openkca \
             --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges openkca:test
           ok=
           for _ in $(seq 30); do
-            if curl -skf -o /dev/null https://localhost:9443/; then ok=1; break; fi
+            if curl -sf -o /dev/null http://localhost:9080/login; then ok=1; break; fi
             sleep 1
           done
           docker logs okca
           [ -n "$ok" ] || { echo "::error::the web UI did not answer"; exit 1; }
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/)
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9081/)
           echo "CRL server: HTTP $code"
           [ "$code" != 000 ]
           docker rm -f okca

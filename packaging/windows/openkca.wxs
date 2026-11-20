@@ -13,8 +13,8 @@
   the TLS certificate and key, the ports and the server password (ui.wxs) and
   writes them with "openkca setup"; an upgrade keeps the configuration.
 
-  Silent install: msiexec /i openkca.msi /qn OKCA_PASSWORD=... [OKCA_HTTPS=0]
-  [OKCA_PORT=9443] [OKCA_CRL_PORT=9080] [OKCA_TLS_CERT=C:\x.crt OKCA_TLS_KEY=C:\x.key]
+  Silent install: msiexec /i openkca.msi /qn OKCA_PASSWORD=... [OKCA_HTTPS=1]
+  [OKCA_PORT=9080] [OKCA_CRL_PORT=9081] [OKCA_TLS_CERT=C:\x.crt OKCA_TLS_KEY=C:\x.key]
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
@@ -28,10 +28,11 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mailsvb/openkca" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
-    <!-- The answers of the settings dialog, public for silent installs. -->
-    <Property Id="OKCA_HTTPS" Value="1" Secure="yes" />
-    <Property Id="OKCA_PORT" Value="9443" Secure="yes" />
-    <Property Id="OKCA_CRL_PORT" Value="9080" Secure="yes" />
+    <!-- The answers of the settings dialog, public for silent installs.
+         OKCA_HTTPS is the checkbox: unset (plain HTTP) by default. -->
+    <Property Id="OKCA_HTTPS" Secure="yes" />
+    <Property Id="OKCA_PORT" Value="9080" Secure="yes" />
+    <Property Id="OKCA_CRL_PORT" Value="9081" Secure="yes" />
     <Property Id="OKCA_TLS_CERT" Secure="yes" />
     <Property Id="OKCA_TLS_KEY" Secure="yes" />
     <Property Id="OKCA_PASSWORD" Secure="yes" Hidden="yes" />
