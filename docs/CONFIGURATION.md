@@ -80,7 +80,7 @@ databases:
 | `idle_timeout`   | `30m`    | idle timeout of server and database sessions                     |
 | `max_upload_mb`  | `256`    | largest upload (database file or items to import), in MB         |
 | `password_hash`  | required | argon2id hash of the server password, from `openkca setup` or `openkca set-password` |
-| `webauthn`       |          | security keys and passkeys as unlock methods (below)             |
+| `webauthn`       |          | security keys and passkeys as unlock methods, and passkeys for the server login (below) |
 
 | `webauthn` key | Default | Meaning |
 | -------------- | ------- | ------- |
@@ -93,6 +93,11 @@ Security keys and passkeys are bound to `rp_id`: one added under
 an IP address, so every database keeps at least one password. Browsers
 refuse WebAuthn on a certificate warning, so the browser must trust
 OpenKCA's TLS certificate (for example one issued by one of your CAs).
+
+With `rp_id` set, the page **Passkeys** (top bar) also adds passkeys for
+the server login, one per device, each needing the server password. The
+login page then offers "Sign in with a passkey"; the server password keeps
+working. They are kept in `data/.openkca/server-passkeys.json`.
 
 Relative paths (`tls_cert`, `tls_key`) are relative to the configuration
 file's folder; unknown keys are an error. The data folder `data` next to

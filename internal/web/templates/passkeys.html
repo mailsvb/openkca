@@ -1,0 +1,50 @@
+{{template "head" .}}
+{{$csrf := .CSRF}}
+<h1>{{T "passkeys.heading"}}</h1>
+<p class="muted">{{T "passkeys.intro"}}</p>
+{{if not .Data.WebAuthn}}
+<section class="card">
+  <p class="muted">{{T "passkeys.off"}}</p>
+</section>
+{{else}}
+<section class="card" aria-labelledby="pk-list-h">
+  <h2 id="pk-list-h">{{T "passkeys.list.heading"}}</h2>
+  {{if .Data.Passkeys}}
+  <table class="methods">
+    <thead><tr><th>{{T "methods.col.name"}}</th><th>{{T "methods.col.created"}}</th><th>{{T "methods.col.used"}}</th><th><span class="sr-only">{{T "methods.col.actions"}}</span></th></tr></thead>
+    <tbody>
+    {{range .Data.Passkeys}}
+      <tr>
+        <td>{{.Label}}</td>
+        <td>{{date .Created}}</td>
+        <td>{{if .LastUsed.IsZero}}<span class="muted">{{T "methods.never"}}</span>{{else}}{{time .LastUsed}}{{end}}</td>
+        <td>
+          <form method="post" action="/passkeys/{{.ID}}/delete" class="inline">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <button type="submit" class="danger">{{T "methods.remove.submit"}}</button>
+          </form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">{{T "passkeys.empty"}}</p>
+  {{end}}
+</section>
+<section class="card" aria-labelledby="pk-add-h">
+  <h2 id="pk-add-h">{{T "passkeys.add.heading"}}</h2>
+  <p class="muted">{{T "passkeys.add.help"}}</p>
+  <form class="stack" data-passkey-register data-csrf="{{$csrf}}">
+    <label for="pk-label">{{T "passkeys.add.label"}}</label>
+    <input type="text" id="pk-label" name="label" required maxlength="{{.Data.MaxLabel}}" autocomplete="off" placeholder="{{T "passkeys.add.placeholder"}}">
+    <label for="pk-pw">{{T "login.password"}}</label>
+    <input type="password" id="pk-pw" name="password" autocomplete="current-password" required>
+    <button type="submit">{{T "passkeys.add.submit"}}</button>
+    <p class="muted small" data-webauthn-status hidden>{{T "passkeys.add.touch"}}</p>
+    <p class="muted small" data-webauthn-unsupported hidden>{{T "methods.webauthn.browser"}}</p>
+  </form>
+  <p class="error" role="alert" data-webauthn-error data-cancelled="{{T "passkeys.error.cancelled"}}" data-failed="{{T "passkeys.error.webauthn"}}" hidden></p>
+</section>
+{{end}}
+{{template "foot" .}}

@@ -30,7 +30,8 @@ general:
   # Create it with: openkca set-password
   password_hash: ""
   # Security keys (YubiKey, Nitrokey, ...) and passkeys as unlock methods
-  # of databases. They are bound to rp_id, the host name you open OpenKCA
+  # of databases, and passkeys for the server login (page Passkeys; adding
+  # one needs the server password). They are bound to rp_id, the host name you open OpenKCA
   # with (a domain name, not an IP address), and the browser must trust
   # OpenKCA's TLS certificate. Without rp_id they are not offered.
   webauthn:

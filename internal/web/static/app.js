@@ -212,7 +212,8 @@
     };
   }
   function post(url, csrf, body, json) {
-    var headers = { "X-CSRF-Token": csrf };
+    var headers = {};
+    if (csrf) { headers["X-CSRF-Token"] = csrf; }
     if (json) { headers["Content-Type"] = "application/json"; }
     return fetch(url, { method: "POST", headers: headers, body: body, credentials: "same-origin" })
       .then(function (res) {
@@ -288,7 +289,38 @@
       .catch(function (err) { busy(form, false); showError(form, err); });
   }
 
+  // Server login with a passkey: a discoverable assertion, no session yet.
+  function passkeyLogin(btn) {
+    clearError(btn);
+    busy(btn, true);
+    post("/login/passkey/begin", "", null, false)
+      .then(function (opts) { return navigator.credentials.get(requestOptions(opts)); })
+      .then(function (cred) { return post("/login/passkey/finish", "", JSON.stringify(assertionJSON(cred)), true); })
+      .then(function (data) { window.location.assign(data.redirect); })
+      .catch(function (err) { busy(btn, false); showError(btn, err); });
+  }
+
+  // Adding a passkey to the server login (name and server password).
+  function passkeyRegister(form) {
+    var csrf = form.getAttribute("data-csrf");
+    var fields = new URLSearchParams(new FormData(form));
+    clearError(form);
+    busy(form, true);
+    post("/passkeys/register/begin", csrf, fields, false)
+      .then(function (opts) { return navigator.credentials.create(creationOptions(opts)); })
+      .then(function (cred) { return post("/passkeys/register/finish", csrf, JSON.stringify(attestationJSON(cred)), true); })
+      .then(function (data) { window.location.assign(data.redirect); })
+      .catch(function (err) { busy(form, false); showError(form, err); });
+  }
+
   function setup(root) {
+    root.querySelectorAll("button[data-passkey-login]").forEach(function (btn) {
+      btn.hidden = false;
+      btn.addEventListener("click", function () { passkeyLogin(btn); });
+    });
+    root.querySelectorAll("form[data-passkey-register]").forEach(function (form) {
+      form.addEventListener("submit", function (ev) { ev.preventDefault(); passkeyRegister(form); });
+    });
     root.querySelectorAll("button[data-webauthn]").forEach(function (btn) {
       btn.hidden = false;
       btn.addEventListener("click", function () { assert(btn, btn.getAttribute("data-webauthn")); });
@@ -305,7 +337,7 @@
   "use strict";
   document.addEventListener("DOMContentLoaded", function () {
     if (window.PublicKeyCredential && navigator.credentials) { return; }
-    document.querySelectorAll("form[data-webauthn=register]").forEach(function (form) {
+    document.querySelectorAll("form[data-webauthn=register], form[data-passkey-register]").forEach(function (form) {
       form.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
       var note = form.querySelector("[data-webauthn-unsupported]");
       if (note) { note.hidden = false; }

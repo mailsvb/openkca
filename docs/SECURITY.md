@@ -5,6 +5,15 @@
 - One server password protects the whole UI; a database's unlock methods
   still apply after it. Both logins are rate limited, and at most two Argon2id runs
   happen at a time, so parallel login attempts cannot exhaust memory.
+- With `general.webauthn.rp_id` set, passkeys can replace the server
+  password at the login (any number of devices, up to 32). They only prove
+  who signs in (discoverable WebAuthn assertion with user verification);
+  they do not open databases. `data/.openkca/server-passkeys.json` holds
+  only their public keys. Adding one needs the server password every time,
+  also in a session opened with a passkey, so a stolen session cannot add a
+  passkey of its own. Failed passkey logins count toward the same rate
+  limit as the password. The password always keeps working; a synced
+  passkey makes the account it syncs with a way into the server login.
 - Database passwords need at least 8 characters. A database is only as
   strong as its weakest unlock method.
 - Adding, changing or removing an unlock method needs a confirmation with

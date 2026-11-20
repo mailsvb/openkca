@@ -81,6 +81,7 @@ type Server struct {
 	loginSlots chan struct{} // concurrent server password checks
 	dh         dhJobs
 	webauthn   *webauthn.WebAuthn // nil: security keys and passkeys are off
+	passkeys   *auth.PasskeyStore // passkeys of the server login
 	ceremonies ceremonies
 	templates  map[string]*template.Template // by language tag
 	log        *slog.Logger
@@ -122,6 +123,13 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.webauthn = wa
 	}
+	if cfg.Store != nil {
+		pk, err := auth.OpenPasskeys(cfg.Store.Dir)
+		if err != nil {
+			return nil, fmt.Errorf("server passkeys: %w", err)
+		}
+		s.passkeys = pk
+	}
 	s.est = estserver.New(estserver.Options{Background: cfg.Background, Log: cfg.Logger, ClientIP: clientIP,
 		Secure: isSecure, ClientCert: s.clientCert})
 	s.auth.OnEnd = s.dbs.EndServer
@@ -161,7 +169,13 @@ func (s *Server) routes() {
 	m.Handle(estserver.PathPrefix, s.est) // machines: no session, no CSRF
 	m.HandleFunc("GET /login", s.loginPage)
 	m.HandleFunc("POST /login", s.login)
+	m.HandleFunc("POST /login/passkey/begin", s.passkeyLoginBegin)
+	m.HandleFunc("POST /login/passkey/finish", s.passkeyLoginFinish)
 	m.HandleFunc("POST /logout", s.requireServer(s.logout))
+	m.HandleFunc("GET /passkeys", s.requireServer(s.passkeysPage))
+	m.HandleFunc("POST /passkeys/register/begin", s.requireServer(s.passkeyRegisterBegin))
+	m.HandleFunc("POST /passkeys/register/finish", s.requireServer(s.passkeyRegisterFinish))
+	m.HandleFunc("POST /passkeys/{id}/delete", s.requireServer(s.passkeyDelete))
 	m.HandleFunc("GET /{$}", s.requireServer(s.databases))
 	m.HandleFunc("GET /oid", s.requireServer(s.oidPage))
 	m.HandleFunc("POST /{$}", s.requireServer(s.createDB))
@@ -515,8 +529,8 @@ func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, name, value, 
 }
 
 // loginForm is the server login page.
-func loginForm(r *http.Request) *page {
-	return &page{Title: "login.title", Data: map[string]any{"Insecure": !isSecure(r)}}
+func (s *Server) loginForm(r *http.Request) *page {
+	return &page{Title: "login.title", Data: map[string]any{"Insecure": !isSecure(r), "Passkeys": s.passkeyLogin()}}
 }
 
 func dbPath(name string) string { return "/db/" + name + "/" }
@@ -526,46 +540,38 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, http.StatusOK, "login", loginForm(r))
+	s.render(w, r, http.StatusOK, "login", s.loginForm(r))
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	p := loginForm(r)
-	if s.srvLimit.Blocked(ip) {
-		p.Error = "login.error.ratelimit"
-		s.render(w, r, http.StatusTooManyRequests, "login", p)
-		return
-	}
-	// Argon2id takes 64 MiB per run: limit the runs in parallel, and count
-	// the attempt before hashing so that parallel requests cannot pass the
-	// rate limit together.
-	select {
-	case s.loginSlots <- struct{}{}:
-		defer func() { <-s.loginSlots }()
-	default:
-		p.Error = "login.error.busy"
-		s.render(w, r, http.StatusTooManyRequests, "login", p)
-		return
-	}
-	s.srvLimit.Fail(ip)
+	p := s.loginForm(r)
 	pw := []byte(r.PostFormValue("password"))
 	defer clear(pw)
-	if !auth.CheckPassword(s.cfg.PasswordHash, pw) {
-		s.log.Warn("server login failed", "ip", ip)
-		p.Error = "login.error.password"
-		s.render(w, r, http.StatusUnauthorized, "login", p)
+	if key, status := s.checkServerPassword(r, pw); key != "" {
+		if key == "login.error.password" {
+			s.log.Warn("server login failed", "ip", clientIP(r))
+		}
+		p.Error = key
+		s.render(w, r, status, "login", p)
 		return
 	}
-	s.srvLimit.Reset(ip)
+	s.startServerSession(w, r, "password", "")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// startServerSession logs the browser in after a password or passkey.
+func (s *Server) startServerSession(w http.ResponseWriter, r *http.Request, method, label string) {
 	// A fresh ID on every login (session fixation).
 	if c, err := r.Cookie(authCookie); err == nil {
 		s.auth.End(c.Value)
 	}
 	ss := s.auth.Create()
 	s.setCookie(w, r, authCookie, ss.ID, "/", 0)
-	s.log.Info("server login", "ip", ip)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	attrs := []any{"ip", clientIP(r), "method", method}
+	if label != "" {
+		attrs = append(attrs, "passkey", label)
+	}
+	s.log.Info("server login", attrs...)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

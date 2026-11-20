@@ -2,6 +2,13 @@
 
 [← Back to README](../README.md)
 
+**Server login**
+
+- The server password, or a passkey (with `general.webauthn.rp_id` set):
+  register one per device on the page Passkeys; each registration needs
+  the server password. Any registered passkey signs in, each can be
+  removed on its own, and the password stays as a fallback.
+
 **Databases**
 
 - Lists every OpenKCA database (`.okca`) and every XCA database waiting to be

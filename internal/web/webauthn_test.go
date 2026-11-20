@@ -111,11 +111,15 @@ func (k *softKey) create(t *testing.T, raw []byte) []byte {
 	if p := opts.Response.Extensions.PRF; p != nil && len(p.Eval.First) > 0 && !k.lazyPRF && !k.noPRF {
 		ext["results"] = map[string]string{"first": k.prf(p.Eval.First)}
 	}
+	exts := map[string]any{}
+	if opts.Response.Extensions.PRF != nil { // only what was asked for
+		exts["prf"] = ext
+	}
 	out, _ := json.Marshal(map[string]any{
 		"id": b64u(k.id), "rawId": b64u(k.id), "type": "public-key",
 		"response": map[string]any{"clientDataJSON": b64u(clientData("webauthn.create", opts.Response.Challenge)),
 			"attestationObject": b64u(att), "transports": []string{"usb"}},
-		"clientExtensionResults": map[string]any{"prf": ext},
+		"clientExtensionResults": exts,
 	})
 	return out
 }
@@ -127,7 +131,8 @@ func (k *softKey) get(t *testing.T, raw []byte) []byte {
 	if err := json.Unmarshal(raw, &opts); err != nil {
 		t.Fatalf("assertion options %s: %v", raw, err)
 	}
-	allowed := false
+	// A discoverable login (no allowed credentials) takes any passkey.
+	allowed := len(opts.Response.AllowedCredentials) == 0 && k.userHandle != nil
 	for _, c := range opts.Response.AllowedCredentials {
 		allowed = allowed || bytes.Equal(c.CredentialID, k.id)
 	}
