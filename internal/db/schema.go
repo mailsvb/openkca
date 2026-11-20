@@ -36,8 +36,9 @@ const ApplicationID = 0x6f6b6331
 // database of an older schema is upgraded by Migrate when it is opened.
 // The schema was reset to 1 during development (last for 0.12.0, which
 // replaced the single database password with unlock methods); OpenKCA
-// databases from before the reset are not supported.
-const Schema = 1
+// databases from before the reset are not supported. Schema 2 added
+// connectors (EST) and the issuing connector of a certificate.
+const Schema = 2
 
 var ddl = []string{
 	`CREATE TABLE settings (
@@ -94,7 +95,8 @@ var ddl = []string{
 		key             INTEGER REFERENCES keys (item) ON DELETE SET NULL,
 		ca              INTEGER NOT NULL DEFAULT 0,
 		not_before      TEXT NOT NULL,
-		not_after       TEXT NOT NULL
+		not_after       TEXT NOT NULL,
+		connector       INTEGER REFERENCES connectors (id) ON DELETE SET NULL
 	)`,
 	`CREATE INDEX certs_fingerprint ON certs (fingerprint)`,
 	`CREATE INDEX certs_subject ON certs (subject)`,
@@ -170,6 +172,7 @@ var ddl = []string{
 	`CREATE UNIQUE INDEX unlock_methods_one_backup ON unlock_methods (type) WHERE type = 'backup_code'`,
 	// A method's UUID is bound into its wrapped data key.
 	`CREATE TRIGGER unlock_methods_uuid_fixed BEFORE UPDATE OF uuid ON unlock_methods BEGIN SELECT RAISE(ABORT, 'an unlock method''s uuid never changes'); END`,
+	connectorsDDL,
 	`CREATE INDEX audit_item ON audit (item)`,
 	`CREATE INDEX audit_item_uuid ON audit (item_uuid)`,
 	// An item's UUID never changes.
@@ -237,6 +240,38 @@ func (t *Tx) fillRevocationExpiry(ctx context.Context) error {
 	return err
 }
 
+// connectorsDDL creates the connectors table: endpoints such as EST that
+// issue certificates from a CA of the database without anyone logged in.
+// config holds the type's settings as JSON; label names the connector's
+// URL path and is unique.
+const connectorsDDL = `CREATE TABLE connectors (
+		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		uuid      TEXT NOT NULL UNIQUE CHECK (length(uuid) = 36 AND uuid = lower(uuid)),
+		type      TEXT NOT NULL CHECK (type IN ('est')),
+		name      TEXT NOT NULL,
+		label     TEXT NOT NULL UNIQUE,
+		ca        INTEGER REFERENCES items (id) ON DELETE SET NULL,
+		enabled   INTEGER NOT NULL DEFAULT 1,
+		config    TEXT NOT NULL DEFAULT '{}',
+		created   TEXT NOT NULL,
+		modified  TEXT NOT NULL,
+		last_used TEXT
+	)`
+
+// migrateConnectors upgrades schema 1 to 2: the connectors table and the
+// issuing connector of a certificate.
+func migrateConnectors(ctx context.Context, t *Tx) error {
+	for _, stmt := range []string{
+		connectorsDDL,
+		`ALTER TABLE certs ADD COLUMN connector INTEGER REFERENCES connectors (id) ON DELETE SET NULL`,
+	} {
+		if _, err := t.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // A migration step upgrades a database by one schema version, inside the
 // transaction Migrate runs it in.
 type step func(ctx context.Context, t *Tx) error
@@ -244,7 +279,7 @@ type step func(ctx context.Context, t *Tx) error
 // steps upgrade schema MinMigratable+i to MinMigratable+i+1. Append a
 // step for every schema change (and raise Schema to match); a reset before
 // the first release empties the list again.
-var steps = []step{}
+var steps = []step{migrateConnectors}
 
 // MinMigratable is the oldest OpenKCA schema Migrate upgrades.
 const MinMigratable = 1

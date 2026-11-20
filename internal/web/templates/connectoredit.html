@@ -1,0 +1,147 @@
+{{template "head" .}}
+{{$cf := .Data.CF}}{{$cfg := $cf.Cfg}}{{$k := $cfg.Keys}}{{$san := $cfg.SAN}}{{$f := .Data.F}}{{$modes := .Data.Modes}}
+<h1>{{if $cf.ID}}{{T "connector.heading.edit"}}{{else}}{{T "connector.heading.new"}}{{end}}</h1>
+{{if not .Data.Served}}<p class="warn" role="note">{{T "connector.notbackground"}}</p>{{end}}
+{{with .Data.Problems}}<ul class="error">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+<form method="post" action="{{.Data.Action}}" class="editor">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+
+<section class="card">
+  <h2>{{T "connector.general"}}</h2>
+  <div class="grid-form">
+    <label for="c-name">{{T "connector.name"}}</label>
+    <input type="text" id="c-name" name="c.name" value="{{$cf.Name}}" required>
+    <label for="c-label">{{T "connector.label"}}</label>
+    <input type="text" id="c-label" name="c.label" value="{{$cf.Label}}" pattern="[a-z0-9][a-z0-9\-]{0,62}" required>
+    <span></span><p class="muted small">{{T "connector.label.help"}}</p>
+    <span></span>
+    <label><input type="checkbox" name="c.enabled" value="1"{{if $cf.Enabled}} checked{{end}}> {{T "connector.enabled"}}</label>
+    <label for="c-ca">{{T "connector.col.ca"}}</label>
+    <select id="c-ca" name="c.ca">
+      {{range .Data.CAs}}<option value="{{.ID}}"{{if eq $cf.CAID .ID}} selected{{end}}>{{.Label}}{{if .Note}} · {{T "connector.ca.unusable"}}{{end}}</option>{{end}}
+    </select>
+    <span></span><p class="muted small">{{T "connector.ca.help"}}</p>
+  </div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.auth"}}</h2>
+  <div class="grid-form">
+    <label for="c-user">{{T "connector.user"}}</label>
+    <input type="text" id="c-user" name="c.user" value="{{$cfg.Auth.User}}" autocomplete="off">
+    <label for="c-password">{{T "connector.password"}}</label>
+    <input type="password" id="c-password" name="c.password" autocomplete="new-password">
+    <span></span><p class="muted small">{{if $cf.ID}}{{T "connector.password.keep"}}{{else}}{{T "connector.password.generate"}}{{end}}</p>
+    <span></span>
+    <label><input type="checkbox" name="c.reenroll" value="1"{{if $cfg.Auth.Reenroll}} checked{{end}}> {{T "connector.reenroll"}}</label>
+    <span></span><p class="muted small">{{T "connector.reenroll.help"}}</p>
+  </div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.keys"}}</h2>
+  <p class="muted small">{{T "connector.keys.help"}}</p>
+  <div class="grid-form">
+    <span>{{T "newkey.group.rsa"}}</span>
+    <div class="inline-fields">
+      <label><input type="checkbox" name="c.rsa" value="1"{{if $k.RSAMinBits}} checked{{end}}> {{T "connector.keys.rsa"}}</label>
+      <input type="number" name="c.rsamin" value="{{if $k.RSAMinBits}}{{$k.RSAMinBits}}{{else}}2048{{end}}" min="1024" max="16384" step="8" aria-label="{{T "connector.keys.rsamin"}}">
+      <input type="number" name="c.rsamax" value="{{if $k.RSAMaxBits}}{{$k.RSAMaxBits}}{{end}}" min="0" max="16384" step="8" aria-label="{{T "connector.keys.rsamax"}}" placeholder="{{T "connector.keys.rsamax"}}">
+    </div>
+    <span>{{T "newkey.group.ec"}}</span>
+    <div class="checks">{{range .Data.Curves}}<label><input type="checkbox" name="c.ec.{{.}}" value="1"{{if has $k.ECCurves .}} checked{{end}}> {{.}}</label>{{end}}</div>
+    <span>{{T "newkey.group.edwards"}}</span>
+    <div class="checks">{{range .Data.EdDSA}}<label><input type="checkbox" name="c.ed.{{.}}" value="1"{{if has $k.EdDSA .}} checked{{end}}> {{.}}</label>{{end}}</div>
+    <span>{{T "newkey.group.mldsa"}}</span>
+    <div class="checks">{{range .Data.MLDSA}}<label><input type="checkbox" name="c.mldsa.{{.}}" value="1"{{if has $k.MLDSA .}} checked{{end}}> {{.}}</label>{{end}}</div>
+  </div>
+  <details{{if or $k.SLHDSA $k.Composite}} open{{end}}>
+    <summary>{{T "connector.keys.more"}}</summary>
+    <div class="grid-form">
+      <span>{{T "newkey.group.slhdsa"}}</span>
+      <div class="checks">{{range .Data.SLHDSA}}<label><input type="checkbox" name="c.slhdsa.{{.}}" value="1"{{if has $k.SLHDSA .}} checked{{end}}> {{.}}</label>{{end}}</div>
+      <span>{{T "newkey.group.composite"}}</span>
+      <div class="checks">{{range .Data.Composite}}<label><input type="checkbox" name="c.comp.{{.}}" value="1"{{if has $k.Composite .}} checked{{end}}> {{.}}</label>{{end}}</div>
+    </div>
+  </details>
+  <div class="grid-form">
+    <label for="c-minhash">{{T "connector.keys.minhash"}}</label>
+    <select id="c-minhash" name="c.minhash">{{range .Data.Hashes}}<option value="{{.}}"{{if eq . $k.MinCSRHash}} selected{{end}}>{{.}}</option>{{end}}</select>
+  </div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.subject"}}</h2>
+  <p class="muted small">{{T "connector.subject.help"}}</p>
+  <table class="list">
+    <thead><tr><th>{{T "editor.attr"}}</th><th>{{T "connector.rule.mode"}}</th><th>{{T "connector.rule.value"}}</th><th>{{T "connector.rule.pattern"}}</th></tr></thead>
+    <tbody>
+    {{range $i, $r := $cf.Rules}}
+    <tr>
+      <td><input type="text" name="c.rattr.{{$i}}" value="{{$r.Attr}}" size="12" aria-label="{{T "editor.attr"}}"></td>
+      <td><select name="c.rmode.{{$i}}" aria-label="{{T "connector.rule.mode"}}">{{range $modes}}<option value="{{.}}"{{if eq . $r.Mode}} selected{{end}}>{{T (print "connector.mode." .)}}</option>{{end}}</select></td>
+      <td><input type="text" name="c.rvalue.{{$i}}" value="{{$r.Value}}" aria-label="{{T "connector.rule.value"}}"></td>
+      <td><input type="text" name="c.rpattern.{{$i}}" value="{{$r.Pattern}}" class="mono" aria-label="{{T "connector.rule.pattern"}}"></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <div class="grid-form">
+    <label for="c-unlisted">{{T "connector.unlisted"}}</label>
+    <select id="c-unlisted" name="c.unlisted">
+      <option value="drop"{{if ne $cfg.Subject.Unlisted "reject"}} selected{{end}}>{{T "connector.unlisted.drop"}}</option>
+      <option value="reject"{{if eq $cfg.Subject.Unlisted "reject"}} selected{{end}}>{{T "connector.unlisted.reject"}}</option>
+    </select>
+  </div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.san"}}</h2>
+  <p class="muted small">{{T "connector.san.help"}}</p>
+  <div class="grid-form">
+    <span></span><label><input type="checkbox" name="c.dns" value="1"{{if $san.DNS.Enabled}} checked{{end}}> {{T "connector.san.dns"}}</label>
+    <label for="c-dnspat">{{T "connector.san.dnspat"}}</label>
+    <input type="text" id="c-dnspat" name="c.dnspat" value="{{join $san.DNS.Patterns ", "}}" class="mono">
+    <span></span><label><input type="checkbox" name="c.wild" value="1"{{if $san.Wildcards}} checked{{end}}> {{T "connector.san.wildcards"}}</label>
+    <span></span><label><input type="checkbox" name="c.copycn" value="1"{{if $san.CopyCN}} checked{{end}}> {{T "connector.san.copycn"}}</label>
+    <span></span><label><input type="checkbox" name="c.ip" value="1"{{if $san.IP.Enabled}} checked{{end}}> {{T "connector.san.ip"}}</label>
+    <label for="c-ipcidr">{{T "connector.san.cidrs"}}</label>
+    <input type="text" id="c-ipcidr" name="c.ipcidr" value="{{join $san.IP.CIDRs ", "}}" class="mono">
+    <span></span><label><input type="checkbox" name="c.email" value="1"{{if $san.Email.Enabled}} checked{{end}}> {{T "connector.san.email"}}</label>
+    <label for="c-emaildom">{{T "connector.san.domains"}}</label>
+    <input type="text" id="c-emaildom" name="c.emaildom" value="{{join $san.Email.Domains ", "}}" class="mono">
+    <span></span><label><input type="checkbox" name="c.uri" value="1"{{if $san.URI.Enabled}} checked{{end}}> {{T "connector.san.uri"}}</label>
+    <label for="c-uripre">{{T "connector.san.prefixes"}}</label>
+    <input type="text" id="c-uripre" name="c.uripre" value="{{join $san.URI.Prefixes ", "}}" class="mono">
+    <label for="c-max">{{T "connector.san.max"}}</label>
+    <input type="number" id="c-max" name="c.max" value="{{$san.Max}}" min="0" max="1000">
+    <label for="san">{{T "connector.san.fixed"}}</label>
+    <input type="text" id="san" name="san" value="{{$cfg.Profile.Ext.SubAltName}}" placeholder="{{T "editor.ph.san"}}">
+  </div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.profile"}}</h2>
+  <p class="muted small">{{T "connector.profile.help"}}</p>
+  <div class="inline-fields">
+    <select name="template" aria-label="{{T "editor.start"}}">
+      <option value="0"></option>
+      <optgroup label="{{T "editor.profiles"}}">
+        {{range .Data.Profiles}}<option value="p:{{.}}">{{T (print "profile." .)}}</option>{{end}}
+      </optgroup>
+      {{if .Data.Templates}}<optgroup label="{{T "editor.templates"}}">
+        {{range .Data.Templates}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
+      </optgroup>{{end}}
+    </select>
+    <button type="submit" name="action" value="apply" class="secondary" formnovalidate>{{T "editor.apply.ext"}}</button>
+  </div>
+</section>
+{{template "profilefields" .}}
+
+<div class="actions">
+  <a class="button secondary" href="/db/{{.DB.Name}}/connectors{{if $cf.ID}}/{{$cf.ID}}{{end}}">{{T "connector.cancel"}}</a>
+  <span class="right"></span>
+  <button type="submit" name="action" value="save">{{T "connector.save"}}</button>
+</div>
+</form>
+{{template "foot" .}}

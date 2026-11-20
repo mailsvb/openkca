@@ -194,6 +194,9 @@ type Cert struct {
 	DER       []byte
 	KeyID     int64 // 0 = no key in the database
 	Authority *Authority
+	// ConnectorID is the connector that issued the certificate, 0 = none
+	// (or deleted).
+	ConnectorID int64
 }
 
 // Request is a PKCS#10 certificate signing request.
@@ -230,6 +233,7 @@ type Snapshot struct {
 	Templates   []*Template
 	Revocations []*Revocation
 	PGP         []*PGPCert
+	Connectors  []*Connector
 	Trashed     int // items in the trash, not listed
 }
 
@@ -292,7 +296,7 @@ func (d *DB) Load(ctx context.Context) (*Snapshot, error) {
 	defer tx.Rollback()
 	s := &Snapshot{Schema: Schema, Settings: map[string]string{}}
 	steps := []func(context.Context, *sql.Tx, *Snapshot) error{
-		loadSettings, loadKeys, loadRequests, loadCerts, loadCRLs, loadTemplates, loadRevocations, loadPGP, loadMeta,
+		loadSettings, loadKeys, loadRequests, loadCerts, loadCRLs, loadTemplates, loadRevocations, loadPGP, loadConnectors, loadMeta,
 	}
 	for _, f := range steps {
 		if err := f(ctx, tx, s); err != nil {
@@ -386,7 +390,7 @@ func loadRequests(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 
 func loadCerts(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 	rows, err := tx.QueryContext(ctx, `SELECT `+itemCols+`, c.serial, li.id, c.ca, c.der, lk.id,
-		a.cert IS NOT NULL, a.uuid, lt.id, a.crl_next, a.crl_number, a.crl_days, a.dn_policy
+		a.cert IS NOT NULL, a.uuid, lt.id, a.crl_next, a.crl_number, a.crl_days, a.dn_policy, c.connector
 		FROM certs c JOIN items i ON i.id = c.item
 		`+live("li", "c.issuer")+` `+live("lk", "c.key")+`
 		LEFT JOIN authorities a ON a.cert = c.item `+live("lt", "a.template")+`
@@ -398,15 +402,15 @@ func loadCerts(ctx context.Context, tx *sql.Tx, s *Snapshot) error {
 	for rows.Next() {
 		c := &Cert{}
 		var typ, source, created, trashed, authUUID, crlNext, dnPolicy sql.NullString
-		var issuer, key, tmplID, crlNo, crlDays sql.NullInt64
+		var issuer, key, tmplID, crlNo, crlDays, conn sql.NullInt64
 		var hasAuth bool
 		dest := append(itemDest(&c.Item, &typ, &source, &created, &trashed), &c.Serial, &issuer, &c.CA, &c.DER, &key,
-			&hasAuth, &authUUID, &tmplID, &crlNext, &crlNo, &crlDays, &dnPolicy)
+			&hasAuth, &authUUID, &tmplID, &crlNext, &crlNo, &crlDays, &dnPolicy, &conn)
 		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
 		finishItem(&c.Item, typ, source, created, trashed)
-		c.IssuerID, c.KeyID = issuer.Int64, key.Int64
+		c.IssuerID, c.KeyID, c.ConnectorID = issuer.Int64, key.Int64, conn.Int64
 		if hasAuth {
 			c.Authority = &Authority{UUID: authUUID.String, TemplateID: tmplID.Int64, CRLExpire: parseTime(crlNext), CRLNo: crlNo.Int64,
 				CRLDays: int(crlDays.Int64), DNPolicy: dnPolicy.String}

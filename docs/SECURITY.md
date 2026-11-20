@@ -26,6 +26,18 @@
   configuration file: anyone who can read that file or the process memory
   can sign with its CA keys. Configure passwords only for databases that
   need unattended CA work. Keys with their own password stay locked.
+- EST connectors sign with the keyring of a database kept open in the
+  background, so they inherit its risk: anyone who passes a connector's
+  checks gets a certificate from its CA. They answer only over TLS (or from
+  a trusted proxy with `X-Forwarded-Proto: https`), take nothing from a
+  request but the public key, the subject and the alternative names its
+  rules allow, and refuse a profile with `CA:TRUE`. A connector password is
+  generated with 144 random bits (or set to at least 12 characters), stored
+  as an Argon2id hash and shown once; failed attempts count per client
+  address before the password is checked (5 per minute), and at most two
+  checks run at a time. Re-enrollment accepts only a certificate the same
+  connector issued, still valid and not revoked; a client certificate
+  passed in a header is believed only from `trusted_proxies`.
 - HTTPS (`https: true`, off by default for a TLS proxy in front), HSTS, strict Content Security Policy without inline
   scripts, `SameSite=Strict` cookies plus CSRF tokens.
 - With `https: false` OpenKCA serves plain HTTP for a TLS proxy in front of

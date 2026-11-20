@@ -1,0 +1,82 @@
+{{template "head" .}}
+{{$db := .DB.Name}}{{$c := .Data.C}}{{$cfg := .Data.Cfg}}
+<h1>{{$c.Name}} <span class="badge">{{T (print "connector.type." $c.Type)}}</span></h1>
+{{with .Data.Password}}
+<section class="card notice" role="status">
+  <h2>{{T "connector.password.heading"}}</h2>
+  <p>{{T "connector.password.once"}}</p>
+  <p><code class="mono">{{.}}</code></p>
+</section>
+{{end}}
+{{if .Data.Problem}}<p class="warn" role="note">{{T (print "connector.problem." .Data.Problem)}}</p>{{end}}
+
+<section class="card">
+  <h2>{{T "connector.endpoint"}}</h2>
+  <dl class="props">
+    <dt>{{T "connector.col.url"}}</dt><dd class="mono">{{.Data.URL}}</dd>
+    <dt>{{T "connector.col.ca"}}</dt><dd>{{with .Data.CA}}<a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a>{{end}}</dd>
+    <dt>{{T "connector.user"}}</dt><dd class="mono">{{$cfg.Auth.User}}</dd>
+    <dt>{{T "connector.reenroll"}}</dt><dd>{{if $cfg.Auth.Reenroll}}{{T "val.yes"}}{{else}}{{T "val.no"}}{{end}}</dd>
+    <dt>{{T "connector.col.status"}}</dt><dd>{{if $c.Enabled}}{{T "connector.enabled"}}{{else}}{{T "connector.disabled"}}{{end}}</dd>
+    <dt>{{T "connector.col.lastused"}}</dt><dd>{{time $c.LastUsed}}</dd>
+  </dl>
+  <h3>{{T "connector.example"}}</h3>
+  <pre class="mono small">{{T "connector.example.cmd" $cfg.Auth.User .Data.URL}}</pre>
+  <p class="muted small">{{T "connector.example.help"}}</p>
+  <div class="actions">
+    <a class="button" href="/db/{{$db}}/connectors/{{$c.ID}}/edit">{{T "connector.edit"}}</a>
+    <form method="post" action="/db/{{$db}}/connectors/{{$c.ID}}/toggle" class="inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button type="submit" class="secondary">{{if $c.Enabled}}{{T "connector.disable"}}{{else}}{{T "connector.enable"}}{{end}}</button>
+    </form>
+    <form method="post" action="/db/{{$db}}/connectors/{{$c.ID}}/password" class="inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button type="submit" class="secondary">{{T "connector.newpassword"}}</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.test"}}</h2>
+  <p class="muted small">{{T "connector.test.help"}}</p>
+  <form method="post" action="/db/{{$db}}/connectors/{{$c.ID}}/test" hx-post="/db/{{$db}}/connectors/{{$c.ID}}/test" hx-target="#testresult">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <textarea name="csr" rows="6" class="mono" aria-label="{{T "connector.test.csr"}}"></textarea>
+    <div class="actions"><button type="submit" class="secondary">{{T "connector.test.run"}}</button></div>
+  </form>
+  <div id="testresult" aria-live="polite">{{if or .Data.D .Data.Violations}}{{template "connectortest" .}}{{end}}</div>
+</section>
+
+<section class="card">
+  <h2>{{T "connector.issued"}}</h2>
+  {{with .Data.Issued}}
+  <ul>{{range .}}<li><a href="/db/{{$db}}/item/{{.ID}}">{{.Name}}</a> <span class="muted small">{{date .Date}}</span></li>{{end}}</ul>
+  {{else}}<p class="muted">{{T "connector.issued.none"}}</p>{{end}}
+</section>
+
+<details class="card">
+  <summary><h2 class="inline-h">{{T "connector.delete"}}</h2></summary>
+  <p class="muted small">{{T "connector.delete.help" $c.Label}}</p>
+  <form method="post" action="/db/{{$db}}/connectors/{{$c.ID}}/delete" class="inline-fields">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="text" name="confirm" autocomplete="off" aria-label="{{T "connector.delete.confirm"}}">
+    <button type="submit" class="danger">{{T "connector.delete"}}</button>
+  </form>
+</details>
+{{template "foot" .}}
+
+{{define "connectortest"}}
+{{if .Error}}<p class="error">{{T .Error}}</p>{{end}}
+{{with .Data.Violations}}
+<p class="error">{{T "connector.test.refused"}}</p>
+<ul>{{range .}}<li><span class="mono">{{.Field}}</span>: {{.Reason}}</li>{{end}}</ul>
+{{else}}{{if .Data.D}}
+<p class="notice">{{T "connector.test.accepted"}}</p>
+<dl class="props">
+  <dt>{{T "subject.heading"}}</dt><dd>{{.Data.Subject}}</dd>
+  <dt>{{T "editor.san"}}</dt><dd>{{.Data.D.Ext.SubAltName}}</dd>
+  <dt>{{T "connector.test.key"}}</dt><dd>{{.Data.D.KeyAlg}}</dd>
+  <dt>{{T "editor.validity"}}</dt><dd>{{.Data.Validity}}</dd>
+</dl>
+{{end}}{{end}}
+{{end}}

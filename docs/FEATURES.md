@@ -164,6 +164,25 @@
   the renewal holding it is live. The item page shows the UUID and, for a
   CA, its authority ID and folder.
 
+**Connectors**
+
+- EST connectors (RFC 7030) on the Connectors tab issue certificates from
+  a CA of the database to devices and services, without anyone logged in:
+  `cacerts`, `csrattrs`, `simpleenroll` (HTTP Basic) and `simplereenroll`
+  (the current certificate) at `/.well-known/est/<label>/`. Each connector
+  sets the key types a request may use (RSA sizes, EC curves, EdDSA,
+  ML-DSA, SLH-DSA, composite keys, the weakest request signature hash),
+  rules for every subject attribute (required, optional, fixed or
+  forbidden, with a pattern), the alternative names it takes over (DNS
+  patterns, IP ranges, e-mail domains, URI prefixes, a limit, the CN as
+  DNS name) and the properties of the certificates, edited as in the
+  certificate editor. Requests cannot change key usage, extended key usage,
+  basic constraints or validity. A CSR can be checked against the rules on
+  the connector's page without signing. Issued certificates are stored
+  without a key and linked to their connector; every issue and refusal is
+  in the audit log. Connectors work for databases kept open in the
+  background ([details](CONFIGURATION.md#est-connectors)).
+
 **Templates**
 
 - Create, edit and duplicate templates in XCA's format, apply them (all,

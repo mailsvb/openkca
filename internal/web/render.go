@@ -38,7 +38,7 @@ type dbHeader struct {
 	NoBackup   bool // the database has no backup code yet
 }
 
-var tabs = []string{"keys", "requests", "certs", "templates", "crls"}
+var tabs = []string{"keys", "requests", "certs", "templates", "crls", "connectors"}
 
 func (s *Server) parseTemplates() error {
 	s.templates = map[string]*template.Template{}

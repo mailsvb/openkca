@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/mailsvb/openkca/internal/pki"
@@ -68,6 +69,25 @@ type Validity struct {
 	Unit     int
 	Midnight bool
 	NoExpiry bool
+}
+
+// Span returns the validity period that starts at from: N days, months
+// or years later; with Midnight from 00:00:00 to 23:59:59 UTC (XCA).
+func (v Validity) Span(from time.Time) (notBefore, notAfter time.Time) {
+	nb, na := from, from
+	switch v.Unit {
+	case 2:
+		na = nb.AddDate(v.N, 0, 0)
+	case 1:
+		na = nb.AddDate(0, v.N, 0)
+	default:
+		na = nb.AddDate(0, 0, v.N)
+	}
+	if v.Midnight {
+		nb = time.Date(nb.Year(), nb.Month(), nb.Day(), 0, 0, 0, 0, time.UTC)
+		na = time.Date(na.Year(), na.Month(), na.Day(), 23, 59, 59, 0, time.UTC)
+	}
+	return nb, na
 }
 
 func on(s string) bool { return s == "1" || strings.EqualFold(s, "true") }

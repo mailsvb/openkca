@@ -242,7 +242,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	// Without HTTPS a TLS proxy in front of OpenKCA has the certificate.
 	var certs *auth.CertManager
-	if g.TLS() {
+	if g.TLS() || cfg.EST.Listen != "" {
 		if certs, err = auth.NewCertManager(st.Dir, g.TLSCert, g.TLSKey); err != nil {
 			return err
 		}
@@ -254,7 +254,8 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	monitor := &pubserve.Monitor{Dir: st.Dir, Log: log}
 	srv, err := web.New(web.Config{Store: st, PasswordHash: g.PasswordHash, Catalog: cat, IdleTimeout: g.IdleTimeout,
 		MaxUpload: g.MaxUploadMB << 20, Logger: log, CRLAlerts: monitor.Alerts, TrustedProxies: g.Proxies,
-		WebAuthn: web.WebAuthnConfig{RPID: g.WebAuthn.RPID, RPName: g.WebAuthn.RPName, Origins: g.WebAuthn.Origins}})
+		WebAuthn:   web.WebAuthnConfig{RPID: g.WebAuthn.RPID, RPName: g.WebAuthn.RPName, Origins: g.WebAuthn.Origins},
+		Background: bg, ClientCertHeader: cfg.EST.ClientCertHeader})
 	if err != nil {
 		return err
 	}
@@ -269,7 +270,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	// The plain HTTP server for CRLs and CA certificates.
 	var pub *http.Server
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	if addr := cfg.CRL.ListenAddr(); addr != "" {
 		pub = pubserve.NewServer(addr, &pubserve.Handler{Dir: st.Dir, Log: log})
 		go func() {
@@ -278,6 +279,22 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			}
 		}()
 		log.Info("publishing CRLs and CA certificates over HTTP", "addr", addr, "base_urls", strings.Join(cfg.CRL.BaseURLs, " "))
+	}
+
+	// The HTTPS server for EST alone, which asks for client certificates
+	// (re-enrollment); the handler checks them per connector.
+	var estSrv *http.Server
+	if addr := cfg.EST.Listen; addr != "" {
+		estSrv = &http.Server{Addr: addr, Handler: srv.ESTHandler(), ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout: time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10,
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate,
+				ClientAuth: tls.RequestClientCert}}
+		go func() {
+			if err := estSrv.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
+				errc <- fmt.Errorf("EST server: %w", err)
+			}
+		}()
+		log.Info("serving EST over HTTPS", "addr", addr)
 	}
 
 	hs := &http.Server{
@@ -290,7 +307,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	attrs := []any{"version", version, "config", cfg.File, "addr", g.Listen, "data", st.Dir,
 		"databases", len(names), "background", len(bg.Databases())}
-	if certs != nil {
+	if g.TLS() {
 		hs.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.GetCertificate}
 		go func() { errc <- hs.ListenAndServeTLS("", "") }()
 		leaf := certs.Leaf()
@@ -309,6 +326,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		if pub != nil {
 			pub.Close()
 		}
+		if estSrv != nil {
+			estSrv.Close()
+		}
 		hs.Close()
 		<-ran
 		<-bgDone
@@ -321,6 +341,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	err = hs.Shutdown(shutdownCtx)
 	if pub != nil {
 		pub.Shutdown(shutdownCtx)
+	}
+	if estSrv != nil {
+		estSrv.Shutdown(shutdownCtx)
 	}
 	<-ran // sessions closed
 	<-bgDone

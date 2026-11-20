@@ -255,14 +255,7 @@ func (f *editorForm) params() (store.IssueParams, error) {
 			return p, fmt.Errorf("not after: %w", err)
 		}
 	} else {
-		switch f.ValidUnit {
-		case "y":
-			na = nb.AddDate(f.ValidN, 0, 0)
-		case "m":
-			na = nb.AddDate(0, f.ValidN, 0)
-		default:
-			na = nb.AddDate(0, 0, f.ValidN)
-		}
+		_, na = tmpl.Validity{N: f.ValidN, Unit: map[string]int{"m": 1, "y": 2}[f.ValidUnit]}.Span(nb)
 	}
 	if f.Midnight { // XCA: 00:00:00 and 23:59:59
 		nb = time.Date(nb.Year(), nb.Month(), nb.Day(), 0, 0, 0, 0, time.UTC)

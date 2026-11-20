@@ -246,6 +246,75 @@ warning 7 days before its next update and an error once it has passed,
 and shows the same on the databases page. An expired CRL makes many
 clients reject every certificate below that CA.
 
+## EST connectors
+
+An EST connector (RFC 7030) lets devices and services request certificates
+from a CA of a database without anyone logged in. Connectors are set up in
+the web UI, on the database's **Connectors** tab: a name, a label, the
+issuing CA, a user name and password, the key types a request may use,
+rules for the subject and the alternative names, and the properties of the
+issued certificates (validity and extensions, started from a purpose or a
+template as in the certificate editor). Issued certificates are stored like
+any other, without a private key, and are listed on the connector's page.
+
+A connector is served at `/.well-known/est/<label>/` on the web UI's
+address, with these operations:
+
+| Operation        | Method | Authentication | Answer |
+| ---------------- | ------ | -------------- | ------ |
+| `cacerts`        | GET    | none           | the CA and its issuers, base64 PKCS#7 |
+| `csrattrs`       | GET    | none           | the accepted key algorithms |
+| `simpleenroll`   | POST   | HTTP Basic     | the new certificate, base64 PKCS#7 |
+| `simplereenroll` | POST   | the current certificate as TLS client certificate | the renewed certificate |
+
+Requests must be base64 (or DER) `application/pkcs10`. A request that breaks
+a rule is refused with 403 and the reasons as text, and recorded in the
+audit log. `serverkeygen` and `fullcmc` are not supported.
+
+A connector is active only when
+
+- its database has a `password` in the `databases` section, so that
+  OpenKCA keeps it open with its keys unlocked;
+- its CA is valid and its key is protected by the database, not by a
+  password of its own;
+- its label is used by no other database; and
+- the request reached OpenKCA, or a trusted proxy in front of it, over TLS.
+
+Re-enrollment needs the client's certificate. The web UI never asks for one
+(browsers would show a certificate picker), so either
+
+- set `est.listen` (for example `":9443"`): an extra HTTPS server for EST
+  only that asks for client certificates, with the web UI's TLS certificate;
+  or
+- let the TLS proxy check the client certificate and pass it in the header
+  named by `est.client_cert_header`, as URL-encoded PEM. Only proxies in
+  `trusted_proxies` are believed. For nginx:
+
+```nginx
+location /.well-known/est/ {
+    ssl_verify_client optional_no_ca;
+    proxy_set_header X-SSL-Client-Cert $ssl_client_escaped_cert;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_pass http://127.0.0.1:9080;
+}
+```
+
+```yaml
+est:
+  listen: ""
+  client_cert_header: X-SSL-Client-Cert
+```
+
+A quick test with curl and OpenSSL:
+
+```sh
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout key.pem \
+  -subj /CN=device1.example.com -outform DER | base64 > csr.b64
+curl -u est:<password> -H 'Content-Type: application/pkcs10' --data-binary @csr.b64 \
+  https://ca.example.org/.well-known/est/<label>/simpleenroll | base64 -d | openssl pkcs7 -inform DER -print_certs
+```
+
 ## rpm package
 
 The rpm package (see the [README](../README.md#get-it)) runs OpenKCA as the

@@ -1,0 +1,35 @@
+{{template "head" .}}
+{{$db := .DB.Name}}
+<h1>{{T "tab.connectors"}}</h1>
+<p class="muted">{{T "connector.intro"}}</p>
+{{if not .Data.Served}}<p class="warn" role="note">{{T "connector.notbackground"}}</p>{{end}}
+{{if not .Data.CAs}}<p class="warn small" role="note">{{T "connector.nocas"}}</p>{{end}}
+<div class="toolbar">
+  <div class="newbuttons">
+    <a class="button" href="/db/{{$db}}/connectors/new/est">{{T "connector.new.est"}}</a>
+  </div>
+</div>
+<div class="tablewrap">
+<table class="list" id="tbl-connectors">
+  <thead><tr>
+    <th>{{T "connector.name"}}</th><th>{{T "connector.col.type"}}</th><th>{{T "connector.col.url"}}</th>
+    <th>{{T "connector.col.ca"}}</th><th>{{T "connector.col.status"}}</th><th>{{T "connector.col.issued"}}</th><th>{{T "connector.col.lastused"}}</th>
+  </tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+  <tr>
+    <td><a href="/db/{{$db}}/connectors/{{.C.ID}}">{{.C.Name}}</a></td>
+    <td>{{T (print "connector.type." .C.Type)}}</td>
+    <td class="mono">{{.URL}}</td>
+    <td>{{.CA}}</td>
+    <td>{{if .Problem}}<span class="warn">{{T (print "connector.problem." .Problem)}}</span>{{else}}{{T "connector.active"}}{{end}}</td>
+    <td>{{.Issued}}</td>
+    <td>{{time .C.LastUsed}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7" class="muted">{{T "connector.none"}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{template "foot" .}}

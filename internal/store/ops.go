@@ -317,33 +317,7 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 		if p.NoExpiry {
 			cr.NotAfter = pki.NoExpiry
 		}
-		serialLen := SerialLen(snap)
-		used := map[string]bool{}
-		if ca != nil {
-			used = usedSerials(snap, ca)
-			cak := findKey(snap, ca.KeyID)
-			if ca.KeyID == 0 || cak == nil || !cak.HasPrivate {
-				return 0, errors.New("the private key of the CA is not in the database")
-			}
-			if cr.SignerKey, err = h.unlock(ctx, cak.ID, cak.KeyType, kr, p.KeyPass); err != nil {
-				return 0, err
-			}
-			if cr.Issuer, err = pki.ParseCertificate(ca.DER); err != nil {
-				return 0, err
-			}
-		}
-		for i := 0; ; i++ {
-			if i > 100 {
-				return 0, errors.New("failed to find an unused serial number")
-			}
-			if cr.Serial, err = pki.RandomSerial(serialLen); err != nil {
-				return 0, err
-			}
-			if !used[pki.SerialHex(cr.Serial)] {
-				break
-			}
-		}
-		if der, err = pki.CreateCertificate(cr); err != nil {
+		if der, err = h.signCert(ctx, snap, ca, &cr, kr, p.KeyPass); err != nil {
 			return 0, err
 		}
 	}
@@ -384,6 +358,41 @@ func (h *Handle) Issue(ctx context.Context, p IssueParams, kr *vault.Keyring) (i
 	h.changed(ctx)
 	h.auditIf(ctx, err, issueAction(p), id, "%s", issueDetail(p))
 	return id, err
+}
+
+// signCert signs cr with a fresh serial the CA has not used: with the CA's
+// key when ca is not nil, else with cr.SignerKey (self-signed).
+func (h *Handle) signCert(ctx context.Context, snap *db.Snapshot, ca *db.Cert, cr *pki.CertRequest,
+	kr *vault.Keyring, kp KeyPasswords) ([]byte, error) {
+	used := map[string]bool{}
+	if ca != nil {
+		used = usedSerials(snap, ca)
+		cak := findKey(snap, ca.KeyID)
+		if ca.KeyID == 0 || cak == nil || !cak.HasPrivate {
+			return nil, errors.New("the private key of the CA is not in the database")
+		}
+		var err error
+		if cr.SignerKey, err = h.unlock(ctx, cak.ID, cak.KeyType, kr, kp); err != nil {
+			return nil, err
+		}
+		if cr.Issuer, err = pki.ParseCertificate(ca.DER); err != nil {
+			return nil, err
+		}
+	}
+	serialLen := SerialLen(snap)
+	for i := 0; ; i++ {
+		if i > 100 {
+			return nil, errors.New("failed to find an unused serial number")
+		}
+		var err error
+		if cr.Serial, err = pki.RandomSerial(serialLen); err != nil {
+			return nil, err
+		}
+		if !used[pki.SerialHex(cr.Serial)] {
+			break
+		}
+	}
+	return pki.CreateCertificate(*cr)
 }
 
 // checkMandatory enforces settings.mandatory_dn (comma separated names).

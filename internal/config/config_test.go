@@ -23,6 +23,9 @@ crl:
   base_urls:
     - http://pki.example.org/
     - http://pki.lan:8080/pki
+est:
+  listen: ":9443"
+  client_cert_header: X-SSL-Client-Cert
 databases:
   - name: Home Lab CA
     type: file
@@ -57,6 +60,9 @@ databases:
 	}
 	if c.CRL.ListenAddr() != "127.0.0.1:8081" || strings.Join(c.CRL.BaseURLs, " ") != "http://pki.example.org http://pki.lan:8080/pki" {
 		t.Fatalf("crl = %q %v", c.CRL.ListenAddr(), c.CRL.BaseURLs)
+	}
+	if c.EST.Listen != ":9443" || c.EST.ClientCertHeader != "X-SSL-Client-Cert" {
+		t.Fatalf("est = %+v", c.EST)
 	}
 }
 
@@ -136,6 +142,8 @@ func TestParseErrors(t *testing.T) {
 		{gen + "crl:\n  base_urls: [\"http://x/?a=1\"]\n", "query"},
 		{gen + "crl:\n  base_urls: [http://x/, http://x]\n", "twice"},
 		{gen + "crl:\n  lisen: x\n", "field lisen not found"},
+		{gen + "est:\n  listen: \"9443\"\n", "est.listen"},
+		{gen + "est:\n  client_cert_header: \"X: y\"\n", "est.client_cert_header"},
 		{gen + "  https: no-thanks\n", "into bool"},
 		{gen + "  trusted_proxies: [proxy.lan]\n", "trusted_proxies[0]"},
 		{gen + "  trusted_proxies: [10.0.0.0/33]\n", "trusted_proxies[0]"},

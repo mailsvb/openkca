@@ -20,6 +20,9 @@
 //	  listen: ":9081"               # plain HTTP for CRLs and CA certificates; "" = off
 //	  base_urls:                    # offered as CDP/AIA in new certificates
 //	    - http://pki.example.org
+//	est:
+//	  listen: ""                    # optional, e.g. ":9443": HTTPS for EST only, asks for client certificates
+//	  client_cert_header: ""        # e.g. X-SSL-Client-Cert: client certificate from a trusted proxy
 //	databases:
 //	  - name: Home Lab CA           # shown in the web UI
 //	    type: file
@@ -96,6 +99,35 @@ func (c CRL) ListenAddr() string {
 	return strings.TrimSpace(*c.Listen)
 }
 
+// EST configures how EST connectors (RFC 7030) are reached. Connectors
+// themselves are set up per database in the web UI and are served at
+// /.well-known/est/<label>/ on the web UI's address in any case.
+type EST struct {
+	// Listen is the address of an extra HTTPS server that serves only EST
+	// and asks clients for a certificate (re-enrollment); "" = none. The
+	// web UI never asks for one, so browsers show no certificate picker.
+	Listen string `yaml:"listen"`
+	// ClientCertHeader is the request header a trusted proxy puts the
+	// client's certificate in, as URL-encoded PEM (nginx:
+	// $ssl_client_escaped_cert); "" = none.
+	ClientCertHeader string `yaml:"client_cert_header"`
+}
+
+var headerRE = regexp.MustCompile("^[A-Za-z0-9-]+$")
+
+func (e *EST) check() error {
+	e.Listen, e.ClientCertHeader = strings.TrimSpace(e.Listen), strings.TrimSpace(e.ClientCertHeader)
+	if e.Listen != "" {
+		if _, _, err := net.SplitHostPort(e.Listen); err != nil {
+			return fmt.Errorf("est.listen: %q is not a host:port address", e.Listen)
+		}
+	}
+	if e.ClientCertHeader != "" && !headerRE.MatchString(e.ClientCertHeader) {
+		return fmt.Errorf("est.client_cert_header: %q is not a header name", e.ClientCertHeader)
+	}
+	return nil
+}
+
 // General holds the server settings.
 type General struct {
 	// DataDir is the data folder, DataDirName next to the configuration
@@ -155,6 +187,7 @@ type Config struct {
 	// Warnings are problems that do not stop OpenKCA, to be logged.
 	Warnings  []string
 	CRL       CRL
+	EST       EST
 	Databases []Database
 }
 
@@ -209,6 +242,7 @@ func Parse(b []byte, base string) (*Config, error) {
 	var raw struct {
 		General   General    `yaml:"general"`
 		CRL       CRL        `yaml:"crl"`
+		EST       EST        `yaml:"est"`
 		Databases []Database `yaml:"databases"`
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -216,7 +250,7 @@ func Parse(b []byte, base string) (*Config, error) {
 	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	c := &Config{General: raw.General, CRL: raw.CRL, Databases: raw.Databases}
+	c := &Config{General: raw.General, CRL: raw.CRL, EST: raw.EST, Databases: raw.Databases}
 	if err := c.check(base); err != nil {
 		return nil, err
 	}
@@ -267,6 +301,9 @@ func (c *Config) check(base string) error {
 		return err
 	}
 	if err := c.CRL.check(); err != nil {
+		return err
+	}
+	if err := c.EST.check(); err != nil {
 		return err
 	}
 

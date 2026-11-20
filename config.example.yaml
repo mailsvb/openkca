@@ -53,6 +53,22 @@ crl:
     - http://pki.example.org
     - http://pki.lan:9081
 
+# EST connectors (RFC 7030). Connectors are set up per database in the web
+# UI (tab "Connectors") and are always served at
+# /.well-known/est/<label>/ on the web UI's address. They sign only for
+# databases with a password below, and only with CAs whose key the
+# database protects.
+est:
+  # Optional extra HTTPS address that serves only EST and asks clients for
+  # a certificate, for re-enrollment (simplereenroll) with the current
+  # certificate. Uses the web UI's TLS certificate. "" = none.
+  listen: ""
+  # Behind a TLS proxy: the request header in which a proxy listed in
+  # general.trusted_proxies passes the client certificate as URL-encoded
+  # PEM (nginx: proxy_set_header X-SSL-Client-Cert $ssl_client_escaped_cert).
+  # "" = none.
+  client_cert_header: ""
+
 # Databases OpenKCA knows by name. Other .okca and .xdb files directly in
 # the data folder are still listed and can be opened in the web UI.
 databases:

@@ -4,7 +4,9 @@ package web
 
 import (
 	"context"
+	"crypto/x509"
 	"embed"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"html/template"
@@ -22,7 +24,9 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/mailsvb/openkca/internal/auth"
+	"github.com/mailsvb/openkca/internal/background"
 	"github.com/mailsvb/openkca/internal/db"
+	"github.com/mailsvb/openkca/internal/estserver"
 	"github.com/mailsvb/openkca/internal/i18n"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/pubserve"
@@ -57,6 +61,12 @@ type Config struct {
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For and
 	// X-Forwarded-Proto headers name the client and its scheme.
 	TrustedProxies []netip.Prefix
+	// Background holds the databases open with their keys unlocked;
+	// connectors (EST) serve only those. nil = none.
+	Background *background.Holder
+	// ClientCertHeader is the header a trusted proxy passes the client's
+	// TLS certificate in (URL-encoded PEM); "" = none.
+	ClientCertHeader string
 }
 
 // Server is the HTTP handler.
@@ -75,6 +85,7 @@ type Server struct {
 	templates  map[string]*template.Template // by language tag
 	log        *slog.Logger
 	mux        *http.ServeMux
+	est        *estserver.Handler // EST connectors, served without a session
 }
 
 // New builds the server.
@@ -111,6 +122,8 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.webauthn = wa
 	}
+	s.est = estserver.New(estserver.Options{Background: cfg.Background, Log: cfg.Logger, ClientIP: clientIP,
+		Secure: isSecure, ClientCert: s.clientCert})
 	s.auth.OnEnd = s.dbs.EndServer
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
@@ -135,6 +148,7 @@ func (s *Server) Run(ctx context.Context) {
 			s.srvLimit.Sweep()
 			s.dbLimit.Sweep()
 			s.keyLimit.Sweep()
+			s.est.Sweep()
 			s.ceremonies.sweep()
 		}
 	}
@@ -144,6 +158,7 @@ func (s *Server) routes() {
 	m := http.NewServeMux()
 	static, _ := fs.Sub(staticFS, "static")
 	m.Handle("GET /static/", http.StripPrefix("/static/", staticHandler(http.FileServerFS(static))))
+	m.Handle(estserver.PathPrefix, s.est) // machines: no session, no CSRF
 	m.HandleFunc("GET /login", s.loginPage)
 	m.HandleFunc("POST /login", s.login)
 	m.HandleFunc("POST /logout", s.requireServer(s.logout))
@@ -167,6 +182,16 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /db/{name}/audit", s.requireServer(s.requireDB(s.auditPage)))
 	m.HandleFunc("GET /db/{name}/item/{id}", s.requireServer(s.requireDB(s.item)))
 	m.HandleFunc("POST /db/{name}/item/{id}/check-key", s.requireServer(s.requireDB(s.checkKey)))
+	m.HandleFunc("GET /db/{name}/connectors", s.requireServer(s.requireDB(s.connectorList)))
+	m.HandleFunc("GET /db/{name}/connectors/new/est", s.requireServer(s.requireDB(s.connectorNew)))
+	m.HandleFunc("POST /db/{name}/connectors/new/est", s.requireServer(s.requireDB(s.connectorSave)))
+	m.HandleFunc("GET /db/{name}/connectors/{id}", s.requireServer(s.requireDB(s.connectorView)))
+	m.HandleFunc("GET /db/{name}/connectors/{id}/edit", s.requireServer(s.requireDB(s.connectorEdit)))
+	m.HandleFunc("POST /db/{name}/connectors/{id}/edit", s.requireServer(s.requireDB(s.connectorSave)))
+	m.HandleFunc("POST /db/{name}/connectors/{id}/toggle", s.requireServer(s.requireDB(s.connectorToggle)))
+	m.HandleFunc("POST /db/{name}/connectors/{id}/password", s.requireServer(s.requireDB(s.connectorPassword)))
+	m.HandleFunc("POST /db/{name}/connectors/{id}/delete", s.requireServer(s.requireDB(s.connectorDelete)))
+	m.HandleFunc("POST /db/{name}/connectors/{id}/test", s.requireServer(s.requireDB(s.connectorTest)))
 	m.HandleFunc("GET /db/{name}/{tab}", s.requireServer(s.requireDB(s.list)))
 	m.HandleFunc("GET /db/{name}/export", s.requireServer(s.requireDB(s.exportPage)))
 	m.HandleFunc("POST /db/{name}/export", s.requireServer(s.requireDB(s.exportSubmit)))
@@ -242,10 +267,58 @@ func staticHandler(h http.Handler) http.Handler {
 	})
 }
 
+// withPeer records the request's client in its context.
+func (s *Server) withPeer(r *http.Request) *http.Request {
+	ip, secure := s.peer(r)
+	return r.WithContext(context.WithValue(r.Context(), ctxPeer, peerInfo{ip, secure}))
+}
+
+// ESTHandler serves only the EST connectors, for a listener of their own.
+func (s *Server) ESTHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if !strings.HasPrefix(r.URL.Path, estserver.PathPrefix) {
+			http.NotFound(w, r)
+			return
+		}
+		s.est.ServeHTTP(w, s.withPeer(r))
+	})
+}
+
+// clientCert returns the client's TLS certificate: the one presented to
+// OpenKCA, else the one a trusted proxy passed in the configured header
+// as URL-encoded PEM. nil when there is none.
+func (s *Server) clientCert(r *http.Request) *x509.Certificate {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		return r.TLS.PeerCertificates[0]
+	}
+	hdr := s.cfg.ClientCertHeader
+	if hdr == "" || !s.trusted(remoteIP(r)) {
+		return nil
+	}
+	v := r.Header.Get(hdr)
+	if v == "" {
+		return nil
+	}
+	if u, err := url.QueryUnescape(v); err == nil {
+		v = u
+	}
+	b, _ := pem.Decode([]byte(v))
+	if b == nil || b.Type != "CERTIFICATE" {
+		return nil
+	}
+	c, err := pki.ParseCertificate(b.Bytes)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
 // ServeHTTP applies the security headers to every response.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ip, secure := s.peer(r)
-	r = r.WithContext(context.WithValue(r.Context(), ctxPeer, peerInfo{ip, secure}))
+	r = s.withPeer(r)
+	secure := isSecure(r)
 	h := w.Header()
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "+
 		"form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'")

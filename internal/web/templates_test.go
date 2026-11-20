@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mailsvb/openkca/internal/codec"
+	"github.com/mailsvb/openkca/internal/db"
 	"github.com/mailsvb/openkca/internal/i18n"
 	"github.com/mailsvb/openkca/internal/pki"
 	"github.com/mailsvb/openkca/internal/store"
@@ -64,7 +65,7 @@ func TestMessageKeys(t *testing.T) {
 			keys = append(keys, m[1])
 		}
 	}
-	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid|trash|audit|converted|converting|methods)\.[a-z_.]*[a-z])"`)
+	goKeyRE := regexp.MustCompile(`"((?:login|dblogin|error|keycheck|status|private|options|databases|tab|editor|newkey|newsshkey|sshkey|newpgpkey|pgpkey|dbpw|item|keypw|create|import|ca|rev|crlgen|renew|oid|trash|audit|converted|converting|methods|connector)\.[a-z_.]*[a-z])"`)
 	gofiles, _ := filepath.Glob("*.go")
 	for _, f := range gofiles {
 		if strings.HasSuffix(f, "_test.go") {
@@ -149,9 +150,19 @@ func TestMessageKeys(t *testing.T) {
 		"ca.properties", "crl.generate", "item.rename", "item.trash", "item.restore", "item.purge", "items.import",
 		"pgp.generate", "pgp.create", "pgp.subkey", "pgp.remove", "template.save",
 		"method.add", "method.remove", "method.rename", "method.password", "method.clone_warning",
-		"backupcode.generate", "backupcode.used", "database.rekey", "database.kdf"} {
+		"backupcode.generate", "backupcode.used", "database.rekey", "database.kdf",
+		"connector.create", "connector.update", "connector.delete", "connector.enable", "connector.disable",
+		"connector.password", "est.enroll", "est.reenroll", "est.rejected"} {
 		keys = append(keys, "audit.action."+a)
 	}
+	for _, m := range ruleModes {
+		keys = append(keys, "connector.mode."+m)
+	}
+	for _, p := range []string{"disabled", "not_background", "label_conflict", "config", store.ConnCAMissing,
+		store.ConnCANotCA, store.ConnCAExpired, store.ConnCAKey} {
+		keys = append(keys, "connector.problem."+p)
+	}
+	keys = append(keys, "connector.type."+db.ConnectorEST)
 	for _, t := range vault.SlotTypes {
 		keys = append(keys, "methods.type."+t)
 	}
