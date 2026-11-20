@@ -130,6 +130,16 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.passkeys = pk
 	}
+	if s.webauthn != nil {
+		n := 0
+		if s.passkeys != nil {
+			n = s.passkeys.Count()
+		}
+		s.log.Info("webauthn enabled", "rp_id", cfg.WebAuthn.RPID, "origins", strings.Join(cfg.WebAuthn.Origins, " "),
+			"server_passkeys", n)
+	} else {
+		s.log.Info("webauthn off: general.webauthn.rp_id is not set; security keys and passkeys are not offered")
+	}
 	s.est = estserver.New(estserver.Options{Background: cfg.Background, Log: cfg.Logger, ClientIP: clientIP,
 		Secure: isSecure, ClientCert: s.clientCert})
 	s.auth.OnEnd = s.dbs.EndServer
@@ -171,10 +181,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /login", s.login)
 	m.HandleFunc("POST /login/passkey/begin", s.passkeyLoginBegin)
 	m.HandleFunc("POST /login/passkey/finish", s.passkeyLoginFinish)
+	m.HandleFunc("POST /login/passkey/abort", s.passkeyLoginAbort)
 	m.HandleFunc("POST /logout", s.requireServer(s.logout))
 	m.HandleFunc("GET /passkeys", s.requireServer(s.passkeysPage))
 	m.HandleFunc("POST /passkeys/register/begin", s.requireServer(s.passkeyRegisterBegin))
 	m.HandleFunc("POST /passkeys/register/finish", s.requireServer(s.passkeyRegisterFinish))
+	m.HandleFunc("POST /passkeys/register/abort", s.requireServer(s.passkeyRegisterAbort))
 	m.HandleFunc("POST /passkeys/{id}/delete", s.requireServer(s.passkeyDelete))
 	m.HandleFunc("GET /{$}", s.requireServer(s.databases))
 	m.HandleFunc("GET /oid", s.requireServer(s.oidPage))

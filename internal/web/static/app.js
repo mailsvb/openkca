@@ -289,6 +289,15 @@
       .catch(function (err) { busy(form, false); showError(form, err); });
   }
 
+  // A failure inside the browser (navigator.credentials) never reaches the
+  // server otherwise: report its name and message for the server log.
+  function reportBrowserFailure(url, csrf, err) {
+    if (typeof console !== "undefined") { console.warn("passkey:", err); }
+    if (!(err instanceof DOMException)) { return; } // the server's own answer
+    post(url, csrf, JSON.stringify({ name: err.name || "", message: err.message || "" }), true)
+      .catch(function () {});
+  }
+
   // Server login with a passkey: a discoverable assertion, no session yet.
   function passkeyLogin(btn) {
     clearError(btn);
@@ -297,7 +306,11 @@
       .then(function (opts) { return navigator.credentials.get(requestOptions(opts)); })
       .then(function (cred) { return post("/login/passkey/finish", "", JSON.stringify(assertionJSON(cred)), true); })
       .then(function (data) { window.location.assign(data.redirect); })
-      .catch(function (err) { busy(btn, false); showError(btn, err); });
+      .catch(function (err) {
+        reportBrowserFailure("/login/passkey/abort", "", err);
+        busy(btn, false);
+        showError(btn, err);
+      });
   }
 
   // Adding a passkey to the server login (name and server password).
@@ -310,12 +323,18 @@
       .then(function (opts) { return navigator.credentials.create(creationOptions(opts)); })
       .then(function (cred) { return post("/passkeys/register/finish", csrf, JSON.stringify(attestationJSON(cred)), true); })
       .then(function (data) { window.location.assign(data.redirect); })
-      .catch(function (err) { busy(form, false); showError(form, err); });
+      .catch(function (err) {
+        reportBrowserFailure("/passkeys/register/abort", csrf, err);
+        busy(form, false);
+        showError(form, err);
+      });
   }
 
   function setup(root) {
     root.querySelectorAll("button[data-passkey-login]").forEach(function (btn) {
       btn.hidden = false;
+      var section = btn.closest("[data-passkey-section]");
+      if (section) { section.hidden = false; }
       btn.addEventListener("click", function () { passkeyLogin(btn); });
     });
     root.querySelectorAll("form[data-passkey-register]").forEach(function (form) {

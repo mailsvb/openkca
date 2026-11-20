@@ -162,6 +162,35 @@ func readBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// webauthnErrAttrs returns log attributes for a WebAuthn error. A
+// protocol.Error prints only its short Details; the reason (DevInfo, e.g.
+// the expected and the received origin) and its type are added here.
+func webauthnErrAttrs(err error) []any {
+	attrs := []any{"err", err}
+	var pe *protocol.Error
+	if errors.As(err, &pe) {
+		if pe.Type != "" {
+			attrs = append(attrs, "err_type", pe.Type)
+		}
+		if pe.DevInfo != "" {
+			attrs = append(attrs, "err_info", pe.DevInfo)
+		}
+		if pe.Err != nil {
+			attrs = append(attrs, "err_cause", pe.Err.Error())
+		}
+	}
+	return attrs
+}
+
+// logAttrs joins log attributes.
+func logAttrs(groups ...[]any) []any {
+	var out []any
+	for _, g := range groups {
+		out = append(out, g...)
+	}
+	return out
+}
+
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 // prfResult returns the PRF output for the first salt from a ceremony's
@@ -212,7 +241,7 @@ func (s *Server) webauthnBegin(purpose string) http.HandlerFunc {
 		}
 		u, keys, err := s.user(r, h, name)
 		if err != nil {
-			s.log.Error("webauthn begin", "db", name, "err", err)
+			s.log.Error("webauthn begin", logAttrs([]any{"db", name, "purpose", purpose}, webauthnErrAttrs(err))...)
 			s.jsonError(w, r, http.StatusInternalServerError, "methods.error.webauthn")
 			return
 		}
@@ -222,7 +251,7 @@ func (s *Server) webauthnBegin(purpose string) http.HandlerFunc {
 		}
 		opts, data, err := s.assertionOptions(u, keys)
 		if err != nil {
-			s.log.Error("webauthn begin", "db", name, "err", err)
+			s.log.Error("webauthn begin", logAttrs([]any{"db", name, "purpose", purpose}, webauthnErrAttrs(err))...)
 			s.jsonError(w, r, http.StatusInternalServerError, "methods.error.webauthn")
 			return
 		}
@@ -293,7 +322,7 @@ func (s *Server) webauthnLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	kr, m, err := s.verifyAssertion(r, h, ce)
 	if err != nil {
-		s.log.Warn("database login with a security key or passkey failed", "db", name, "ip", clientIP(r), "err", err)
+		s.log.Warn("database login with a security key or passkey failed", logAttrs([]any{"db", name, "ip", clientIP(r)}, webauthnErrAttrs(err))...)
 		h.Audit(r.Context(), "database.unlock_failed", 0, "security key or passkey")
 		h.Release()
 		key := "methods.error.assertion"
@@ -344,7 +373,7 @@ func (s *Server) webauthnConfirmFinish(w http.ResponseWriter, r *http.Request) {
 	kr, _, err := s.verifyAssertion(r, ds.Handle, ce)
 	if err != nil {
 		s.keyLimit.Fail(ds.ID)
-		s.log.Warn("re-confirmation with a security key or passkey failed", "db", ds.DBName, "err", err)
+		s.log.Warn("re-confirmation with a security key or passkey failed", logAttrs([]any{"db", ds.DBName, "ip", clientIP(r)}, webauthnErrAttrs(err))...)
 		s.jsonError(w, r, http.StatusUnauthorized, "methods.error.assertion")
 		return
 	}
@@ -375,7 +404,7 @@ func (s *Server) registerBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	u, keys, err := s.user(r, ds.Handle, s.header(ds).Label)
 	if err != nil {
-		s.log.Error("webauthn register", "db", ds.DBName, "err", err)
+		s.log.Error("webauthn register", logAttrs([]any{"db", ds.DBName}, webauthnErrAttrs(err))...)
 		s.jsonError(w, r, http.StatusInternalServerError, "methods.error.webauthn")
 		return
 	}
@@ -410,7 +439,7 @@ func (s *Server) registerBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	creation, data, err := s.webauthn.BeginRegistration(u, opts...)
 	if err != nil {
-		s.log.Error("webauthn register", "db", ds.DBName, "err", err)
+		s.log.Error("webauthn register", logAttrs([]any{"db", ds.DBName}, webauthnErrAttrs(err))...)
 		s.jsonError(w, r, http.StatusInternalServerError, "methods.error.webauthn")
 		return
 	}
@@ -442,7 +471,7 @@ func (s *Server) registerFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(body)
 	if err != nil {
-		s.log.Warn("webauthn registration response", "db", ds.DBName, "err", err)
+		s.log.Warn("webauthn registration response", logAttrs([]any{"db", ds.DBName, "ip", clientIP(r)}, webauthnErrAttrs(err))...)
 		s.jsonError(w, r, http.StatusBadRequest, "methods.error.webauthn")
 		return
 	}
@@ -453,7 +482,7 @@ func (s *Server) registerFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	cred, err := s.webauthn.CreateCredential(u, ce.data, parsed)
 	if err != nil {
-		s.log.Warn("webauthn registration failed", "db", ds.DBName, "err", err)
+		s.log.Warn("webauthn registration failed", logAttrs([]any{"db", ds.DBName, "ip", clientIP(r)}, webauthnErrAttrs(err))...)
 		s.jsonError(w, r, http.StatusBadRequest, "methods.error.webauthn")
 		return
 	}
@@ -511,7 +540,7 @@ func (s *Server) registerPRF(w http.ResponseWriter, r *http.Request) {
 	u.creds = []webauthn.Credential{*ce.cred}
 	cred, err := s.webauthn.ValidateLogin(u, ce.data, parsed)
 	if err != nil {
-		s.log.Warn("webauthn registration assertion failed", "db", ds.DBName, "err", err)
+		s.log.Warn("webauthn registration assertion failed", logAttrs([]any{"db", ds.DBName, "ip", clientIP(r)}, webauthnErrAttrs(err))...)
 		s.jsonError(w, r, http.StatusBadRequest, "methods.error.assertion")
 		return
 	}

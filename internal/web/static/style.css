@@ -34,6 +34,12 @@ label { color: var(--muted); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 0 0 16px; overflow-x: auto; }
 .narrow { max-width: 420px; margin: 48px auto; }
 .narrow form { display: grid; gap: 8px; }
+.passkey-login { display: grid; gap: 12px; margin-top: 20px; }
+.passkey-login[hidden] { display: none; }
+.passkey-login button { width: 100%; }
+.passkey-login .error { margin: 0; }
+.or-divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; }
+.or-divider::before, .or-divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .muted { color: var(--muted); }
 .small { font-size: .85rem; }
 .mono { font-family: var(--mono); overflow-wrap: anywhere; }

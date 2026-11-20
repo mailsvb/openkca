@@ -1237,6 +1237,7 @@
   "audit.action.est.reenroll": "Certificate renewed over EST",
   "audit.action.est.rejected": "EST request refused",
   "login.passkey": "Sign in with a passkey",
+  "login.or": "or",
   "passkeys.title": "Passkeys",
   "passkeys.heading": "Passkeys for the server login",
   "passkeys.intro": "Passkeys sign you in to OpenKCA without the server password, one per device: a laptop, a phone, a security key. The server password keeps working and is needed to add a passkey. Passkeys here do not open databases; each database has its own unlock methods.",
